@@ -23,6 +23,7 @@ let showRawOutput = false;   // toggle DEBUG lines in logs
 let pwdDialogShown = false;  // auto-open password dialog once
 let activeServiceFilter = ''; // filter logs by service ID
 let durationTimer = null;    // 1-second interval for ON AIR duration
+let _updateInfo = null;      // cached result of /api/update/check
 /** @type {Map<string, {files: string[], index: number, key: string}>} slide rotation state per service */
 const slideRotation = new Map();
 
@@ -308,6 +309,17 @@ function render() {
   if (verEl && STATE.appVersion) verEl.textContent = `v${STATE.appVersion}`;
   // Update browser tab title
   if (STATE.appVersion) document.title = `DABcast v${STATE.appVersion}`;
+  // Update badge
+  const badgeEl = $('#updateBadge');
+  if (badgeEl) {
+    if (_updateInfo?.updateAvailable) {
+      badgeEl.textContent = `↑ v${_updateInfo.latestVersion}`;
+      badgeEl.href = _updateInfo.releaseUrl || 'https://github.com/DABodr/DABcast-diffusion-software/releases';
+      badgeEl.classList.remove('hidden');
+    } else {
+      badgeEl.classList.add('hidden');
+    }
+  }
   const tx = (STATE.settings.dabmux?.txMode || 'EASYDAB');
   const ip = STATE.localIp || '127.0.0.1';
   const out = (tx === 'EASYDAB')
@@ -804,6 +816,23 @@ function setActiveTab(tab) {
 }
 
 let refreshAbort = null;
+
+async function checkForUpdate() {
+  try {
+    const data = await api('/api/update/check');
+    if (!data?.latestVersion || !STATE?.appVersion) return;
+    const toNums = s => s.replace(/^v/, '').split('.').map(Number);
+    const latest = toNums(data.latestVersion);
+    const current = toNums(STATE.appVersion);
+    let newer = false;
+    for (let i = 0; i < 3; i++) {
+      if ((latest[i] || 0) > (current[i] || 0)) { newer = true; break; }
+      if ((latest[i] || 0) < (current[i] || 0)) break;
+    }
+    _updateInfo = { updateAvailable: newer, latestVersion: data.latestVersion, releaseUrl: data.releaseUrl };
+    if (newer) render();
+  } catch (_) { /* non-critical */ }
+}
 
 async function refresh() {
   // Abort any previous in-flight refresh
@@ -2002,6 +2031,10 @@ fileImportService?.addEventListener('change', async (e) => {
 // periodic refresh for live status
 refresh();
 let refreshTimer = setInterval(refresh, 2500);
+
+// Update check: once at startup (after first state load), then every hour
+setTimeout(checkForUpdate, 5000);
+setInterval(checkForUpdate, 3600000);
 
 // mux form
 $('#muxForm').addEventListener('submit', async (e) => {

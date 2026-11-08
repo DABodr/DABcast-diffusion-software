@@ -38,6 +38,8 @@ body {
 }
 .title { font-size: 17px; font-weight: 700; letter-spacing: 0.2px; display: inline; }
 .app-version { font-size: 11px; color: var(--muted); font-weight: 400; font-variant-numeric: tabular-nums; margin-left: 6px; vertical-align: baseline; }
+.update-badge { font-size: 10px; font-weight: 700; color: #000; background: var(--yellow); border-radius: 3px; padding: 1px 6px; margin-left: 7px; text-decoration: none; vertical-align: baseline; letter-spacing: 0.2px; }
+.update-badge.hidden { display: none; }
 .subtitle { font-size: 12px; color: var(--muted); }
 .muted { color: var(--muted); }
 .actions { display:flex; gap: 10px; align-items: center; }

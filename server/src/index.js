@@ -1221,6 +1221,36 @@ app.get('/api/mot/:svcId/slide/:filename', (req, res) => {
   }
 });
 
+// In-memory cache for GitHub release check (1 hour TTL)
+let _releaseCache = null;
+let _releaseCacheTime = 0;
+
+app.get('/api/update/check', async (req, res) => {
+  try {
+    const now = Date.now();
+    if (_releaseCache && (now - _releaseCacheTime) < 3600000) {
+      return res.json(_releaseCache);
+    }
+    const r = await fetch(
+      'https://api.github.com/repos/DABodr/DABcast-diffusion-software/releases/latest',
+      {
+        headers: { 'User-Agent': 'DABcast', 'Accept': 'application/vnd.github+json' },
+        signal: AbortSignal.timeout(8000)
+      }
+    );
+    if (!r.ok) return res.json({ latestVersion: null, releaseUrl: null });
+    const data = await r.json();
+    _releaseCache = {
+      latestVersion: String(data.tag_name || '').replace(/^v/, ''),
+      releaseUrl: data.html_url || null
+    };
+    _releaseCacheTime = now;
+    res.json(_releaseCache);
+  } catch (_) {
+    res.json({ latestVersion: null, releaseUrl: null });
+  }
+});
+
 const listenHost = process.env.HOST || settings.host || '0.0.0.0';
 const listenPort = Number(process.env.PORT || settings.port || 9090);
 const server = app.listen(listenPort, listenHost, () => {
