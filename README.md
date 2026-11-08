@@ -6,6 +6,8 @@ Version: **1.2.0**
 
 > *Free to use. Free to modify. Not for resale.*
 
+![DABcast screenshot](webpage/screenshot.png)
+
 ---
 
 ## 📋 Table of contents
