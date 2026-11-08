@@ -1,41 +1,212 @@
-DABcast — Proprietary License (EULA)
-Copyright (c) 2026 Aurélien Picart ("Licensor").
-All rights reserved.
+DABcast Source-Available License
+Version 1.0
 
-1. Grant of License
-Subject to the terms of this License, Licensor grants you ("Licensee") a non-exclusive, non-transferable,
-non-sublicensable right to install and use the Software solely for your internal business purposes.
+Copyright © 2026 DABodr. All rights reserved.
 
-2. Restrictions
-Licensee shall not, and shall not permit any third party to:
-(a) copy, reproduce, distribute, publish, sell, resell, rent, lease, lend, sublicense, or otherwise transfer the Software;
-(b) modify, adapt, translate, or create derivative works of the Software;
-(c) reverse engineer, decompile, disassemble, or attempt to derive the source code, except to the extent
-    such restriction is prohibited by applicable law;
-(d) remove or alter any proprietary notices (copyright, trademarks, license text).
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-3. Ownership
-The Software is licensed, not sold. Licensor retains all right, title, and interest in and to the Software,
-including all intellectual property rights.
+PREAMBLE
 
-4. Updates and Support
-Unless otherwise agreed in writing, Licensor has no obligation to provide updates, upgrades, maintenance, or support.
+DABcast is free to use, free to modify, and free to share — but not for resale.
 
-5. Disclaimer of Warranty
-THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
-INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+This license grants broad freedoms to individuals, organizations, and broadcasters
+who use, study, improve, or redistribute DABcast. The only restriction it places
+is on commercial exploitation: you may not sell DABcast or charge others for
+access to it.
 
-6. Limitation of Liability
-TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL LICENSOR BE LIABLE FOR ANY INDIRECT, INCIDENTAL,
-SPECIAL, CONSEQUENTIAL OR PUNITIVE DAMAGES, OR ANY LOSS OF PROFITS, REVENUE, DATA, OR BUSINESS INTERRUPTION,
-ARISING OUT OF OR RELATED TO THE USE OR INABILITY TO USE THE SOFTWARE.
+This license is NOT an OSI-approved open source license. It is a source-available
+license that grants rights beyond mere viewing while retaining the author's control
+over commercial distribution.
 
-7. Termination
-This License is effective until terminated. Licensor may terminate this License immediately if Licensee breaches
-any term. Upon termination, Licensee must cease all use and destroy all copies.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-8. Governing Law
-This License shall be governed by the laws of France. Any dispute shall be subject to the exclusive jurisdiction
-of the courts of Charleville-Mézières - France.
+SECTION 1 — DEFINITIONS
 
-By installing, copying, or using the Software, you agree to be bound by the terms of this License.
+"Software" means DABcast and all files distributed under this license, including
+source code, documentation, configuration files, and associated assets.
+
+"Licensor" means DABodr, the copyright holder of the Software.
+
+"You" means the individual or legal entity exercising rights under this license.
+
+"Derivative Work" means any work that is based on or derived from the Software,
+including modifications, adaptations, translations, or any work that incorporates
+a substantial portion of the Software.
+
+"Distribute" means to make the Software or a Derivative Work available to any
+third party, by any means, including publication, transfer, or making available
+for download.
+
+"Non-Commercial Distribution" means distribution for which no fee, subscription,
+or compensation of any kind is charged or received.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 2 — GRANT OF RIGHTS
+
+Subject to the conditions in Section 3 and the restrictions in Section 4,
+the Licensor grants You a worldwide, royalty-free, non-exclusive license to:
+
+  (a) Use the Software for any purpose, personal or professional, without
+      payment or registration.
+
+  (b) Access, read, study, and analyze the source code.
+
+  (c) Modify the Software and create Derivative Works.
+
+  (d) Distribute the Software or Derivative Works, free of charge, provided
+      that the conditions in Section 3 are met.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 3 — CONDITIONS
+
+When exercising the rights granted in Section 2, You must comply with the
+following conditions:
+
+  3.1 ATTRIBUTION
+      You must retain, in all copies or substantial portions of the Software
+      and in all Derivative Works, the following:
+        - This copyright notice: "Copyright © 2026 DABodr"
+        - This license text, or a prominent link to it
+        - All existing author credits and notices
+
+  3.2 DISCLOSURE OF MODIFICATIONS
+      If You Distribute a Derivative Work, You must clearly state that the
+      Software has been modified from the original. You must describe the
+      nature of the modifications in a visible location (such as a CHANGES
+      file, the README, or in the modified files themselves).
+
+  3.3 LICENSE CONTINUITY
+      You may not apply terms to a Derivative Work that remove or restrict
+      the rights granted by this license to downstream recipients. In
+      particular, You may not remove the non-resale restriction when
+      redistributing or sublicensing the Software or any Derivative Work.
+
+  3.4 THIRD-PARTY NOTICES
+      You must preserve all copyright notices and license terms of third-party
+      components included in the Software. These notices are listed in
+      Section 5 of this license.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 4 — RESTRICTIONS
+
+The following acts are expressly prohibited without prior written authorization
+from the Licensor:
+
+  4.1 NO SALE
+      You may not sell, resell, rent, lease, or otherwise transfer the Software,
+      a Derivative Work, or any part thereof, in exchange for monetary
+      compensation or any other form of commercial consideration.
+
+  4.2 NO CHARGING FOR ACCESS OR COPIES
+      You may not charge a fee for providing access to, downloading, or
+      distributing copies of the Software or any Derivative Work, whether
+      directly or as part of a paid service or subscription.
+
+  4.3 NO REMOVAL OF RESTRICTIONS
+      You may not sublicense the Software or any Derivative Work under terms
+      that remove or circumvent the restrictions of this Section 4.
+
+These restrictions apply only to the Software (DABcast) itself. They do not
+apply to third-party components integrated with or used alongside DABcast,
+which remain governed exclusively by their own licenses (see Section 5).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 5 — THIRD-PARTY SOFTWARE
+
+DABcast integrates or depends on third-party software components. Each component
+is governed exclusively by its own license. The restrictions in Section 4 of this
+license do not apply to these third-party components.
+
+5.1 NODE.JS RUNTIME DEPENDENCIES
+
+The following packages are used at runtime and distributed with or alongside
+DABcast. Their copyright notices and license terms must be preserved.
+
+  - express         MIT License      © OpenJS Foundation and contributors
+  - bcryptjs        BSD 3-Clause     © Nevins Bartolomeo, Shane Girish, Daniel Wirtz
+  - morgan          MIT License      © Jonathan Ong, Douglas Christopher Wilson
+  - nanoid          MIT License      © Andrey Sitnik
+  - archiver        MIT License      © Chris Talkington and contributors
+  - jose            MIT License      © Filip Skokan
+
+The MIT License and BSD 3-Clause License are reproduced in full in the
+THIRD_PARTY_NOTICES file included in this distribution (or in the
+node_modules directory of a development installation).
+
+5.2 ODR-MMBTOOLS (OpenDigitalRadio)
+
+DABcast is a management interface designed to control external tools from the
+ODR-mmbTools project (https://www.opendigitalradio.org/). These tools include:
+
+  - ODR-DabMux     (DAB multiplexer)
+  - ODR-AudioEnc   (audio encoder)
+  - ODR-PadEnc     (PAD encoder)
+  - ODR-DabMod     (modulator)
+
+These tools are NOT included in the DABcast source code or binary. They are
+installed separately (via an install script or manually) and are invoked as
+independent system processes. DABcast communicates with them through standard
+interfaces (ZMQ, EDI, FIFO, command-line arguments).
+
+The ODR-mmbTools components are licensed under the GNU General Public License
+(GPL v2 or v3, depending on the component) by the OpenDigitalRadio association.
+The restrictions of this DABcast license do not apply to ODR-mmbTools, and this
+license does not modify, limit, or override the rights granted by the GPL to
+users of those tools.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 6 — DISCLAIMER OF WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, ACCURACY, OR
+NON-INFRINGEMENT.
+
+THE LICENSOR DOES NOT WARRANT THAT THE SOFTWARE WILL MEET YOUR REQUIREMENTS,
+THAT OPERATION WILL BE UNINTERRUPTED OR ERROR-FREE, OR THAT DEFECTS WILL BE
+CORRECTED.
+
+YOU ASSUME ALL RISKS ASSOCIATED WITH THE USE OF THE SOFTWARE, INCLUDING BUT NOT
+LIMITED TO RISKS RELATED TO RADIO FREQUENCY TRANSMISSION, REGULATORY COMPLIANCE,
+AND BROADCAST OPERATIONS.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 7 — LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, IN NO EVENT SHALL THE
+LICENSOR BE LIABLE FOR ANY INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL,
+PUNITIVE, OR EXEMPLARY DAMAGES, OR FOR ANY LOSS OF PROFITS, REVENUE, DATA,
+BUSINESS OPPORTUNITY, OR GOODWILL, ARISING OUT OF OR IN CONNECTION WITH THE
+USE OR INABILITY TO USE THE SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGES.
+
+THIS LIMITATION OF LIABILITY APPLIES REGARDLESS OF THE LEGAL THEORY UNDER
+WHICH THE CLAIM IS BROUGHT (CONTRACT, TORT, STRICT LIABILITY, OR OTHERWISE).
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 8 — GOVERNING LAW AND JURISDICTION
+
+This license shall be governed by the laws of France. Any dispute arising from
+this license shall be subject to the exclusive jurisdiction of the courts of
+Charleville-Mézières, France.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+SECTION 9 — AUTHORIZATION REQUESTS
+
+For uses not covered by this license — including commercial distribution,
+integration into paid products, or any form of resale — contact the Licensor
+to request written authorization.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+END OF LICENSE
+
+DABcast — Free to use. Free to modify. Not for resale.

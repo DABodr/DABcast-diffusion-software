@@ -2,7 +2,9 @@
 
 Modern web interface for managing DAB/DAB+ multiplexes with ODR-mmbTools.
 
-Version: **1.1.0**
+Version: **1.2.0**
+
+> *Free to use. Free to modify. Not for resale.*
 
 ---
 
@@ -15,6 +17,8 @@ Version: **1.1.0**
 - [Features](#-features)
 - [Configuration](#️-configuration)
 - [Project structure](#-project-structure)
+- [Third-Party Software](#third-party-software)
+- [License](#license)
 
 ---
 
@@ -503,20 +507,59 @@ ODR command building, import/export, DL+ parsing, metadata log filtering.
 
 ---
 
-## Third-party licenses
+## Third-Party Software
 
-DABcast depends on third-party components, notably **ODR-mmbTools** (`odr-dabmux`, `odr-audioenc`, `odr-padenc`).
-These components are **not** covered by the DABcast license and remain subject to their own licenses.
+DABcast is a management interface that controls external tools from the
+[ODR-mmbTools](https://www.opendigitalradio.org/) project. These tools are
+**not** included in the DABcast source code — they are installed separately
+and invoked as independent system processes.
 
-The customer is responsible for installing and using third-party components in accordance with their terms.
+| Component | Role | License |
+|-----------|------|---------|
+| ODR-DabMux | DAB multiplexer | GPL v2 |
+| ODR-AudioEnc | Audio encoder | GPL v2 |
+| ODR-PadEnc | PAD encoder | GPL v2 |
+| ODR-DabMod | Modulator | GPL v3 |
+
+The DABcast license does not modify, limit, or override the rights granted
+by the GPL to users of these tools.
+
+DABcast also depends on the following Node.js packages, each governed by
+their own license:
+
+| Package | License |
+|---------|---------|
+| express | MIT |
+| bcryptjs | BSD 3-Clause |
+| morgan | MIT |
+| nanoid | MIT |
+| archiver | MIT |
+| jose | MIT |
+
+Full license texts are available in the `node_modules` directory of a
+development installation, or in the `THIRD_PARTY_NOTICES` file when present.
 
 ---
 
 ## License
 
-This software is **proprietary**. Copyright (c) 2026 Aurélien Picart. All rights reserved.
+Copyright © 2026 DABodr. All rights reserved.
 
-See the `LICENSE` file for full terms.
+DABcast is **source-available** software — free to use, free to modify,
+and free to redistribute, but **not for resale**.
+
+**In brief:**
+- ✅ Use freely, personally and professionally
+- ✅ Read, study, and modify the source code
+- ✅ Create and distribute Derivative Works, free of charge
+- ❌ Sell or charge for access to DABcast or any Derivative Work
+- ❌ Remove the non-resale restriction when redistributing
+
+Attribution and modification notices must be preserved in all distributions.
+
+> *Free to use. Free to modify. Not for resale.*
+
+See the [`LICENSE`](LICENSE) file for the complete terms.
 
 ---
 
