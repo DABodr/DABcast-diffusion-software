@@ -1,0 +1,43 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 18
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - name: Extract version
+        id: version
+        run: echo "VERSION=$(node -p "require('./server/package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Cache pkg targets
+        uses: actions/cache@v4
+        with:
+          path: ~/.pkg-cache
+          key: pkg-node18-${{ runner.os }}
+
+      - name: Build amd64
+        run: chmod +x build/build.sh && ./build/build.sh amd64
+
+      - name: Build arm64
+        run: ./build/build.sh arm64
+
+      - name: Publish release to DABcast-diffusion-software
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: chmod +x build/release.sh && ./build/release.sh "$VERSION"

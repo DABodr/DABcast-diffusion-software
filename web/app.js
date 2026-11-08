@@ -1573,9 +1573,11 @@ $('#btnUpdateStart')?.addEventListener('click', async () => {
   }
 
   // Poll progress until restarting or error
+  let _netErrCount = 0;
   _updatePollingTimer = setInterval(async () => {
     try {
       const prog = await api('/api/update/progress');
+      _netErrCount = 0;
       if (prog.status === 'downloading') {
         _setUpdateProgress(`Downloading… (${prog.progress}%)`, prog.progress);
       } else if (prog.status === 'installing') {
@@ -1598,7 +1600,14 @@ $('#btnUpdateStart')?.addEventListener('click', async () => {
         cancelBtn.disabled = false;
         $('#btnUpdateClose').disabled = false;
       }
-    } catch (_) { /* connection may drop during restart */ }
+    } catch (_) {
+      // Server went down during install — treat as restart
+      if (++_netErrCount >= 2) {
+        clearInterval(_updatePollingTimer);
+        _setUpdateProgress('Restarting service…', 100);
+        setTimeout(() => { dlgUpdate?.close(); _updateInfo = null; refresh(); }, 6000);
+      }
+    }
   }, 800);
 });
 

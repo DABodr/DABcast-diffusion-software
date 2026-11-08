@@ -1240,10 +1240,10 @@ app.get('/api/update/check', async (req, res) => {
     );
     if (!r.ok) return res.json({ latestVersion: null, releaseUrl: null, assets: [] });
     const data = await r.json();
-    // Prefer proper release assets; fall back to .deb/.zip links embedded in the release body
+    // Prefer proper release assets; fall back to .deb links embedded in the release body
     let assets = (data.assets || []).map(a => ({ name: a.name, url: a.browser_download_url, size: a.size || 0 }));
     if (!assets.length && data.body) {
-      const re = /\[([^\]]+\.(?:deb|zip))\]\((https?:\/\/[^)]+)\)/g;
+      const re = /\[([^\]]+\.deb)\]\((https?:\/\/[^)]+)\)/g;
       let m;
       while ((m = re.exec(data.body)) !== null) {
         assets.push({ name: m[1], url: m[2], size: 0 });
@@ -1280,9 +1280,7 @@ app.post('/api/update/apply', async (req, res) => {
   }
 
   const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
-  const asset = _releaseCache.assets.find(a =>
-    (a.name.endsWith('.deb') || a.name.endsWith('.zip')) && a.name.includes(arch)
-  );
+  const asset = _releaseCache.assets.find(a => a.name.endsWith('.deb') && a.name.includes(arch));
   if (!asset) {
     return res.status(400).json({ error: `No package found for architecture: ${arch}` });
   }
@@ -1316,22 +1314,6 @@ async function _doUpdate(asset) {
     if (total > 0) _updateState.progress = Math.round((received / total) * 100);
   }
   await new Promise((ok, fail) => { dest.end(); dest.on('finish', ok); dest.on('error', fail); });
-
-  // If zip: extract the .deb inside, then rename it for the helper
-  if (asset.name.endsWith('.zip')) {
-    const tmpDir = os.tmpdir();
-    await new Promise((ok, fail) => {
-      const child = spawn('unzip', ['-o', tmpPath, '*.deb', '-d', tmpDir], { stdio: 'inherit' });
-      child.on('exit', code => code === 0 ? ok() : fail(new Error(`unzip exited with code ${code}`)));
-      child.on('error', fail);
-    });
-    fs.unlinkSync(tmpPath);
-    // Rename extracted .deb so the helper finds it
-    const debName = asset.name.replace(/\.zip$/, '.deb');
-    const extracted = path.join(os.tmpdir(), debName);
-    const helperTarget = path.join(os.tmpdir(), `dabcast-update_${debName}`);
-    if (fs.existsSync(extracted)) fs.renameSync(extracted, helperTarget);
-  }
 
   _updateState = { ..._updateState, status: 'installing', progress: 100 };
   logger.line('update', `Installing ${asset.name}...`);
