@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v[0-9]*.[0-9]*.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g. 1.3.2)'
+        required: true
 
 jobs:
   build-and-release:
@@ -22,7 +27,12 @@ jobs:
 
       - name: Extract version
         id: version
-        run: echo "VERSION=$(node -p "require('./server/package.json').version")" >> $GITHUB_OUTPUT
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            echo "VERSION=${{ github.event.inputs.version }}" >> $GITHUB_OUTPUT
+          else
+            echo "VERSION=$(node -p "require('./server/package.json').version")" >> $GITHUB_OUTPUT
+          fi
 
       - name: Cache pkg targets
         uses: actions/cache@v4
