@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  remove|upgrade|deconfigure)
+    if systemctl is-active --quiet dabcast.service 2>/dev/null; then
+      systemctl stop dabcast.service
+    fi
+    if systemctl is-enabled --quiet dabcast.service 2>/dev/null; then
+      systemctl disable dabcast.service
+    fi
+    ;;
+esac
+
+exit 0

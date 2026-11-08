@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="color-scheme" content="dark" />
+  <title>DABcast — Sign in</title>
+  <link rel="icon" type="image/png" href="favicon.png?v=2" />
+  <link rel="stylesheet" href="login.css" />
+  <script src="login.js" defer></script>
+</head>
+<body>
+  <main class="login-shell">
+    <section class="login-visual" aria-hidden="true">
+      <div class="signal signal-one"></div>
+      <div class="signal signal-two"></div>
+      <div class="visual-content">
+        <span class="onair"><i></i> Broadcast control</span>
+        <h1>Your multiplex.<br /><span>One clear signal.</span></h1>
+        <p>Secure access to DABcast broadcast management, monitoring and automation.</p>
+        <div class="signal-meter">
+          <span></span><span></span><span></span><span></span><span></span><span></span><span></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="login-panel">
+      <div class="login-card">
+        <header class="brand">
+          <img src="logodab.png" alt="DABcast" />
+          <div>
+            <strong>DABcast</strong>
+            <span>DAB+ broadcast management</span>
+          </div>
+        </header>
+
+        <div class="form-heading">
+          <p class="eyebrow">Welcome back</p>
+          <h2>Sign in to DABcast</h2>
+          <p>Enter your credentials to open the control interface.</p>
+        </div>
+
+        <div class="login-error" id="loginError" role="alert" aria-live="polite" hidden></div>
+
+        <form id="loginForm">
+          <label for="username">Username</label>
+          <div class="input-wrap">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm7 8a7 7 0 0 0-14 0" /></svg>
+            <input id="username" name="username" autocomplete="username" maxlength="128" required autofocus />
+          </div>
+
+          <label for="password">Password</label>
+          <div class="input-wrap">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></svg>
+            <input id="password" name="password" type="password" autocomplete="current-password" maxlength="1024" required />
+            <button class="toggle-password" id="togglePassword" type="button" aria-label="Show password" title="Show password">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z" /><circle cx="12" cy="12" r="2.5" /></svg>
+            </button>
+          </div>
+
+          <label class="remember">
+            <input id="remember" type="checkbox" checked />
+            <span>Keep me signed in on this device</span>
+          </label>
+
+          <button class="submit" id="submitLogin" type="submit">
+            <span>Sign in</span>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+          </button>
+        </form>
+
+        <footer><span class="secure-dot"></span> Protected local session</footer>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

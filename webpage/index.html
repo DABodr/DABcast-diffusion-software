@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DABcast — DAB+ Broadcast Software</title>
+  <link rel="icon" type="image/png" href="favicon.png" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="brand">
+        <img src="logodab.png" alt="DABcast" class="logo" />
+        <div>
+          <div class="site-title">DABcast</div>
+          <div class="site-tagline">Open-source DAB+ broadcast management</div>
+        </div>
+      </div>
+      <nav>
+        <a href="#features">Features</a>
+        <a href="#download" class="btn-nav">Download</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- Hero -->
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="onair-badge">● ON AIR</div>
+        <h1>Manage your DAB+ multiplex<br><span class="accent">from a web browser</span></h1>
+        <p class="hero-sub">
+          DABcast is a Node.js web application that orchestrates the full
+          <a href="https://www.opendigitalradio.org/" target="_blank" rel="noopener">ODR-mmbTools</a>
+          chain — audio encoding, PAD, multiplexing and RF output — from a single, clean interface.
+        </p>
+        <div class="hero-actions">
+          <a href="#download" class="btn btn-primary">Download v1.1.0</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- Screenshot -->
+    <section class="screenshot-wrap">
+      <div class="screenshot-frame">
+        <div class="screenshot-bar">
+          <span></span><span></span><span></span>
+          <span class="screenshot-url">http://192.168.1.50:9090</span>
+        </div>
+        <div class="screenshot-body screenshot-img-wrap">
+          <button type="button" class="screenshot-zoom" id="openScreenshot" aria-label="Enlarge the DABcast interface screenshot">
+            <img src="screenshot.png" alt="DABcast web interface" class="screenshot-img" />
+            <span class="screenshot-zoom-hint" aria-hidden="true">⌕ Click to enlarge</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <dialog class="screenshot-lightbox" id="screenshotLightbox" aria-label="Enlarged DABcast interface screenshot">
+      <button type="button" class="lightbox-close" id="closeScreenshot" aria-label="Close enlarged screenshot">&times;</button>
+      <img src="screenshot.png" alt="DABcast web interface — enlarged view" />
+      <div class="lightbox-caption">DABcast web interface <span>Press Esc or click outside to close</span></div>
+    </dialog>
+
+    <!-- Features -->
+    <section class="features" id="features">
+      <div class="section-inner">
+        <h2>Everything you need to run a DAB+ multiplex</h2>
+        <div class="feature-grid">
+
+          <div class="feature-card">
+            <div class="feature-icon">📡</div>
+            <h3>Full ODR-mmbTools integration</h3>
+            <p>Manages odr-audioenc, odr-padenc, odr-dabmux and odr-dabmod in a coordinated process chain. Supports EASYDAB, EDI, HackRF and USRP output modes.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🔄</div>
+            <h3>Audio-based failover watchdog</h3>
+            <p>Detects stream failures via audio probing (not just HTTP checks). Automatically switches to a backup stream and returns to main when audio is restored.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🔔</div>
+            <h3>Telegram bot notifications</h3>
+            <p>Forwards logs and critical broadcast alerts to your Telegram bot. Choose the minimum log level, enable silent messages and verify the connection with a built-in test.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🎵</div>
+            <h3>Live metadata — DLS &amp; SLS</h3>
+            <p>Pushes Now Playing text and album art to listeners in real time. Supports direct stream metadata, JSON API polling and DL+ tags.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">⚡</div>
+            <h3>Lightweight &amp; Raspberry Pi ready</h3>
+            <p>Runs on amd64 servers and Raspberry Pi 4/5 (arm64). Ships as a self-contained .deb package — no Node.js installation required on the target system.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🖥️</div>
+            <h3>Browser-based interface</h3>
+            <p>Clean dark-themed UI accessible from any device on your local network. No desktop environment required on the broadcast server.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🔐</div>
+            <h3>Integrated secure sign-in</h3>
+            <p>Branded responsive login with signed sessions, persistent sign-in, brute-force protection and automatic session invalidation after a password change.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">📦</div>
+            <h3>Preset management</h3>
+            <p>Save and restore complete multiplex configurations as JSON presets. Import/export individual services or full configurations with a single click.</p>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- Download -->
+    <section class="download" id="download">
+      <div class="section-inner">
+        <h2>Download DABcast v1.1.0</h2>
+        <p class="download-sub">Choose the package for your platform. Requires Debian/Ubuntu and the ODR-mmbTools suite.</p>
+        <div class="download-grid">
+
+          <div class="download-card">
+            <div class="dl-icon">🖥️</div>
+            <div class="dl-info">
+              <div class="dl-title">Linux x86-64</div>
+              <div class="dl-desc">Debian / Ubuntu — PC &amp; server</div>
+            </div>
+            <a href="download/dabcast_1.1.0_amd64.deb" class="btn btn-primary">
+              .deb amd64
+            </a>
+          </div>
+
+          <div class="download-card">
+            <div class="dl-icon">🍓</div>
+            <div class="dl-info">
+              <div class="dl-title">Raspberry Pi</div>
+              <div class="dl-desc">Raspberry Pi OS 64-bit (arm64)</div>
+            </div>
+            <a href="download/dabcast_1.1.0_arm64.deb" class="btn btn-primary">
+              .deb arm64
+            </a>
+          </div>
+
+        </div>
+
+        <div class="download-grid" style="margin-bottom:16px">
+          <div class="download-card">
+            <div class="dl-icon">📄</div>
+            <div class="dl-info">
+              <div class="dl-title">User Guide</div>
+              <div class="dl-desc">Installation &amp; configuration guide</div>
+            </div>
+            <a href="download/DABcast_Guide.html" target="_blank" class="btn btn-ghost">
+              Open
+            </a>
+          </div>
+          <div class="download-card">
+            <div class="dl-icon">⚙️</div>
+            <div class="dl-info">
+              <div class="dl-title">install-tools.sh</div>
+              <div class="dl-desc">ODR-mmbTools installer script</div>
+            </div>
+            <a href="download/install-tools.sh" class="btn btn-ghost">
+              Download
+            </a>
+          </div>
+        </div>
+
+        <div class="install-block">
+          <div class="install-label">Quick install</div>
+          <pre><code>sudo dpkg -i dabcast_1.1.0_amd64.deb
+sudo systemctl enable --now dabcast
+# Open http://&lt;server-ip&gt;:9090
+# Default login: admin / dabcast  — change the password on first login</code></pre>
+        </div>
+
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <span>DABcast — Open-source DAB+ broadcast software</span>
+      <span class="muted">Built with <a href="https://www.opendigitalradio.org/" target="_blank" rel="noopener">ODR-mmbTools</a></span>
+    </div>
+  </footer>
+
+  <script>
+    const screenshotLightbox = document.getElementById('screenshotLightbox');
+    const openScreenshot = document.getElementById('openScreenshot');
+    const closeScreenshot = document.getElementById('closeScreenshot');
+
+    openScreenshot?.addEventListener('click', () => {
+      if (typeof screenshotLightbox?.showModal === 'function') {
+        screenshotLightbox.showModal();
+      } else {
+        window.open('screenshot.png', '_blank', 'noopener');
+      }
+    });
+
+    closeScreenshot?.addEventListener('click', () => screenshotLightbox.close());
+    screenshotLightbox?.addEventListener('click', (event) => {
+      if (event.target === screenshotLightbox) screenshotLightbox.close();
+    });
+  </script>
+
+</body>
+</html>

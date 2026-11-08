@@ -1,0 +1,12 @@
+Package: dabcast
+Version: 1.1.0
+Architecture: amd64
+Maintainer: DABodr <contact@dabordr.fr>
+Section: net
+Priority: optional
+Homepage: https://github.com/DABodr/DABcast
+Description: DABcast DAB+ Web UI
+ Web interface for DAB+ multiplexing via ODR-mmbTools.
+ Provides a browser-based control panel to manage DAB+ ensembles,
+ services, audio encoding, PAD metadata and live monitoring.
+Suggests: imagemagick, odr-dabmux, odr-audioenc, odr-padenc

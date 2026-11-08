@@ -1,0 +1,123 @@
+#!/bin/bash
+set -e
+
+LOGFILE=/var/log/dabcast-install.log
+
+# Rediriger stderr vers le log — toutes les erreurs de commandes y seront capturées
+exec 2>>"$LOGFILE"
+
+# En cas d'échec inattendu (set -e), noter la ligne dans le log
+trap 'echo "$(date "+%Y-%m-%d %H:%M:%S") [ECHEC] postinst interrompu (code: $?)" >> "$LOGFILE"' ERR
+
+log() {
+  echo "[dabcast] $1"
+  echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOGFILE"
+}
+
+case "$1" in
+  configure)
+    log "=== Installation DABcast ==="
+    log "Version dpkg : $2 -> $1"
+    log "Architecture : $(dpkg --print-architecture 2>/dev/null || echo inconnue)"
+    log "Systeme      : $(uname -r)"
+    log ""
+
+    # --- Résolution de l'utilisateur du service ---
+    # Priorité : RUN_AS_USER dans /etc/default/dabcast > SUDO_USER > premier user UID≥1000
+    RUN_AS_USER=""
+    if [ -f /etc/default/dabcast ]; then
+      # shellcheck disable=SC1091
+      . /etc/default/dabcast
+    fi
+
+    if [ -z "$RUN_AS_USER" ]; then
+      # Auto-détection : utilisateur qui a lancé sudo dpkg -i
+      if [ -n "$SUDO_USER" ] && id -u "$SUDO_USER" >/dev/null 2>&1; then
+        RUN_AS_USER="$SUDO_USER"
+        log "[1/5] Utilisateur auto-detecte via SUDO_USER : $RUN_AS_USER"
+      else
+        # Dernier recours : premier compte non-système (UID >= 1000)
+        RUN_AS_USER=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')
+        log "[1/5] Utilisateur auto-detecte (premier UID>=1000) : $RUN_AS_USER"
+      fi
+    else
+      log "[1/5] Utilisateur configure dans /etc/default/dabcast : $RUN_AS_USER"
+    fi
+
+    if [ -z "$RUN_AS_USER" ] || ! id -u "$RUN_AS_USER" >/dev/null 2>&1; then
+      log "  ERREUR : impossible de determiner l'utilisateur du service."
+      log "  Definissez RUN_AS_USER dans /etc/default/dabcast et reinstallez."
+      exit 1
+    fi
+    RUN_AS_GROUP=$(id -gn "$RUN_AS_USER")
+    log "  -> Utilisateur : $(id "$RUN_AS_USER")"
+    log "  -> Groupe principal : $RUN_AS_GROUP"
+
+    # Patcher le service systemd avec le bon utilisateur
+    sed -i "s/^User=.*/User=$RUN_AS_USER/" /lib/systemd/system/dabcast.service
+    sed -i "s/^Group=.*/Group=$RUN_AS_GROUP/" /lib/systemd/system/dabcast.service
+    log "  -> Service patche : User=$RUN_AS_USER Group=$RUN_AS_GROUP"
+
+    # --- Repertoires de donnees ---
+    log "[2/5] Creation des repertoires de donnees..."
+    for dir in /var/lib/dabcast/presets \
+                /var/lib/dabcast/logs \
+                /var/lib/dabcast/runtime \
+                /var/lib/dabcast/mot; do
+      mkdir -p "$dir"
+      log "  -> $dir"
+    done
+
+    # --- Permissions ---
+    log "[3/5] Application des permissions..."
+    chown -R "$RUN_AS_USER:$RUN_AS_GROUP" /var/lib/dabcast
+    chmod 750 /var/lib/dabcast
+    chmod 755 /opt/dabcast/bin/dabcast
+    chmod 600 /etc/default/dabcast
+    log "  -> /var/lib/dabcast  : $(stat -c '%U:%G %a' /var/lib/dabcast)"
+    log "  -> /opt/dabcast/bin/dabcast : $(stat -c '%U:%G %a' /opt/dabcast/bin/dabcast)"
+    log "  -> /etc/default/dabcast : $(stat -c '%U:%G %a' /etc/default/dabcast)"
+
+    # --- Verification binaire ---
+    log "[4/5] Verification du binaire..."
+    BINFILE=/opt/dabcast/bin/dabcast
+    if [ -f "$BINFILE" ]; then
+      log "  -> Taille  : $(du -sh "$BINFILE" | cut -f1)"
+      log "  -> Type    : $(file "$BINFILE" | cut -d: -f2-)"
+    else
+      log "  ERREUR : binaire absent : $BINFILE"
+    fi
+
+    # --- Systemd ---
+    log "[5/5] Configuration systemd..."
+    log "  -> Fichier service : $(ls -lh /lib/systemd/system/dabcast.service 2>/dev/null || echo ABSENT)"
+    log "  -> /etc/default/dabcast : $(ls -lh /etc/default/dabcast 2>/dev/null || echo ABSENT)"
+    systemctl daemon-reload
+    systemctl enable dabcast.service
+    log "  -> Service active"
+
+    if systemctl is-system-running --quiet 2>/dev/null; then
+      log "  -> Demarrage du service..."
+      systemctl start dabcast.service || log "  AVERTISSEMENT : demarrage echoue (voir : journalctl -u dabcast -n 30)"
+    else
+      log "  -> systemd non disponible en mode live, demarrage ignore"
+    fi
+
+    log ""
+    log "=== Installation terminee ==="
+    log "Chemins installs :"
+    log "  Binaire      : /opt/dabcast/bin/dabcast"
+    log "  Interface web: /opt/dabcast/web/"
+    log "  Donnees      : /var/lib/dabcast/ (proprietaire : $RUN_AS_USER)"
+    log "  Service      : /lib/systemd/system/dabcast.service"
+    log "  Config env   : /etc/default/dabcast"
+    log "  Ce log       : $LOGFILE"
+    log ""
+    log "En cas de probleme :"
+    log "  journalctl -u dabcast -n 50 --no-pager"
+    log "  systemctl status dabcast"
+    log "  sudo -u $RUN_AS_USER env DABCAST_DATA_DIR=/var/lib/dabcast /opt/dabcast/bin/dabcast"
+    ;;
+esac
+
+exit 0

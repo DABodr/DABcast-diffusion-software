@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+  purge)
+    # Remove data directory only on purge (not on simple remove)
+    rm -rf /var/lib/dabcast
+
+    # Remove system user
+    if id -u dabcast >/dev/null 2>&1; then
+      userdel dabcast 2>/dev/null || true
+    fi
+
+    # Reload systemd
+    systemctl daemon-reload 2>/dev/null || true
+    ;;
+  remove)
+    systemctl daemon-reload 2>/dev/null || true
+    ;;
+esac
+
+exit 0

@@ -1,0 +1,28 @@
+{
+  "host": "0.0.0.0",
+  "port": 9090,
+  "odrBinDir": "",
+  "dataDir": "./data",
+  "dabmux": {
+    "telnetPort": 12721,
+    "managementPort": 12720,
+    "zmqEndpoint": "tcp://lo:12722",
+    "txMode": "EDI",
+    "easyDabOutput": {
+      "ip": "0.0.0.0",
+      "port": 18081
+    },
+    "ediTcpListenPort": 13000,
+    "ediPftEnabled": false,
+    "ediFec": 2,
+    "ediTistOffsetSec": 0
+  },
+  "ensemble": {
+    "idHex": "0xFEFE",
+    "eccHex": "0xE0",
+    "label": "Test Mux",
+    "shortlabel": "Test",
+    "internationalTable": 1,
+    "localTimeOffset": "auto"
+  }
+}

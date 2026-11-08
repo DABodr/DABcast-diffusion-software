@@ -1,0 +1,27 @@
+docs/
+MEMORY.md
+DLPLUS_EXAMPLE.md
+DLPLUS_INTEGRATION.md
+
+# Runtime/logs
+/data/logs/*.log
+/data/runtime/*
+!/data/runtime/.gitkeep
+
+# Generated MOT assets (local only)
+/data/mot/**
+!/data/mot/.gitkeep
+
+# Node dependencies
+/node_modules/
+/server/node_modules/
+
+# Local settings (machine-specific)
+/data/settings.json
+/data/license.json
+/data/license_state.json
+/data/.telegram.json
+/data/.auth-secret
+!/data/settings.example.json
+license-server/data/
+dist/

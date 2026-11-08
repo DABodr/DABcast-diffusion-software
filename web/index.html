@@ -1,0 +1,820 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DAB WebUI</title>
+  <link rel="icon" type="image/png" href="favicon.png?v=2" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="logodab.png" class="logo" alt="DAB" />
+      <div>
+        <div class="title" id="muxName">Mux</div><span class="app-version" id="appVersion"></span>
+        <div class="subtitle" id="muxSubtitle">Demo preset</div>
+      </div>
+    </div>
+
+    <div class="cu-gauge" id="cuGauge">
+      <div class="cu-gauge-label" id="cuGaugeText">CU: 0 / 864</div>
+      <div class="cu-gauge-track">
+        <div class="cu-gauge-fill" id="cuGaugeFill"></div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button id="btnAuth" class="btn btn-about hide-mobile" title="Account and password">&#128274;</button>
+      <button id="btnTelegram" class="btn" title="Telegram notifications">Telegram</button>
+      <button id="btnAbout" class="btn btn-about" title="About">?</button>
+      <button id="btnDablin" class="btn">Dablin</button>
+      <button id="btnMux" class="btn">Multiplex</button>
+      <button id="btnLogs" class="btn">Logs</button>
+      <button id="btnStop" class="btn btn-danger">Stop</button>
+      <button id="btnStart" class="btn btn-success">Start</button>
+      <div class="onair-group">
+        <div class="onair" id="onAir">OFF AIR</div>
+        <span class="onair-duration" id="onAirDuration"></span>
+      </div>
+    </div>
+  </header>
+
+  <div id="pwdBanner" class="pwd-banner hidden">
+    Default password detected — please change your password before continuing.
+    <button id="btnPwdBanner" class="btn btn-mini">Change password</button>
+  </div>
+  <main class="main">
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">Services</div>
+          <div class="card-hint hide-mobile">Add / edit via dialog. Some fields are locked when ON AIR.</div>
+          <div class="card-hint" id="capHint"></div>
+        </div>
+        <div class="row">
+          <button id="btnExportConfig" class="btn btn-mini">Export config</button>
+          <button id="btnImportAll" class="btn btn-mini">Import config</button>
+          <button id="btnExportService" class="btn btn-mini">Export service</button>
+          <button id="btnImportService" class="btn btn-mini">Import service</button>
+          <button id="btnExportAllServices" class="btn btn-mini">Export all services (.zip)</button>
+          <button id="btnAdd" class="btn">+ Add service</button>
+        </div>
+      </div>
+
+      <div class="tablewrap">
+        <table class="table table-wide" id="svcTable">
+          <thead>
+            <tr>
+              <th class="col-status"><span class="hide-mobile">Status</span><span class="show-mobile">Sts</span></th>
+              <th>PS8 / PS16</th>
+              <th class="col-pid hide-mobile">PID</th>
+              <th class="col-bitrate">Bitrate</th>
+              <th class="col-cu">CU</th>
+              <th class="col-prot">Prot</th>
+              <th class="col-codec">Codec</th>
+              <th class="col-ch">Channels</th>
+              <th class="col-sr">Sample</th>
+              <th class="col-port">Port</th>
+              <th class="col-main"><span class="hide-mobile">Main</span><span class="show-mobile">M</span></th>
+              <th class="col-bkp"><span class="hide-mobile">Bkp</span><span class="show-mobile">B</span></th>
+              <th>Level</th>
+              <th>DLS</th>
+              <th class="col-dlplus">DL+</th>
+              <th>SLS</th>
+              <th class="col-actions"></th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <input type="file" id="fileImportAll" accept=".json" hidden />
+  <input type="file" id="fileImportService" accept=".dct" multiple hidden />
+  <input type="file" id="fileUploadLogo" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" hidden />
+
+  <dialog id="dlgService" class="modal">
+    <form method="dialog" class="modal-body modal-service" id="svcForm">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title" id="dlgTitle">Service</div>
+          <div class="modal-sub" id="dlgLockHint"></div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close">✕</button>
+      </div>
+      <div class="alert hidden" id="svcError"></div>
+
+      <div class="tabs" role="tablist" aria-label="Service tabs">
+        <button type="button" class="tab active" data-tab="general">General</button>
+        <button type="button" class="tab" data-tab="audio">Audio source</button>
+        <button type="button" class="tab" data-tab="metadata">Metadata</button>
+      </div>
+
+      <section class="tabpanel" data-panel="general">
+        <div class="grid3">
+          <label>
+            <span>PI</span>
+            <input id="f_pi" maxlength="4" placeholder="F204" />
+          </label>
+          <label>
+            <span>PS8</span>
+            <input id="f_ps8" maxlength="8" required />
+          </label>
+          <label>
+            <span>PS16</span>
+            <input id="f_ps16" maxlength="16" />
+          </label>
+
+          <label>
+            <span>Language</span>
+            <select id="f_lang">
+              <optgroup label="European languages">
+                <option value="0x00">0x00 - Unknown</option>
+                <option value="0x01">0x01 - Albanian</option>
+                <option value="0x02">0x02 - Breton</option>
+                <option value="0x03">0x03 - Catalan</option>
+                <option value="0x04">0x04 - Croatian</option>
+                <option value="0x05">0x05 - Welsh</option>
+                <option value="0x06">0x06 - Czech</option>
+                <option value="0x07">0x07 - Danish</option>
+                <option value="0x08">0x08 - German</option>
+                <option value="0x09">0x09 - English</option>
+                <option value="0x0A">0x0A - Spanish</option>
+                <option value="0x0B">0x0B - Esperanto</option>
+                <option value="0x0C">0x0C - Estonian</option>
+                <option value="0x0D">0x0D - Basque</option>
+                <option value="0x0E">0x0E - Faroese</option>
+                <option value="0x0F">0x0F - French</option>
+                <option value="0x10">0x10 - Frisian</option>
+                <option value="0x11">0x11 - Irish</option>
+                <option value="0x12">0x12 - Gaelic</option>
+                <option value="0x13">0x13 - Galician</option>
+                <option value="0x14">0x14 - Icelandic</option>
+                <option value="0x15">0x15 - Italian</option>
+                <option value="0x16">0x16 - Lappish</option>
+                <option value="0x17">0x17 - Latin</option>
+                <option value="0x18">0x18 - Latvian</option>
+                <option value="0x19">0x19 - Luxembourgish</option>
+                <option value="0x1A">0x1A - Lithuanian</option>
+                <option value="0x1B">0x1B - Hungarian</option>
+                <option value="0x1C">0x1C - Maltese</option>
+                <option value="0x1D">0x1D - Dutch</option>
+                <option value="0x1E">0x1E - Norwegian</option>
+                <option value="0x1F">0x1F - Occitan</option>
+                <option value="0x20">0x20 - Polish</option>
+                <option value="0x21">0x21 - Portuguese</option>
+                <option value="0x22">0x22 - Romanian</option>
+                <option value="0x23">0x23 - Romansh</option>
+                <option value="0x24">0x24 - Serbian</option>
+                <option value="0x25">0x25 - Slovak</option>
+                <option value="0x26">0x26 - Slovene</option>
+                <option value="0x27">0x27 - Finnish</option>
+                <option value="0x28">0x28 - Swedish</option>
+                <option value="0x29">0x29 - Turkish</option>
+                <option value="0x2A">0x2A - Flemish</option>
+                <option value="0x2B">0x2B - Walloon</option>
+              </optgroup>
+              <optgroup label="Other languages">
+                <option value="0x40">0x40 - Background sound</option>
+                <option value="0x41">0x41 - Zulu</option>
+                <option value="0x42">0x42 - Vietnamese</option>
+                <option value="0x43">0x43 - Uzbek</option>
+                <option value="0x44">0x44 - Urdu</option>
+                <option value="0x45">0x45 - Ukrainian</option>
+                <option value="0x46">0x46 - Thai</option>
+                <option value="0x47">0x47 - Telugu</option>
+                <option value="0x48">0x48 - Tatar</option>
+                <option value="0x49">0x49 - Tamil</option>
+                <option value="0x4A">0x4A - Tadzhik</option>
+                <option value="0x4B">0x4B - Swahili</option>
+                <option value="0x4C">0x4C - Sranan Tongo</option>
+                <option value="0x4D">0x4D - Somali</option>
+                <option value="0x4E">0x4E - Sinhalese</option>
+                <option value="0x4F">0x4F - Shona</option>
+                <option value="0x50">0x50 - Serbo-Croat</option>
+                <option value="0x51">0x51 - Ruthenian</option>
+                <option value="0x52">0x52 - Russian</option>
+                <option value="0x53">0x53 - Quechua</option>
+                <option value="0x54">0x54 - Pushtu</option>
+                <option value="0x55">0x55 - Punjabi</option>
+                <option value="0x56">0x56 - Persian</option>
+                <option value="0x57">0x57 - Papiamento</option>
+                <option value="0x58">0x58 - Oriya</option>
+                <option value="0x59">0x59 - Nepali</option>
+                <option value="0x5A">0x5A - Ndebele</option>
+                <option value="0x5B">0x5B - Marathi</option>
+                <option value="0x5C">0x5C - Moldavian</option>
+                <option value="0x5D">0x5D - Malaysian</option>
+                <option value="0x5E">0x5E - Malagasy</option>
+                <option value="0x5F">0x5F - Macedonian</option>
+                <option value="0x60">0x60 - Laotian</option>
+                <option value="0x61">0x61 - Korean</option>
+                <option value="0x62">0x62 - Khmer</option>
+                <option value="0x63">0x63 - Kazakh</option>
+                <option value="0x64">0x64 - Kannada</option>
+                <option value="0x65">0x65 - Japanese</option>
+                <option value="0x66">0x66 - Indonesian</option>
+                <option value="0x67">0x67 - Hindi</option>
+                <option value="0x68">0x68 - Hebrew</option>
+                <option value="0x69">0x69 - Hausa</option>
+                <option value="0x6A">0x6A - Gurani</option>
+                <option value="0x6B">0x6B - Gujurati</option>
+                <option value="0x6C">0x6C - Greek</option>
+                <option value="0x6D">0x6D - Georgian</option>
+                <option value="0x6E">0x6E - Fulani</option>
+                <option value="0x6F">0x6F - Dari</option>
+                <option value="0x70">0x70 - Churash</option>
+                <option value="0x71">0x71 - Chinese</option>
+                <option value="0x72">0x72 - Burmese</option>
+                <option value="0x73">0x73 - Bulgarian</option>
+                <option value="0x74">0x74 - Bengali</option>
+                <option value="0x75">0x75 - Belorussian</option>
+                <option value="0x76">0x76 - Bambora</option>
+                <option value="0x77">0x77 - Azerbaijani</option>
+                <option value="0x78">0x78 - Assamese</option>
+                <option value="0x79">0x79 - Armenian</option>
+                <option value="0x7A">0x7A - Arabic</option>
+                <option value="0x7B">0x7B - Amharic</option>
+              </optgroup>
+            </select>
+          </label>
+          <label>
+            <span>PTY</span>
+            <select id="f_pty">
+              <option value="0">0 - None</option>
+              <option value="1">1 - News</option>
+              <option value="2">2 - Current Affairs</option>
+              <option value="3">3 - Information</option>
+              <option value="4">4 - Sport</option>
+              <option value="5">5 - Education</option>
+              <option value="6">6 - Drama</option>
+              <option value="7">7 - Culture</option>
+              <option value="8">8 - Science</option>
+              <option value="9">9 - Varied</option>
+              <option value="10">10 - Pop Music</option>
+              <option value="11">11 - Rock Music</option>
+              <option value="12">12 - Easy Listening</option>
+              <option value="13">13 - Light Classical</option>
+              <option value="14">14 - Serious Classical</option>
+              <option value="15">15 - Other Music</option>
+              <option value="16">16 - Weather</option>
+              <option value="17">17 - Finance</option>
+              <option value="18">18 - Children's</option>
+              <option value="19">19 - Social Affairs</option>
+              <option value="20">20 - Religion</option>
+              <option value="21">21 - Phone In</option>
+              <option value="22">22 - Travel</option>
+              <option value="23">23 - Leisure</option>
+              <option value="24">24 - Jazz Music</option>
+              <option value="25">25 - Country Music</option>
+              <option value="26">26 - National Music</option>
+              <option value="27">27 - Oldies Music</option>
+              <option value="28">28 - Folk Music</option>
+              <option value="29">29 - Documentary</option>
+            </select>
+          </label>
+          <label>
+            <span>Protection EEP-A</span>
+            <select id="f_prot">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Bitrate (kbps)</span>
+            <select id="f_bitrate"></select>
+          </label>
+          <label>
+            <span>Sample rate</span>
+            <select id="f_sr">
+              <option value="48000">48 kHz</option>
+              <option value="32000">32 kHz</option>
+            </select>
+          </label>
+          <label>
+            <span>Channels</span>
+            <select id="f_ch">
+              <option value="2">Stereo</option>
+              <option value="1">Mono</option>
+            </select>
+          </label>
+
+          <label>
+            <span>CU (estim.)</span>
+            <input id="f_cu" disabled />
+          </label>
+          <label>
+            <span>Codec</span>
+            <select id="f_codec">
+              <option value="HE-AAC v1 (SBR)">HE-AAC v1 (SBR)</option>
+              <option value="HE-AAC v2 (PS)">HE-AAC v2 (PS)</option>
+              <option value="AAC-LC">AAC-LC</option>
+            </select>
+          </label>
+
+          <label>
+            <span>Metadata PAD size</span>
+            <input id="f_padsize" type="number" min="4" max="196" step="1" />
+          </label>
+          <label>
+            <span>ZMQ buffer</span>
+            <input id="f_zbuf" type="number" min="0" max="4000" />
+          </label>
+          <label>
+            <span>ZMQ prebuffer</span>
+            <input id="f_zpre" type="number" min="0" max="4000" />
+          </label>
+          <label>
+            <span>Encoder buffer (ms)</span>
+            <input id="f_encbuf" type="number" min="0" max="2000" />
+          </label>
+        </div>
+      </section>
+
+      <section class="tabpanel hidden" data-panel="audio">
+        <div class="grid2">
+          <label class="span2">
+            <span>Main audio source</span>
+            <select id="f_src">
+              <option value="GSTREAMER">GStreamer</option>
+              <option value="VLC">VLC</option>
+              <option value="ZMQ">ZMQ direct (external encoder)</option>
+              <option value="EDI">EDI direct (external encoder)</option>
+            </select>
+          </label>
+
+          <!-- Direct input info (ZMQ / EDI): port + bitrate + protection -->
+          <label id="f_direct_port_row" style="display:none;">
+            <span>Input port (non-modifiable)</span>
+            <input id="f_direct_port" type="text" readonly style="background:var(--surface2);cursor:default;font-family:monospace;" />
+          </label>
+          <label id="f_direct_bitrate_row" style="display:none;">
+            <span>Bitrate (kbps)</span>
+            <select id="f_direct_bitrate"></select>
+          </label>
+          <label id="f_direct_prot_row" style="display:none;">
+            <span>Protection EEP-A</span>
+            <select id="f_direct_prot">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select>
+          </label>
+
+          <!-- Encoder-specific fields — hidden for ZMQ/EDI direct modes -->
+          <label id="f_gain_row">
+            <span>Audio gain (dB)</span>
+            <input id="f_gain" type="number" step="0.5" min="-20" max="20" />
+          </label>
+          <label id="f_uri_row" class="span2">
+            <span>Main stream</span>
+            <input id="f_uri" placeholder="http://..." />
+          </label>
+
+          <label id="f_thresh_row">
+            <span>Silence (sec)</span>
+            <input id="f_thresh" type="number" min="1" max="600" />
+          </label>
+          <label id="f_return_row">
+            <span>Return main (sec)</span>
+            <input id="f_return" type="number" min="0" max="3600" />
+          </label>
+          <label id="f_switch_row">
+            <span>Switch to backup</span>
+            <select id="f_switch">
+              <option value="1">Yes</option>
+              <option value="0">No</option>
+            </select>
+          </label>
+
+          <label id="f_backup_row" class="span2">
+            <span>Backup stream</span>
+            <input id="f_backup" placeholder="http://..." />
+          </label>
+
+          <div id="f_swap_row" class="row span2">
+            <button type="button" class="btn" id="btnSwap">Swap main/backup</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="tabpanel hidden" data-panel="metadata">
+        <div class="grid-meta-top">
+          <label>
+            <span>Metadata mode</span>
+            <select id="f_meta_mode">
+              <option value="STREAM">Stream (ICY)</option>
+              <option value="JSON">JSON (API)</option>
+              <option value="NONE">None (manual)</option>
+            </select>
+          </label>
+          <label>
+            <span>Show default DLS</span>
+            <select id="f_json_default_dls">
+              <option value="yes" selected>Yes</option>
+              <option value="no">No</option>
+            </select>
+          </label>
+          <label>
+            <span>DLS (displayed text)</span>
+            <input id="f_default_dls" placeholder="My DAB+ Radio" />
+          </label>
+        </div>
+
+          <!-- JSON mode fields -->
+          <div class="json-only" style="margin-top: 12px;">
+            <div class="grid2">
+              <label class="span2">
+                <span>JSON URL</span>
+                <input id="f_json_url" placeholder="https://api.example.com/nowplaying" />
+              </label>
+            </div>
+            <div class="grid-keys">
+              <label>
+                <span>Refresh (sec)</span>
+                <input id="f_json_interval" type="number" min="3" max="3600" value="10" />
+              </label>
+              <label>
+                <span>Artist key</span>
+                <input id="f_json_artist" placeholder="artist" value="artist" />
+              </label>
+              <label>
+                <span>Title key</span>
+                <input id="f_json_title" placeholder="title" value="title" />
+              </label>
+              <label>
+                <span>Cover URL key</span>
+                <input id="f_json_sls" placeholder="slide" value="slide" />
+              </label>
+            </div>
+            <div class="grid2" style="margin-top: 12px;">
+              <div class="row span2">
+                <button type="button" class="btn" id="btnTestJson">Test JSON</button>
+                <button type="button" class="btn" id="btnTestCover">Test cover</button>
+                <span class="muted" id="jsonTestStatus"></span>
+              </div>
+              <div class="span2" id="coverPreviewBox" style="display:none;">
+                <img id="coverPreviewImg" alt="Cover preview" style="width: 160px; height: 120px; object-fit: contain; background: #000; border-radius: 8px;" />
+                <span class="muted" id="coverPreviewInfo"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- SLS image section (always visible) -->
+          <div class="slsbox">
+            <div class="sls-title">SLS (displayed picture)</div>
+            <div class="slsrow">
+              <div style="text-align: center;">
+                <div id="slsImgWrap" class="no-logo">
+                  <img id="slsImg" alt="SLS" />
+                </div>
+                <div style="font-size: 11px; color: #666; margin-top: 4px;">320x240 .jpeg</div>
+              </div>
+              <div class="slsctl">
+                <label>
+                  <span>Picture URL</span>
+                  <input id="f_sls_url" placeholder="https://.../cover.jpg" />
+                </label>
+                <div class="row">
+                  <button type="button" class="btn" id="btnTestSls">Test</button>
+                  <button type="button" class="btn" id="btnDownloadSls">Download</button>
+                  <span class="muted" id="slsTestStatus"></span>
+                </div>
+                <label>
+                  <span>Or upload a local picture</span>
+                  <input id="f_logo" type="file" accept="image/jpeg,image/png,image/webp" />
+                </label>
+                <div class="row">
+                  <button type="button" class="btn" id="btnClearLogo">Clear</button>
+                  <button type="button" class="btn" id="btnManageLogos">📁 Manage Logos</button>
+                </div>
+                <div class="muted" id="slsHint"></div>
+              </div>
+            </div>
+          </div>
+      </section>
+
+      <div class="modal-actions">
+        <div class="left">
+          <button type="button" class="btn" id="btnPrev">◀ Prev</button>
+          <button type="button" class="btn" id="btnNext">Next ▶</button>
+        </div>
+        <div class="right">
+          <button type="button" class="btn" data-action="svc-cancel">Cancel</button>
+          <button id="btnSave" value="default" class="btn btn-success">OK</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgLogs" class="modal">
+    <form method="dialog" class="modal-body modal-logs">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Logs</div>
+          <div class="modal-sub">Cumulative history</div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close">✕</button>
+      </div>
+      <div class="tabs logs-tabs" role="tablist" aria-label="Logs tabs">
+        <button type="button" class="tab active" data-logtab="all">Tous</button>
+        <button type="button" class="tab" data-logtab="dabmux">odr-dabmux</button>
+        <button type="button" class="tab" data-logtab="audio">odr-audioenc / odr-padenc</button>
+        <button type="button" class="tab" data-logtab="proc">Running process</button>
+        <button type="button" class="tab" data-logtab="errors">Errors</button>
+      </div>
+      <div class="logs-filters">
+        <label><input type="checkbox" id="chkRawOutput"> Sortie brute (DEBUG)</label>
+        <select id="selLogService"><option value="">Tous les services</option></select>
+      </div>
+      <pre id="logsPre" class="logs"></pre>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-danger" id="btnClearLogs">Clear Log</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn" id="btnDownloadLogs">Download (.log)</button>
+        <button value="cancel" class="btn">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgMux" class="modal">
+    <form method="dialog" class="modal-body" id="muxForm">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Multiplex</div>
+          <div class="modal-sub">Ensemble and output settings</div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close">✕</button>
+      </div>
+
+      <div class="alert hidden" id="muxError"></div>
+      <div class="grid">
+        <label>
+          <span>Ensemble ID (hex)</span>
+          <input id="m_ens_id" maxlength="4" placeholder="F401" />
+        </label>
+        <label>
+          <span>ECC</span>
+          <select id="m_ecc">
+            <optgroup label="Europe">
+              <option value="E0">E0 - Germany, Belgium, Italy, Andorra</option>
+              <option value="E1">E1 - France, Switzerland, Denmark, Luxembourg, UK, Gibraltar</option>
+              <option value="E2">E2 - Vatican, Spain</option>
+              <option value="E3">E3</option>
+              <option value="E4">E4</option>
+            </optgroup>
+            <optgroup label="Americas">
+              <option value="A0">A0</option>
+              <option value="A1">A1</option>
+              <option value="A2">A2</option>
+              <option value="A3">A3</option>
+              <option value="A4">A4</option>
+              <option value="A5">A5</option>
+              <option value="A6">A6</option>
+              <option value="A7">A7</option>
+            </optgroup>
+            <optgroup label="Africa / Middle East">
+              <option value="D0">D0</option>
+              <option value="D1">D1</option>
+              <option value="D2">D2</option>
+              <option value="D3">D3</option>
+            </optgroup>
+            <optgroup label="Asia / Pacific">
+              <option value="F0">F0</option>
+              <option value="F1">F1</option>
+              <option value="F2">F2</option>
+              <option value="F3">F3</option>
+            </optgroup>
+          </select>
+        </label>
+        <label>
+          <span>Shortlabel (PS8)</span>
+          <input id="m_short" maxlength="8" />
+        </label>
+        <label>
+          <span>Label (PS16)</span>
+          <input id="m_label" maxlength="16" />
+        </label>
+        <label>
+          <span>TX mode</span>
+          <select id="m_txmode">
+            <option value="EASYDAB">EASYDAB (ZMQ out)</option>
+            <option value="EDI">EDI (TCP out)</option>
+            <option value="USRP1">USRP1 (stdout ETI)</option>
+            <option value="HACKRF">HackRF</option>
+          </select>
+        </label>
+        <label class="easydab-only">
+          <span>EasyDAB IP</span>
+          <input id="m_easydab_ip" placeholder="0.0.0.0" />
+        </label>
+        <label class="easydab-only">
+          <span>EasyDAB Port</span>
+          <input id="m_easydab_port" type="number" min="1024" max="65535" />
+        </label>
+        <label class="edi-only">
+          <span>EDI listen port</span>
+          <input id="m_edi_port" type="number" min="1024" max="65535" />
+        </label>
+        <label class="edi-only check-row">
+          <input type="checkbox" id="m_edi_pft" />
+          Enable PFT (GatesAir compatibility)
+        </label>
+        <label class="edi-only">
+          <span>EDI FEC (recoverable fragments)</span>
+          <input id="m_edi_fec" type="number" min="0" max="5" step="1" />
+        </label>
+        <label class="edi-only">
+          <span>EDI TIST offset (seconds)</span>
+          <input id="m_edi_tist_offset" type="number" min="0" max="60" step="0.001" />
+        </label>
+        <label class="hackrf-only">
+          <span>DAB Block</span>
+          <select id="m_hackrf_block"></select>
+        </label>
+        <label class="hackrf-only">
+          <span>TX Gain (0-47)</span>
+          <input id="m_hackrf_txgain" type="number" min="0" max="47" />
+        </label>
+        <label class="hackrf-only">
+          <span>Max frames queued</span>
+          <input id="m_hackrf_maxframes" type="number" min="1" max="2000" />
+        </label>
+        <label class="hackrf-only">
+          <span>Gain mode</span>
+          <select id="m_hackrf_gainmode">
+            <option value="0">0 - FIX</option>
+            <option value="1">1 - MAX</option>
+            <option value="2">2 - VAR</option>
+          </select>
+        </label>
+        <label class="hackrf-only">
+          <span>Digital gain</span>
+          <input id="m_hackrf_diggain" type="number" min="0" max="10" step="0.1" />
+        </label>
+        <label class="hackrf-only">
+          <span>Sample rate</span>
+          <select id="m_hackrf_rate">
+            <option value="2048000">2.048 MHz</option>
+            <option value="4096000">4.096 MHz</option>
+          </select>
+        </label>
+        <label>
+          <span>Management port</span>
+          <input id="m_mgmt" type="number" min="1024" max="65535" />
+        </label>
+        <label>
+          <span>Telnet port</span>
+          <input id="m_telnet" type="number" min="1024" max="65535" />
+        </label>
+        <label class="check-row grid-col2">
+          <input type="checkbox" id="m_autostart" />
+          Start multiplex at startup
+        </label>
+      </div>
+
+      <div class="modal-foot">
+        <div class="muted" id="muxLockHint"></div>
+        <div class="spacer"></div>
+        <button type="button" class="btn" data-action="mux-cancel">Cancel</button>
+        <button class="btn btn-success" id="btnMuxSave" value="default">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgAbout" class="modal">
+    <form method="dialog" class="modal-body modal-about">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">System information</div>
+          <div class="modal-sub" id="aboutVersion"></div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close">✕</button>
+      </div>
+      <div class="about-grid" id="aboutGrid"></div>
+      <div class="modal-actions">
+        <div class="spacer"></div>
+        <button value="cancel" class="btn">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgSlidePreview" class="modal slide-preview-modal">
+    <form method="dialog">
+      <img id="slidePreviewImg" alt="Slide preview" />
+    </form>
+  </dialog>
+
+  <dialog id="dlgManageLogos" class="modal">
+    <form method="dialog" class="modal-body">
+      <div class="modal-head">
+        <div class="modal-title">Manage Logos - <span id="logoManageServiceName"></span></div>
+        <button type="submit" class="btn-close" aria-label="Close">×</button>
+      </div>
+      <div class="modal-content">
+        <p class="hint">Upload additional logos (logo_1.jpg, logo_2.jpg...). Images will be automatically resized to 320×240 JPEG.</p>
+        <button type="button" class="btn" id="btnUploadNewLogo">📤 Upload Logo</button>
+        <div id="logosList" class="logos-list"></div>
+      </div>
+      <div class="modal-foot">
+        <button type="submit" class="btn">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgAuth" class="modal">
+    <form method="dialog" class="modal-body">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Change credentials</div>
+          <div class="modal-sub">Update login and password</div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close">&#10005;</button>
+      </div>
+      <div class="alert hidden" id="authError"></div>
+      <div class="grid2">
+        <label>
+          <span>Username</span>
+          <input id="a_user" required />
+        </label>
+        <label>
+          <span>New password</span>
+          <input id="a_pass" type="password" required minlength="10" />
+        </label>
+        <label>
+          <span>Confirm password</span>
+          <input id="a_pass2" type="password" required minlength="10" />
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-danger" id="btnLogout">Sign out</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn" data-action="auth-cancel">Cancel</button>
+        <button type="button" class="btn btn-success" id="btnAuthSave">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgTelegram" class="modal">
+    <form method="dialog" class="modal-body">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Telegram notifications</div>
+          <div class="modal-sub">Automatically forward logs to a bot</div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close">&#10005;</button>
+      </div>
+
+      <div class="alert hidden" id="telegramError"></div>
+      <div id="telegramStatus" class="info-status"></div>
+
+      <div class="grid2">
+        <label class="check-row grid-col2">
+          <input type="checkbox" id="tg_enabled" />
+          Enable Telegram notifications
+        </label>
+        <label class="grid-col2">
+          <span>Bot token</span>
+          <div style="display:flex;gap:4px;align-items:center;">
+            <input id="tg_token" type="password" autocomplete="new-password" placeholder="123456789:token provided by BotFather" style="flex:1;" />
+            <button type="button" id="btnToggleTelegramToken" class="btn btn-sm" title="Show/hide" style="min-width:32px;padding:4px 6px;">&#128065;</button>
+          </div>
+          <small class="muted" id="telegramTokenHint">Leave blank to keep the saved token.</small>
+        </label>
+        <label>
+          <span>Chat ID</span>
+          <input id="tg_chat_id" placeholder="-1001234567890" />
+        </label>
+        <label>
+          <span>Minimum level</span>
+          <select id="tg_min_level">
+            <option value="ERROR">Errors only</option>
+            <option value="WARN">Warnings and errors</option>
+            <option value="INFO">Information, warnings and errors</option>
+            <option value="DEBUG">All logs (very verbose)</option>
+          </select>
+        </label>
+        <label class="check-row grid-col2">
+          <input type="checkbox" id="tg_silent" />
+          Send without notification sound
+        </label>
+      </div>
+
+      <div class="modal-actions">
+        <button type="button" class="btn" id="btnTelegramTest">Send test</button>
+        <div class="spacer"></div>
+        <button type="button" class="btn" data-action="telegram-cancel">Cancel</button>
+        <button type="button" class="btn btn-success" id="btnTelegramSave">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

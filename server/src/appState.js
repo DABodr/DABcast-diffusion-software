@@ -1,0 +1,1826 @@
+import path from 'node:path';
+import fs from 'node:fs';
+import net from 'node:net';
+import { execFileSync } from 'node:child_process';
+import { nanoid } from 'nanoid';
+import { ensureDir, readJson, writeJson, safeExists } from './fsutil.js';
+import { buildMuxConfig } from './odr/muxBuilder.js';
+import { buildAudioEncCommand, buildDabMuxCommand, buildPadEncCommand, buildDabModConfig, buildHackrfTransferCommand, buildProbeCommand } from './odr/commandBuilder.js';
+import { validateService } from './odr/validate.js';
+import { ALLOWED_BITRATES_KBPS, DEFAULT_BITRATE_KBPS, DEFAULT_ZMQ_BUFFER, DEFAULT_ZMQ_PREBUFFER, DEFAULT_DEMO_PRESET_ID, DAB_FREQ_TABLE } from './defaults.js';
+import { estimateCU, sumCU } from './cu.js';
+import { buildDlPlusFileContent, writeTextFileAtomicIfChanged, parseNowPlaying } from './utils/dlplus.js';
+const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
+  ? __APP_VERSION__
+  : (() => { try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url))).version; } catch { return '0.0.0'; } })();
+
+function nowMs() { return Date.now(); }
+
+// Failover constants
+const FAILOVER_CRASH_THRESHOLD = 1;  // crashes before switching to backup
+const FAILOVER_STABLE_MS = 30000;    // encoder must run 30s before crash counter resets
+
+/**
+ * Resolve a value from a JSON object using dot-path, array index, and pipe fallbacks.
+ * Examples: "artist", "now.artist", "data.0.name", "artist|name|label"
+ * Returns empty string if not found.
+ */
+export function resolveFirst(data, keySpec) {
+  if (!data || !keySpec) return '';
+  const candidates = String(keySpec).split('|');
+  for (const key of candidates) {
+    let val = data;
+    for (const part of key.split('.')) {
+      if (val == null) break;
+      val = Array.isArray(val) && /^\d+$/.test(part) ? val[Number(part)] : val[part];
+    }
+    if (val != null && val !== '') return String(val).trim();
+  }
+  return '';
+}
+
+// Parse odr-audioenc VU meter: "In: [LLLLLL|RRRRRR] P"
+// Be tolerant to spacing after 'In:' (some builds use multiple spaces).
+const LEVEL_STEREO_RE = /In:\s*\[(.{6})\|(.{6})\]/;
+const LEVEL_MONO_RE = /In:\s*\[(.{6})\]/;
+export function parseAudioLevel(text) {
+  const countLevel = (s) => {
+    let n = 0;
+    for (const c of s) if (c !== ' ') n++;
+    return n;
+  };
+  const ms = LEVEL_STEREO_RE.exec(text);
+  if (ms) {
+    return {
+      left: countLevel(ms[1]),
+      right: countLevel(ms[2]),
+      clipLeft: ms[1].includes('!'),
+      clipRight: ms[2].includes('!')
+    };
+  }
+  const mm = LEVEL_MONO_RE.exec(text);
+  if (mm) {
+    const lvl = countLevel(mm[1]);
+    const clip = mm[1].includes('!');
+    return { left: lvl, right: 0, clipLeft: clip, clipRight: false, mono: true };
+  }
+  return null;
+}
+
+// Check if a stream URL is reachable.
+// Strategy: try HEAD first (lightweight). If HEAD fails for ANY reason
+// (timeout, 4xx, 5xx, network error), fall back to a short GET.
+// Icecast/Shoutcast typically reject HEAD with 400/405, but some servers
+// return 501 or 403, and slow networks can cause HEAD to timeout before
+// we get a response — all of these are handled by the GET fallback.
+async function headOk(url, timeoutMs = 3000) {
+  if (!url) return false;
+
+  // Step 1: try HEAD (doesn't open a stream listener slot)
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(url, { method: 'HEAD', signal: ctrl.signal });
+    if (res.ok || (res.status >= 300 && res.status < 400)) return true;
+    // HEAD returned 4xx/5xx — fall through to GET
+  } catch {
+    // HEAD timed out or network error — fall through to GET
+  } finally {
+    clearTimeout(t);
+  }
+
+  // Step 2: GET fallback — abort as soon as headers arrive
+  const ctrl2 = new AbortController();
+  const t2 = setTimeout(() => ctrl2.abort(), timeoutMs);
+  try {
+    const res2 = await fetch(url, { method: 'GET', signal: ctrl2.signal });
+    if (res2.ok || res2.status === 503) {
+      // 200 = stream alive; 503 = stream full (encoder occupies the slot) = alive
+      ctrl2.abort();
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(t2);
+  }
+}
+
+// Quick TCP connectivity check (~1s). Returns true if a TCP connection succeeds.
+// For protocols without a TCP handshake (UDP, RTP, ALSA), returns true immediately
+// to let the audio probe decide.
+function quickTcpCheck(uri, timeoutMs = 1000) {
+  return new Promise(resolve => {
+    let parsed;
+    try { parsed = new URL(uri); } catch { return resolve(false); }
+    const host = parsed.hostname;
+    const proto = parsed.protocol;
+    // Non-TCP protocols: skip check, go straight to audio probe
+    if (!host || /^(udp:|rtp:|alsa:|file:)/.test(proto)) return resolve(true);
+    const port = Number(parsed.port) || (proto === 'https:' ? 443 : 80);
+    const socket = new net.Socket();
+    const timer = setTimeout(() => { socket.destroy(); resolve(false); }, timeoutMs);
+    socket.connect(port, host, () => { clearTimeout(timer); socket.destroy(); resolve(true); });
+    socket.on('error', () => { clearTimeout(timer); resolve(false); });
+  });
+}
+
+export class AppState {
+  constructor({ settings, dataDir, logger, processManager }) {
+    this.settings = settings;
+    this.dataDir = dataDir;
+    this.logger = logger;
+    this.pm = processManager;
+
+    this.presetsDir = path.resolve(dataDir, 'presets');
+    this.runtimeDir = path.resolve(dataDir, 'runtime');
+    this.logFile = path.resolve(dataDir, 'logs', 'dabweb.log');
+    this._statePath = path.resolve(dataDir, 'runtime', 'state.json');
+    ensureDir(this.presetsDir);
+    ensureDir(this.runtimeDir);
+
+    this.currentPresetId = DEFAULT_DEMO_PRESET_ID;
+    this.preset = this._loadPreset(this.currentPresetId);
+
+    // muxRunning is always false on startup (orphan processes were already cleaned)
+    this.muxRunning = false;
+    this.muxStatus = 'off'; // 'off' | 'on' | 'fail'
+    this.lastError = null;
+    this.muxSinceMs = Date.now(); // timestamp of last ON/OFF transition
+    this._persistMuxState(false);
+    this.watchdogTimer = null;
+    this.metadataTimer = null;
+    this.serviceRuntime = new Map();
+
+    // CRITICAL FIX: Locks to prevent race conditions
+    this._watchdogRunning = false;        // Guard flag for watchdog loop
+    this._switchLocks = new Map();        // Per-service locks for URI switching
+    this._probeTimer = null;              // Probe loop timer
+    this._probeRunning = false;           // Guard flag for probe loop
+
+    this._initRuntime();
+    this._imgBinLogged = false;
+  }
+
+  _logMeta(svc, scope, msg, level) {
+    this.logger.line(`svc:${svc.id}:meta`, `[${scope}] ${msg}`, level);
+  }
+
+  _loadPreset(id) {
+    const p = path.resolve(this.presetsDir, `${id}.json`);
+    const preset = readJson(p, null);
+    if (!preset) {
+      throw new Error(`Preset not found: ${p}`);
+    }
+    return preset;
+  }
+
+  _applyDefaults(svc) {
+    // Apply missing defaults to imported service
+    const id = svc.id || nanoid(8);
+    return {
+      id,
+      enabled: svc.enabled !== false,
+      identity: {
+        pi: svc.identity?.pi || '0000',
+        serviceIdHex: svc.identity?.serviceIdHex || `0x${svc.identity?.pi || '0000'}`,
+        ps8: svc.identity?.ps8 || 'RADIO',
+        ps16: svc.identity?.ps16 || null,
+        languageHex: svc.identity?.languageHex || '0x0F',
+        pty: Number.isInteger(svc.identity?.pty) ? svc.identity.pty : 10
+      },
+      dab: {
+        bitrateKbps: ALLOWED_BITRATES_KBPS.includes(svc.dab?.bitrateKbps) ? svc.dab.bitrateKbps : DEFAULT_BITRATE_KBPS,
+        protectionLevel: Number.isInteger(svc.dab?.protectionLevel) ? svc.dab.protectionLevel : 3,
+        eepMode: svc.dab?.eepMode || 'A',
+        padSize: Number.isInteger(svc.dab?.padSize) ? svc.dab.padSize : 58
+      },
+      input: {
+        mode: svc.input?.mode || 'GSTREAMER',
+        uri: svc.input?.uri || null,
+        backupUri: svc.input?.backupUri || null,
+        zmqBuffer: Number.isInteger(svc.input?.zmqBuffer) ? svc.input.zmqBuffer : DEFAULT_ZMQ_BUFFER,
+        zmqPrebuffering: Number.isInteger(svc.input?.zmqPrebuffering) ? svc.input.zmqPrebuffering : DEFAULT_ZMQ_PREBUFFER,
+        encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200
+      },
+      audio: {
+        channels: Number.isInteger(svc.audio?.channels) ? svc.audio.channels : 2,
+        sampleRateHz: Number.isInteger(svc.audio?.sampleRateHz) ? svc.audio.sampleRateHz : 48000,
+        gainDb: typeof svc.audio?.gainDb === 'number' ? svc.audio.gainDb : 0,
+        codec: svc.audio?.codec || 'HE-AAC v1 (SBR)'
+      },
+      pad: {
+        enabled: true,
+        fifoName: svc.pad?.fifoName || id.toUpperCase(),
+        dlsFile: svc.pad?.dlsFile || `${id.toUpperCase()}.dls`,
+        slideDir: svc.pad?.slideDir || 'slide',
+        motDir: svc.pad?.motDir || `mot/${id.toUpperCase()}`,
+        sls: { enabled: true, logoPath: null, ...svc.pad?.sls }
+      },
+      network: {
+        ediOutputTcp: {
+          host: svc.network?.ediOutputTcp?.host || '127.0.0.1',
+          port: Number.isInteger(svc.network?.ediOutputTcp?.port) ? svc.network.ediOutputTcp.port : this._pickFreePort()
+        }
+      },
+      watchdog: {
+        enabled: svc.watchdog?.enabled !== false,
+        silenceThresholdSec: svc.watchdog?.silenceThresholdSec ?? 10,
+        warningThresholdSec: svc.watchdog?.warningThresholdSec ?? 5,
+        switchToBackupOnSilence: svc.watchdog?.switchToBackupOnSilence !== false,
+        returnToMainAfterSec: svc.watchdog?.returnToMainAfterSec ?? 60
+      },
+      metadata: {
+        mode: svc.metadata?.mode || 'NONE',
+        intervalSec: svc.metadata?.intervalSec ?? 10,
+        url: svc.metadata?.url || null,
+        artistKey: svc.metadata?.artistKey || 'artist',
+        titleKey: svc.metadata?.titleKey || 'title',
+        slsKey: svc.metadata?.slsKey || 'slide',
+        defaultDls: svc.metadata?.defaultDls || '',
+        slsUrl: svc.metadata?.slsUrl || null,
+        slsBackColor: svc.metadata?.slsBackColor || '',
+        slsFontColor: svc.metadata?.slsFontColor || '',
+        defaultDlsAllowed: svc.metadata?.defaultDlsAllowed !== false,
+        defaultSlsAllowed: svc.metadata?.defaultSlsAllowed !== false,
+        dlsIncluded: svc.metadata?.dlsIncluded === true
+      },
+      dlplus: svc.dlplus || { enabled: false },
+      ui: {
+        order: svc.ui?.order ?? (this.preset.services.length + 1),
+        ...svc.ui
+      },
+    };
+  }
+
+  _savePreset() {
+    const p = path.resolve(this.presetsDir, `${this.preset.id}.json`);
+    writeJson(p, this.preset);
+  }
+
+  _persistMuxState(running) {
+    try {
+      writeJson(this._statePath, { muxRunning: running, muxSinceMs: this.muxSinceMs, ts: new Date().toISOString() });
+    } catch { /* non-critical */ }
+  }
+
+  _initRuntime() {
+    for (const svc of this.preset.services) {
+      this.serviceRuntime.set(svc.id, {
+        status: 'STOPPED',
+        activeUri: svc.input.uri,
+        lastOkMainMs: 0,
+        lastOkBackupMs: 0,
+        lastSwitchMs: 0,
+        failuresSinceMs: 0,
+        lastMetaUpdateMs: 0,
+        currentDls: '',
+        currentSlsUrl: '',
+        dlplusActive: false,
+        warningSinceMs: 0,
+        audioLevels: { left: 0, right: 0, clipLeft: false, clipRight: false },
+        consecutiveCrashes: 0,  // Track encoder crash loops for failover
+        lastStartMs: 0,         // Timestamp of last encoder spawn
+        lastDeathMs: 0,         // Timestamp of last encoder death detection
+        encWasAlive: false      // Encoder was alive on previous tick (for transition detection)
+      });
+    }
+  }
+
+  getState() {
+    const services = this.preset.services.map((svc) => {
+      const rt = this.serviceRuntime.get(svc.id) || { status: 'UNKNOWN' };
+      const cu = estimateCU(svc.dab?.bitrateKbps ?? 0, svc.dab?.protectionLevel ?? 3, svc.dab?.eepMode);
+      return {
+        ...svc,
+        cu,
+        runtime: rt
+      };
+    });
+
+    const error = this.lastError;
+    if (error) this.lastError = null;
+
+    return {
+      muxRunning: this.muxRunning,
+      muxStatus: this.muxStatus,
+      muxSinceMs: this.muxSinceMs,
+      lastError: error,
+      preset: {
+        id: this.preset.id,
+        name: this.preset.name,
+        services,
+        capacity: {
+          totalCu: services.reduce((a, s) => a + (s.enabled ? (s.cu ?? 0) : 0), 0),
+          maxCu: 864
+        }
+      },
+      settings: {
+        dabmux: this.settings.dabmux,
+        ensemble: this.settings.ensemble,
+        autoStart: this.settings.autoStart ?? false
+      },
+      allowedBitratesKbps: ALLOWED_BITRATES_KBPS,
+      appVersion: APP_VERSION
+    };
+  }
+
+  listPresets() {
+    const files = fs.readdirSync(this.presetsDir).filter((f) => f.endsWith('.json'));
+    return files.map((f) => {
+      const p = readJson(path.resolve(this.presetsDir, f), null);
+      return p ? { id: p.id, name: p.name } : null;
+    }).filter(Boolean);
+  }
+
+  setPreset(preset) {
+    if (this.muxRunning) throw new Error('Cannot replace preset while ON AIR');
+    if (!preset || !Array.isArray(preset.services)) {
+      throw new Error('Invalid preset payload');
+    }
+    const next = structuredClone(preset);
+    next.id = this.currentPresetId; // always save to the active slot (demo.json)
+    next.name = String(preset.name || preset.id || next.id);
+    next.services = next.services.map((svc, idx) => {
+      const s = structuredClone(svc || {});
+      if (!s.id) s.id = nanoid(8);
+      s.ui = { ...(s.ui || {}), order: s.ui?.order ?? (idx + 1) };
+      return s;
+    });
+    this.preset = next;
+    this._savePreset();
+    this.serviceRuntime.clear();
+    this._initRuntime();
+  }
+
+  upsertService(service) {
+    if (this.muxRunning) throw new Error('Cannot replace service while ON AIR');
+    if (!service || typeof service !== 'object') {
+      throw new Error('Invalid service payload');
+    }
+    const next = structuredClone(service);
+    if (!next.id) next.id = nanoid(8);
+    next.ui = { ...(next.ui || {}), order: next.ui?.order ?? (this.preset.services.length + 1) };
+
+    const { errors, warnings, normalized } = validateService(next, ALLOWED_BITRATES_KBPS);
+    if (errors.length) throw new Error(errors.join(' '));
+    if (warnings?.length) {
+      warnings.forEach(w => this.logger.line('service', `${next.id}: ${w}`, 'WARN'));
+    }
+
+    const idx = this.preset.services.findIndex((s) => s.id === next.id);
+    if (idx >= 0) {
+      this.preset.services[idx] = normalized;
+    } else {
+      this.preset.services.push(normalized);
+    }
+
+    this.serviceRuntime.set(normalized.id, {
+      status: 'STOPPED',
+      activeUri: normalized.input?.uri || null,
+      lastOkMainMs: 0,
+      lastOkBackupMs: 0,
+      lastSwitchMs: 0,
+      failuresSinceMs: 0,
+      lastMetaUpdateMs: 0,
+      currentDls: '',
+      currentSlsUrl: '',
+      dlplusActive: false,
+      warningSinceMs: 0
+    });
+    this._savePreset();
+
+    // Download slide immediately if slsUrl is set
+    if (normalized.metadata?.slsUrl) {
+      this.downloadSlideForService(normalized).catch((err) => {
+        this.logger.line('sls', `immediate slide download failed: ${err.message}`);
+      });
+    }
+
+    return normalized;
+  }
+
+  setService(id, patch) {
+    const idx = this.preset.services.findIndex((s) => s.id === id);
+    if (idx === -1) throw new Error(`Unknown service: ${id}`);
+
+    // lock certain fields while ON AIR
+    const locked = this.muxRunning;
+    const existing = this.preset.services[idx];
+
+    const next = structuredClone(existing);
+
+    // Always editable (even when ON AIR)
+    if (typeof patch.enabled === 'boolean') next.enabled = patch.enabled;
+    if (patch.input) {
+      next.input.uri = patch.input.uri ?? next.input.uri;
+      next.input.backupUri = patch.input.backupUri ?? next.input.backupUri;
+      if (typeof patch.input.mode === 'string') next.input.mode = patch.input.mode;
+      if (Number.isInteger(patch.input.encoderBufferMs)) next.input.encoderBufferMs = patch.input.encoderBufferMs;
+    }
+    if (patch.audio) {
+      if (typeof patch.audio.gainDb === 'number') next.audio.gainDb = patch.audio.gainDb;
+    }
+    // Language, PTY, Channels remain editable when ON AIR
+    if (patch.identity) {
+      if (patch.identity.pty != null) next.identity.pty = patch.identity.pty;
+      if (patch.identity.languageHex != null) next.identity.languageHex = patch.identity.languageHex;
+    }
+    if (patch.audio) {
+      if (Number.isInteger(patch.audio.channels)) next.audio.channels = patch.audio.channels;
+    }
+    if (patch.metadata) {
+      next.metadata = { ...(next.metadata || {}), ...(patch.metadata || {}) };
+      // Clear DLS file when defaultDlsAllowed is turned off
+      if (next.metadata.defaultDlsAllowed === false) {
+        this._writeDlsFile(next, '');
+        const rt = this.serviceRuntime.get(id);
+        if (rt) rt.currentDls = '';
+        this.logger.line(`svc:${id}`, 'cleared DLS (Show default DLS = No)');
+      }
+      // Cleanup cover.jpg when switching away from JSON mode
+      const newMode = String(next.metadata.mode || 'NONE').toUpperCase();
+      if (newMode !== 'JSON') {
+        const motDir = this._resolveMotDir(next);
+        const coverPath = path.resolve(motDir, next.pad?.slideDir || 'slide', 'cover.jpg');
+        if (safeExists(coverPath)) {
+          try { fs.unlinkSync(coverPath); } catch { /* ignore */ }
+          this.logger.line(`svc:${id}`, `removed cover.jpg (mode changed to ${newMode})`);
+        }
+        // Clear runtime SLS URL so frontend falls back to logo.jpeg
+        const rt = this.serviceRuntime.get(id);
+        if (rt) rt.currentSlsUrl = '';
+      }
+    }
+    if (patch.watchdog) {
+      if (typeof patch.watchdog.enabled === 'boolean') next.watchdog.enabled = patch.watchdog.enabled;
+      if (Number.isInteger(patch.watchdog.silenceThresholdSec)) next.watchdog.silenceThresholdSec = patch.watchdog.silenceThresholdSec;
+      if (Number.isInteger(patch.watchdog.warningThresholdSec)) next.watchdog.warningThresholdSec = patch.watchdog.warningThresholdSec;
+      if (typeof patch.watchdog.switchToBackupOnSilence === 'boolean') next.watchdog.switchToBackupOnSilence = patch.watchdog.switchToBackupOnSilence;
+      if (Number.isInteger(patch.watchdog.returnToMainAfterSec)) next.watchdog.returnToMainAfterSec = patch.watchdog.returnToMainAfterSec;
+    }
+
+    // Editable ONLY when stopped (locked during ON AIR)
+    if (!locked) {
+      if (patch.identity) {
+        if (patch.identity.pi) {
+          const piRaw = String(patch.identity.pi).replace(/^0x/i, '').toUpperCase();
+          next.identity.pi = piRaw;
+          next.identity.serviceIdHex = `0x${piRaw}`;
+          // Update service ID to match new PI (for MOT directory consistency)
+          if (piRaw.length === 4) {
+            next.id = piRaw;
+          }
+        }
+        next.identity.ps8 = patch.identity.ps8 ?? next.identity.ps8;
+        next.identity.ps16 = patch.identity.ps16 ?? next.identity.ps16;
+      }
+      if (patch.dab) {
+        if (Number.isInteger(patch.dab.bitrateKbps)) {
+          if (!ALLOWED_BITRATES_KBPS.includes(patch.dab.bitrateKbps)) {
+            throw new Error(`Bitrate not allowed: ${patch.dab.bitrateKbps}`);
+          }
+          next.dab.bitrateKbps = patch.dab.bitrateKbps;
+        }
+        if (Number.isInteger(patch.dab.protectionLevel)) {
+          next.dab.protectionLevel = patch.dab.protectionLevel;
+        }
+        if (typeof patch.dab.eepMode === 'string') next.dab.eepMode = patch.dab.eepMode;
+        if (Number.isInteger(patch.dab.padSize)) next.dab.padSize = patch.dab.padSize;
+      }
+
+      if (patch.audio) {
+        if (Number.isInteger(patch.audio.sampleRateHz)) next.audio.sampleRateHz = patch.audio.sampleRateHz;
+        if (typeof patch.audio.codec === 'string') next.audio.codec = patch.audio.codec;
+      }
+
+      if (patch.input) {
+        if (Number.isInteger(patch.input.zmqBuffer)) next.input.zmqBuffer = patch.input.zmqBuffer;
+        if (Number.isInteger(patch.input.zmqPrebuffering)) next.input.zmqPrebuffering = patch.input.zmqPrebuffering;
+      }
+
+    }
+
+    const { errors, warnings, normalized } = validateService(next, ALLOWED_BITRATES_KBPS);
+    if (errors.length) throw new Error(errors.join(' '));
+    if (warnings?.length) {
+      warnings.forEach(w => this.logger.line('service', `${next.id}: ${w}`, 'WARN'));
+    }
+
+    // CRITICAL: Check if PID changed (only allowed when mux is stopped)
+    const pidChanged = existing.id !== normalized.id;
+    if (pidChanged) {
+      // Check if another service already uses this PID
+      const collision = this.preset.services.find((s) => s.id === normalized.id && s.id !== existing.id);
+      if (collision) {
+        throw new Error(`Service ID ${normalized.id.toUpperCase()} already exists in multiplex`);
+      }
+
+      // Check if target directory already exists
+      const newMotDir = path.resolve(this.dataDir, 'mot', normalized.id.toUpperCase());
+      if (fs.existsSync(newMotDir)) {
+        throw new Error(`MOT directory ${normalized.id.toUpperCase()} already exists`);
+      }
+
+      // Rename MOT directory if it exists
+      const oldMotDir = path.resolve(this.dataDir, 'mot', existing.id.toUpperCase());
+      if (fs.existsSync(oldMotDir)) {
+        try {
+          fs.renameSync(oldMotDir, newMotDir);
+          this.logger.line(`svc:${id}`, `renamed MOT directory: ${existing.id.toUpperCase()} → ${normalized.id.toUpperCase()}`);
+        } catch (err) {
+          throw new Error(`Failed to rename MOT directory: ${err.message}`);
+        }
+      }
+
+      // Update pad paths to match new ID
+      normalized.pad.fifoName = normalized.id.toUpperCase();
+      normalized.pad.dlsFile = `${normalized.id.toUpperCase()}.dls`;
+      normalized.pad.motDir = `mot/${normalized.id.toUpperCase()}`;
+
+      // Update serviceRuntime map (move runtime state to new ID)
+      const rt = this.serviceRuntime.get(existing.id);
+      if (rt) {
+        this.serviceRuntime.delete(existing.id);
+        this.serviceRuntime.set(normalized.id, rt);
+      }
+
+      this.logger.line(`svc:${id}`, `service ID changed: ${existing.id} → ${normalized.id}`);
+    }
+
+    // Detect if encoder needs restart (mode or URI changed while ON AIR)
+    const uriChanged = existing.input.uri !== normalized.input.uri;
+    const modeChanged = existing.input.mode !== normalized.input.mode;
+    const needRestart = locked && (modeChanged || uriChanged);
+
+    this.logger.line(`svc:${id}`, `setService: locked=${locked} uriChanged=${uriChanged} (${existing.input.uri} => ${normalized.input.uri}) needRestart=${needRestart}`, 'DEBUG');
+
+    this.preset.services[idx] = normalized;
+    this._savePreset();
+
+    if (needRestart && this.pm.isRunning(`svc:${id}:audioenc`)) {
+      this.logger.line(`svc:${id}`, `input changed while ON AIR — restarting encoder`);
+      this._switchServiceUri(normalized, normalized.input.uri);
+    }
+
+    // Download slide if slsUrl changed
+    const oldSlsUrl = existing.metadata?.slsUrl || '';
+    const newSlsUrl = normalized.metadata?.slsUrl || '';
+    if (newSlsUrl && newSlsUrl !== oldSlsUrl) {
+      this.downloadSlideForService(normalized).catch((err) => {
+        this.logger.line('sls', `immediate slide download failed: ${err.message}`);
+      });
+    }
+
+    return normalized;
+  }
+
+  addService(svc) {
+    if (this.muxRunning) throw new Error('Cannot add service while ON AIR');
+
+    // Use PI code (hex, no 0x prefix) as service ID for readable MOT directory names
+    const piHex = String(svc.identity?.pi || '').replace(/^0x/i, '').toUpperCase();
+    const id = svc.id || (piHex.length === 4 ? piHex : nanoid(8));
+    if (this.preset.services.some((s) => s.id === id)) {
+      throw new Error('Service id already exists');
+    }
+
+    const newSvc = {
+      id,
+      enabled: true,
+      identity: {
+        pi: svc.identity?.pi || '0000',
+        serviceIdHex: svc.identity?.serviceIdHex || `0x${svc.identity?.pi || '0000'}`,
+        ps8: svc.identity?.ps8 || 'RADIO',
+        ps16: svc.identity?.ps16 || null,
+        languageHex: svc.identity?.languageHex || '0x0F',
+        pty: Number.isInteger(svc.identity?.pty) ? svc.identity.pty : 10
+      },
+      dab: {
+        bitrateKbps: ALLOWED_BITRATES_KBPS.includes(svc.dab?.bitrateKbps) ? svc.dab.bitrateKbps : DEFAULT_BITRATE_KBPS,
+        protectionLevel: Number.isInteger(svc.dab?.protectionLevel) ? svc.dab.protectionLevel : 3,
+        eepMode: svc.dab?.eepMode || 'A',
+        padSize: Number.isInteger(svc.dab?.padSize) ? svc.dab.padSize : 58
+      },
+      input: {
+        mode: svc.input?.mode || 'GSTREAMER',
+        uri: svc.input?.uri || null,
+        backupUri: svc.input?.backupUri || null,
+        zmqBuffer: Number.isInteger(svc.input?.zmqBuffer) ? svc.input.zmqBuffer : DEFAULT_ZMQ_BUFFER,
+        zmqPrebuffering: Number.isInteger(svc.input?.zmqPrebuffering) ? svc.input.zmqPrebuffering : DEFAULT_ZMQ_PREBUFFER,
+        encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200
+      },
+      audio: {
+        channels: Number.isInteger(svc.audio?.channels) ? svc.audio.channels : 2,
+        sampleRateHz: Number.isInteger(svc.audio?.sampleRateHz) ? svc.audio.sampleRateHz : 48000,
+        gainDb: typeof svc.audio?.gainDb === 'number' ? svc.audio.gainDb : 0,
+        codec: svc.audio?.codec || 'HE-AAC v1 (SBR)'
+      },
+      pad: {
+        enabled: true,
+        fifoName: id.toUpperCase(),
+        dlsFile: `${id.toUpperCase()}.dls`,
+        slideDir: 'slide',
+        motDir: `./data/mot/${id.toUpperCase()}`,
+        sls: { enabled: true, logoPath: null }
+      },
+      network: {
+        ediOutputTcp: {
+          host: '127.0.0.1',
+          port: Number.isInteger(svc.network?.ediOutputTcp?.port) ? svc.network.ediOutputTcp.port : this._pickFreePort()
+        }
+      },
+      watchdog: {
+        enabled: true,
+        silenceThresholdSec: 10,
+        warningThresholdSec: 5,
+        switchToBackupOnSilence: true,
+        returnToMainAfterSec: 60
+      },
+      metadata: {
+        mode: 'NONE',
+        intervalSec: 10,
+        url: null,
+        artistKey: 'artist',
+        titleKey: 'title',
+        slsKey: 'slide',
+        defaultDls: '',
+        slsUrl: null,
+        slsBackColor: '',
+        slsFontColor: '',
+        defaultDlsAllowed: true,
+        defaultSlsAllowed: true,
+        dlsIncluded: false
+      },
+      ui: {
+        order: this.preset.services.length + 1
+      },
+      dlplus: {
+        enabled: true,
+        offsetMode: 'bytes',
+        maxLen: 128
+      }
+    };
+
+    const { errors, warnings, normalized } = validateService(newSvc, ALLOWED_BITRATES_KBPS);
+    if (errors.length) throw new Error(errors.join(' '));
+    if (warnings?.length) {
+      warnings.forEach(w => this.logger.line('service', `${newSvc.id}: ${w}`, 'WARN'));
+    }
+
+    this.preset.services.push(normalized);
+    this.serviceRuntime.set(normalized.id, {
+      status: 'STOPPED',
+      activeUri: normalized.input.uri,
+      lastOkMainMs: 0,
+      lastOkBackupMs: 0,
+      lastSwitchMs: 0,
+      failuresSinceMs: 0,
+      lastMetaUpdateMs: 0,
+      currentDls: '',
+      currentSlsUrl: '',
+      dlplusActive: false,
+      warningSinceMs: 0
+    });
+    this._savePreset();
+
+    // Download slide immediately if slsUrl is set
+    if (normalized.metadata?.slsUrl) {
+      this.downloadSlideForService(normalized).catch((err) => {
+        this.logger.line('sls', `immediate slide download failed: ${err.message}`);
+      });
+    }
+
+    return normalized;
+  }
+
+  deleteService(id) {
+    if (this.muxRunning) throw new Error('Cannot delete service while ON AIR');
+    const idx = this.preset.services.findIndex((s) => s.id === id);
+    if (idx === -1) return;
+    const svc = this.preset.services[idx];
+
+    // Clean up MOT directory (slides, DLS, fifo)
+    try {
+      const motDirAbs = this._resolveMotDir(svc);
+      if (fs.existsSync(motDirAbs)) {
+        fs.rmSync(motDirAbs, { recursive: true, force: true });
+        this.logger.line(`svc:${id}`, `deleted MOT directory: ${motDirAbs}`);
+      }
+    } catch (err) {
+      this.logger.line(`svc:${id}`, `failed to delete MOT directory: ${err.message}`);
+    }
+
+    this.preset.services.splice(idx, 1);
+    this.serviceRuntime.delete(id);
+    this._savePreset();
+  }
+
+  reorderServices(orderedIds) {
+    // Reorder services based on array of IDs
+    if (!Array.isArray(orderedIds)) {
+      throw new Error('Order must be an array of service IDs');
+    }
+
+    // Physically reorder the services array according to orderedIds
+    const reordered = [];
+    orderedIds.forEach((id, index) => {
+      const svc = this.preset.services.find((s) => s.id === id);
+      if (svc) {
+        if (!svc.ui) svc.ui = {};
+        svc.ui.order = index + 1;
+        reordered.push(svc);
+      }
+    });
+
+    // Replace services array with reordered array
+    this.preset.services = reordered;
+    this._savePreset();
+    this.logger.line('preset', `services reordered: ${orderedIds.join(', ')}`);
+  }
+
+  _pickFreePort() {
+    // naive: pick next after max current
+    const ports = this.preset.services.map((s) => s.network.ediOutputTcp.port);
+    const max = ports.length ? Math.max(...ports) : 9000;
+    return max + 1;
+  }
+
+  _resolveMotDir(svc) {
+    const fifoName = svc.pad?.fifoName || svc.identity?.ps8 || svc.id;
+    const motDir = svc.pad?.motDir || `mot/${fifoName}`;
+    if (path.isAbsolute(motDir)) return motDir;
+    const cleaned = motDir.replace(/^[./]*/, '');
+    if (cleaned.startsWith('data/mot/')) {
+      return path.resolve(this.dataDir, cleaned.slice('data/'.length));
+    }
+    if (cleaned.startsWith('mot/')) {
+      return path.resolve(this.dataDir, cleaned);
+    }
+    return path.resolve(this.dataDir, 'mot', cleaned);
+  }
+
+  _getMtaPath(svc) {
+    const pi = (svc.identity?.pi || svc.id || 'service').toUpperCase().replace(/^0X/, '');
+    return path.resolve(this.runtimeDir, `${pi}.mta`);
+  }
+
+  /**
+   * Get absolute path to DLS runtime file for a service.
+   * Returns: data/runtime/<PI>.dls
+   */
+  _getDlsRuntimePath(svc) {
+    const pi = (svc.identity?.pi || svc.id || 'service').toUpperCase().replace(/^0X/, '');
+    return path.resolve(this.runtimeDir, `${pi}.dls`);
+  }
+
+  /**
+   * Write DLS file with optional DL+ support.
+   * If DL+ is enabled, parses "Artist - Title" and generates DL+ tags.
+   * Otherwise, writes plain DLS text.
+   */
+  _writeDlsFile(svc, dlsValue) {
+    const dlsPath = this._getDlsRuntimePath(svc);
+    const dlplusEnabled = svc.dlplus?.enabled === true;
+
+    let content = dlsValue || '';
+
+    let dlplusActive = false;
+    if (dlplusEnabled && content) {
+      // Parse "Artist - Title" format
+      const { artist, title } = parseNowPlaying(content);
+
+      if (artist && title) {
+        // Generate DL+ content with tags (without homepage URL)
+        content = buildDlPlusFileContent({
+          artist,
+          title,
+          url: '',  // Homepage URL removed per user request
+          offsetMode: svc.dlplus?.offsetMode || 'bytes',
+          maxPayloadLen: svc.dlplus?.maxLen || 128
+        });
+        dlplusActive = true;
+      }
+      // If parsing failed (no artist/title), fall back to plain DLS
+    }
+
+    // Update runtime DL+ status
+    const rt = this.serviceRuntime.get(svc.id);
+    if (rt) rt.dlplusActive = dlplusActive;
+
+    // Write file atomically only if changed
+    try {
+      writeTextFileAtomicIfChanged(dlsPath, content);
+    } catch (err) {
+      this.logger.line('dls', `Failed to write DLS file ${dlsPath}: ${err.message}`, 'ERROR');
+    }
+  }
+
+  _extractXmlValue(xml, key) {
+    if (!xml || !key) return '';
+    const escKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(`<${escKey}>(?:<!\\[CDATA\\[)?([^<]*)(?:\\]\\]>)?<\\/${escKey}>`, 'i');
+    const match = xml.match(re);
+    return match ? String(match[1] || '').trim() : '';
+  }
+
+  async _fetchText(url, timeoutMs = 2500) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok) return '';
+      return await res.text();
+    } catch {
+      return '';
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async _downloadImage(url, destPath, timeoutMs = 5000) {
+    // Handle data: URLs (base64-encoded images from the frontend)
+    const dataMatch = url.match(/^data:image\/(jpeg|jpg|png|webp);base64,(.+)$/i);
+    if (dataMatch) {
+      try {
+        const buf = Buffer.from(dataMatch[2], 'base64');
+        fs.writeFileSync(destPath, buf);
+        return true;
+      } catch (err) {
+        this.logger.line('sls', `data: URL decode error: ${err.message}`, 'ERROR');
+        return false;
+      }
+    }
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok) {
+        this.logger.line('sls', `download failed ${url}: HTTP ${res.status}`, 'WARN');
+        return false;
+      }
+      const arr = await res.arrayBuffer();
+      fs.writeFileSync(destPath, Buffer.from(arr));
+      return true;
+    } catch (err) {
+      this.logger.line('sls', `download error ${url}: ${err.message}`, 'ERROR');
+      return false;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async testDlsUrl(url, timeoutMs = 2500) {
+    if (!url) return { ok: false, text: '' };
+    const text = await this._fetchText(url, timeoutMs);
+    const line = text.split('\n')[0]?.trim() || '';
+    return { ok: Boolean(line), text: line };
+  }
+
+  async testSlsUrl(url, timeoutMs = 4000) {
+    if (!url) return { ok: false, error: 'URL required' };
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { signal: ctrl.signal });
+      if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+      const contentType = res.headers.get('content-type') || 'image/jpeg';
+      if (contentType.includes('svg')) return { ok: false, error: 'SVG non supporté par odr-padenc (JPEG/PNG uniquement)' };
+      const arr = await res.arrayBuffer();
+      const bytes = arr.byteLength;
+      if (bytes > 500 * 1024) return { ok: false, error: `Image too large: ${Math.round(bytes / 1024)} KB (max 500 KB)` };
+      const b64 = Buffer.from(arr).toString('base64');
+      return { ok: true, dataUrl: `data:${contentType};base64,${b64}`, contentType, bytes };
+    } catch (err) {
+      return { ok: false, error: err.name === 'AbortError' ? 'Timeout (4s)' : String(err.message || err) };
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  _getCodecArgs(codec) {
+    const label = String(codec || 'HE-AAC v1 (SBR)').toUpperCase();
+    if (label.includes('AAC-LC')) return [];
+    if (label.includes('V2') || label.includes('PS')) return ['--ps'];
+    return ['--sbr'];
+  }
+
+  _copyDefaultSls(slideDir) {
+    // If logo.jpg already exists (created via downloadSlideForService), do nothing
+    const logoJpg = path.resolve(slideDir, 'logo.jpg');
+    if (fs.existsSync(logoJpg)) return;
+
+    // Otherwise, look for logo.png or logo.webp and convert to logo.jpg
+    const candidates = [
+      path.resolve(slideDir, 'logo.png'),
+      path.resolve(slideDir, 'logo.webp')
+    ];
+    const logo = candidates.find((p) => fs.existsSync(p));
+    if (!logo) return;
+    try {
+      this._convertToSlide(logo, logoJpg);
+    } catch {
+      // fallback: direct copy
+      try { fs.copyFileSync(logo, logoJpg); } catch { /* ignore */ }
+    }
+  }
+
+  /**
+   * Convert any image to JPEG 320x240 using ImageMagick.
+   * odr-padenc works best with JPEG slides at 320x240.
+   */
+  _convertToSlide(srcPath, destPath) {
+    if (!this._imgBinLogged) {
+      try {
+        const out = execFileSync('which', ['convert'], { encoding: 'utf8', timeout: 2000 }).trim();
+        this.logger.line('img', `ImageMagick binary: ${out}`);
+      } catch {
+        this.logger.line('img', 'ImageMagick binary: NOT FOUND', 'ERROR');
+      }
+      this._imgBinLogged = true;
+    }
+    try {
+      execFileSync('convert', [
+        srcPath,
+        '-resize', '320x240',
+        '-background', 'black',
+        '-gravity', 'center',
+        '-extent', '320x240',
+        '-quality', '85',
+        destPath
+      ], { timeout: 10000 });
+      return true;
+    } catch (err) {
+      this.logger.line('sls', `convert error: ${err.message}`, 'ERROR');
+      return false;
+    }
+  }
+
+  /**
+   * Download and convert SLS image for a service (can be called outside ON AIR).
+   * Returns true if a slide was saved.
+   */
+  async downloadSlideForService(svc) {
+    const slsUrl = String(svc.metadata?.slsUrl || '').trim();
+    if (!slsUrl) return false;
+
+    // Reject SVG
+    if (/^data:image\/svg/i.test(slsUrl) || /\.svg(\?.*)?$/i.test(slsUrl)) {
+      this.logger.line('sls', `SVG not supported by odr-padenc: ${slsUrl.slice(0, 80)}`);
+      return false;
+    }
+
+    const motDirAbs = this._resolveMotDir(svc);
+    const slideDir = path.resolve(motDirAbs, svc.pad?.slideDir || 'slide');
+    ensureDir(motDirAbs);
+    ensureDir(slideDir);
+
+    // Download to a temp file first, then convert to logo.jpg (permanent station logo)
+    this._logMeta(svc, 'sls', `download logo: ${slsUrl.slice(0, 120)}`);
+    const tmpPath = path.resolve(slideDir, 'logo_tmp');
+    const ok = await this._downloadImage(slsUrl, tmpPath);
+    if (!ok) {
+      this._logMeta(svc, 'err', `logo download failed: ${slsUrl.slice(0, 120)}`, 'WARN');
+      return false;
+    }
+
+    const destPath = path.resolve(slideDir, 'logo.jpg');
+    const converted = this._convertToSlide(tmpPath, destPath);
+
+    // Clean up temp file
+    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+
+    this._logMeta(svc, 'img', converted ? `resize OK -> ${destPath}` : `resize FAIL -> ${destPath}`, converted ? undefined : 'WARN');
+    return converted;
+  }
+
+  _startMetadataLoop() {
+    if (this.metadataTimer) return;
+    this.metadataTimer = setInterval(() => {
+      this._updateMetadata().catch((err) => {
+        this.logger.line('metadata', `update error: ${String(err?.message || err)}`);
+      });
+    }, 1000);
+  }
+
+  _stopMetadataLoop() {
+    if (this.metadataTimer) {
+      clearInterval(this.metadataTimer);
+      this.metadataTimer = null;
+    }
+  }
+
+  async _updateMetadata() {
+    if (!this.muxRunning) return;
+    const now = Date.now();
+    for (const svc of this.preset.services.filter((s) => s.enabled)) {
+      const rt = this.serviceRuntime.get(svc.id);
+      if (!rt) continue;
+      const intervalSec = Number(svc.metadata?.intervalSec ?? 10);
+      const intervalMs = Math.max(1, intervalSec) * 1000;
+      if (rt.lastMetaUpdateMs && now - rt.lastMetaUpdateMs < intervalMs) continue;
+      rt.lastMetaUpdateMs = now;
+      await this._updateServiceMetadata(svc, rt);
+    }
+  }
+
+  async _updateServiceMetadata(svc, rt) {
+    const mode = String(svc.metadata?.mode || 'NONE').toUpperCase();
+
+    const motDirAbs = this._resolveMotDir(svc);
+    const slideDir = path.resolve(motDirAbs, svc.pad?.slideDir || 'slide');
+    ensureDir(motDirAbs);
+    ensureDir(slideDir);
+
+    let dlsValue = '';
+    let slsUrl = '';
+    const defaultDlsAllowed = svc.metadata?.defaultDlsAllowed !== false;
+    const defaultSlsAllowed = svc.metadata?.defaultSlsAllowed !== false;
+
+    // Cleanup cover.jpg when mode is not JSON
+    if (mode !== 'JSON') {
+      const coverPath = path.resolve(slideDir, 'cover.jpg');
+      if (safeExists(coverPath)) {
+        try { fs.unlinkSync(coverPath); } catch { /* ignore */ }
+        this._logMeta(svc, 'cleanup', `removed cover.jpg (mode=${mode})`);
+      }
+    }
+
+    // DLS metadata extraction per mode
+    if (mode === 'NONE') {
+      // Manual mode: use the DLS text entered by the user
+      dlsValue = svc.metadata?.defaultDls || '';
+    } else if (mode === 'STREAM') {
+      const mtaPath = this._getMtaPath(svc);
+      if (fs.existsSync(mtaPath)) {
+        const line = fs.readFileSync(mtaPath, 'utf8').split('\n')[0] || '';
+        dlsValue = line.trim();
+      }
+      if (!dlsValue && defaultDlsAllowed) dlsValue = svc.metadata?.defaultDls || '';
+    } else if (mode === 'FILE') {
+      const src = String(svc.metadata?.url || '');
+      if (src.startsWith('http://') || src.startsWith('https://')) {
+        dlsValue = (await this._fetchText(src)).trim();
+      } else if (src) {
+        if (fs.existsSync(src)) {
+          dlsValue = fs.readFileSync(src, 'utf8').split('\n')[0]?.trim() || '';
+        }
+      }
+      if (!dlsValue && defaultDlsAllowed) dlsValue = svc.metadata?.defaultDls || '';
+    } else if (mode === 'JSON') {
+      const url = String(svc.metadata?.url || '');
+      if (url) {
+        this._logMeta(svc, 'json', 'fetch URL OK', 'DEBUG');
+        const text = await this._fetchText(url);
+        if (!text) {
+          this._logMeta(svc, 'err', 'empty response from URL', 'WARN');
+        } else {
+          try {
+            const data = JSON.parse(text);
+            const artistKey = svc.metadata?.artistKey || 'artist';
+            const titleKey = svc.metadata?.titleKey || 'title';
+            const slsKey = svc.metadata?.slsKey || 'slide';
+            const artist = resolveFirst(data, artistKey);
+            const title = resolveFirst(data, titleKey);
+            dlsValue = [artist, title].filter(Boolean).join(' - ');
+            const coverUrl = resolveFirst(data, slsKey);
+            this._logMeta(svc, 'json', `artist=${artist ? 'OK' : 'none'} title=${title ? 'OK' : 'none'} cover=${coverUrl ? 'yes' : 'none'}`);
+            if (coverUrl) {
+              slsUrl = coverUrl;
+              // Re-download when URL changes OR when DLS changes (same URL, new song)
+              const dlsChanged = dlsValue && dlsValue !== rt.currentDls;
+              if (coverUrl !== rt.currentSlsUrl || dlsChanged) {
+                this._logMeta(svc, 'sls', `download cover${dlsChanged ? ' (new track)' : ''}`, 'DEBUG');
+                const tmpPath = path.resolve(slideDir, 'cover_tmp');
+                const ok = await this._downloadImage(coverUrl, tmpPath);
+                if (ok) {
+                  const coverDest = path.resolve(slideDir, 'cover.jpg');
+                  const converted = this._convertToSlide(tmpPath, coverDest);
+                  this._logMeta(svc, 'img', converted ? 'resize OK' : 'resize FAIL', converted ? undefined : 'WARN');
+                } else {
+                  this._logMeta(svc, 'err', 'cover download failed', 'WARN');
+                }
+                try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+                rt.currentSlsUrl = coverUrl;
+              }
+            }
+          } catch (err) {
+            this._logMeta(svc, 'err', `json parse failed: ${String(err?.message || err)}`, 'WARN');
+          }
+        }
+      }
+      // Cleanup cover.jpg when JSON fetch fails or returns no cover URL
+      if (!slsUrl) {
+        const coverPath = path.resolve(slideDir, 'cover.jpg');
+        if (safeExists(coverPath)) {
+          try { fs.unlinkSync(coverPath); } catch { /* ignore */ }
+          this._logMeta(svc, 'cleanup', 'removed stale cover.jpg (no cover from JSON)');
+        }
+        if (rt.currentSlsUrl) {
+          rt.currentSlsUrl = null;
+        }
+      }
+      if (!dlsValue && defaultDlsAllowed) {
+        dlsValue = svc.metadata?.defaultDls || '';
+        if (dlsValue) this._logMeta(svc, 'json', `fallback DLS: "${dlsValue}"`);
+      }
+    } else if (mode === 'XML') {
+      const url = String(svc.metadata?.url || '');
+      const xml = url ? await this._fetchText(url) : '';
+      if (xml) {
+        const artistKey = svc.metadata?.artistKey || 'artist';
+        const titleKey = svc.metadata?.titleKey || 'title';
+        const slsKey = svc.metadata?.slsKey || 'slide';
+        const artist = this._extractXmlValue(xml, artistKey);
+        const title = this._extractXmlValue(xml, titleKey);
+        dlsValue = [artist, title].filter(Boolean).join(' - ');
+        slsUrl = this._extractXmlValue(xml, slsKey);
+      }
+      if (!dlsValue && defaultDlsAllowed) dlsValue = svc.metadata?.defaultDls || '';
+    }
+
+    // Override SLS URL from service config (works for ALL modes including NONE)
+    if (svc.metadata?.slsUrl) {
+      slsUrl = String(svc.metadata.slsUrl).trim();
+    }
+
+    // Write DLS file to runtime directory (with DL+ support if enabled)
+    if (dlsValue !== rt.currentDls) {
+      this._logMeta(svc, 'dls', `"${dlsValue}"`);
+      this._writeDlsFile(svc, dlsValue);
+      rt.currentDls = dlsValue;
+    }
+
+    // Download and convert SLS to 320x240 JPEG (skip for JSON — handled inline above)
+    if (mode !== 'JSON') {
+      if (slsUrl && slsUrl !== rt.currentSlsUrl) {
+        const ok = await this.downloadSlideForService(svc);
+        if (ok) {
+          rt.currentSlsUrl = slsUrl;
+        }
+      } else if (!slsUrl && defaultSlsAllowed) {
+        this._copyDefaultSls(slideDir);
+      }
+    }
+  }
+
+  async startMux() {
+    if (this.muxRunning) {
+      throw new Error('Mux déjà en cours (ON AIR).');
+    }
+    this.muxStatus = 'off';
+    this.lastError = null;
+
+    const totalCu = sumCU(this.preset.services);
+    if (totalCu > 864) {
+      throw new Error(`Capacity exceeded: ${totalCu} CU (max 864). Reduce bitrates/protection or disable services.`);
+    }
+
+    this.logger.line('mux', '--- START SEQUENCE ---');
+
+    // Preflight: check required binaries
+    const missingOdr = [];
+    const missingOther = [];
+    if (!this.pm.binaryExists('odr-dabmux')) missingOdr.push('odr-dabmux');
+    if (!this.pm.binaryExists('odr-audioenc')) missingOdr.push('odr-audioenc');
+    if (!this.pm.binaryExists('odr-padenc')) missingOdr.push('odr-padenc');
+    const txMode = (this.settings.dabmux?.txMode || 'EASYDAB').toUpperCase();
+    if (txMode === 'HACKRF') {
+      if (!this.pm.binaryExists('odr-dabmod')) missingOdr.push('odr-dabmod');
+      if (!this.pm.binaryExists('hackrf_transfer')) missingOther.push('hackrf_transfer');
+    }
+    if (missingOdr.length || missingOther.length) {
+      const parts = [];
+      if (missingOdr.length) parts.push(`${missingOdr.join(', ')} (install ODR-mmbTools)`);
+      if (missingOther.length) parts.push(`${missingOther.join(', ')} (install libhackrf / hackrf)`);
+      const msg = `Missing binaries: ${parts.join('; ')}`;
+      this.logger.line('mux', msg, 'ERROR');
+      throw new Error(msg);
+    }
+
+    // Reset runtime so every start uses current service config (fresh activeUri, etc.)
+    this._initRuntime();
+
+    // generate mux file
+    const muxText = buildMuxConfig({ settings: this.settings, preset: this.preset });
+    const muxPath = path.resolve(this.runtimeDir, 'current.mux');
+    fs.writeFileSync(muxPath, muxText, 'utf8');
+    this.logger.line('mux', 'generated mux: Ok');
+
+    // Atomic start with rollback on failure
+    const startedServices = [];
+    try {
+      for (const svc of this.preset.services.filter((s) => s.enabled)) {
+        await this._startService(svc);
+        startedServices.push(svc);
+      }
+
+      const dabmuxCmd = buildDabMuxCommand(muxPath);
+      this.pm.spawn('mux:odr-dabmux', dabmuxCmd.bin, dabmuxCmd.args, {
+        onExit: (code) => {
+          if (this.muxRunning && code !== 0) {
+            this.logger.line('mux', `odr-dabmux crashed (code=${code}) — stopping all`, 'ERROR');
+            this.stopMux().then(() => {
+              this.muxStatus = 'fail';
+            }).catch(() => {
+              this.muxStatus = 'fail';
+            });
+          }
+        }
+      });
+
+      // ---- HACKRF: start odr-dabmod + hackrf_transfer ----
+      // Wait briefly for odr-dabmux to open its EDI TCP port before odr-dabmod connects
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      const txMode = (this.settings.dabmux?.txMode || 'EASYDAB').toUpperCase();
+      if (txMode === 'HACKRF') {
+        const hk = this.settings.dabmux?.hackrf || {};
+        const dabBlock = hk.dabBlock || '7A';
+        const freqHz = DAB_FREQ_TABLE[dabBlock];
+        if (!freqHz) throw new Error(`Unknown DAB block: ${dabBlock}`);
+
+        const rate = hk.rate || 4096000;
+        const fifoPath = path.resolve(this.runtimeDir, 'ofdm.fifo');
+        const filtertapsPath = path.resolve(this.runtimeDir, 'filtertaps.txt');
+        const dabmodIniPath = path.resolve(this.runtimeDir, 'dabmod.ini');
+
+        // Copy filtertaps.txt to runtime dir
+        const srcFilterTaps = path.resolve(this.dataDir, 'filtertaps.txt');
+        fs.copyFileSync(srcFilterTaps, filtertapsPath);
+
+        // Create FIFO if not exists
+        if (!safeExists(fifoPath)) {
+          try { execFileSync('mkfifo', [fifoPath]); } catch (e) {
+            throw new Error(`Failed to create FIFO ${fifoPath}: ${e.message}`);
+          }
+        }
+
+        // Generate dabmod.ini
+        const ediPort = Number(this.settings.dabmux?.ediTcpListenPort) || 13000;
+        const dabmodConfig = buildDabModConfig({
+          source: `tcp://localhost:${ediPort}`,
+          maxFramesQueued: hk.maxFramesQueued || 580,
+          gainmode: hk.gainmode ?? 2,
+          digitalGain: hk.digitalGain ?? 1,
+          rate,
+          filtertapsPath,
+          fifoPath
+        });
+        fs.writeFileSync(dabmodIniPath, dabmodConfig, 'utf8');
+        this.logger.line('mux', `generated dabmod.ini: ${dabmodIniPath}`);
+
+        // Start odr-dabmod
+        this.pm.spawn('mux:odr-dabmod', 'odr-dabmod', [dabmodIniPath], {
+          onExit: (code) => {
+            if (this.muxRunning && code !== 0) {
+              this.logger.line('mux', `odr-dabmod crashed (code=${code})`, 'ERROR');
+            }
+          }
+        });
+        this.logger.line('mux', `started odr-dabmod (block=${dabBlock}, freq=${freqHz}Hz)`);
+
+        // Start hackrf_transfer
+        const hackrfCmd = buildHackrfTransferCommand({
+          fifoPath, freqHz, txGain: hk.txGain ?? 47, rate
+        });
+        this.pm.spawn('mux:hackrf_transfer', hackrfCmd.bin, hackrfCmd.args, {
+          onStderr: (line) => {
+            if (/hackrf.*not found/i.test(line)) {
+              const msg = 'HackRF not detected — please connect HackRF device';
+              this.logger.line('mux', msg, 'ERROR');
+              this.lastError = msg;
+              this.muxStatus = 'fail';
+              this.stopMux().catch(() => {});
+            }
+          },
+          onExit: (code) => {
+            if (this.muxRunning && code !== 0) {
+              this.logger.line('mux', `hackrf_transfer crashed (code=${code})`, 'ERROR');
+            }
+          }
+        });
+        this.logger.line('mux', `started hackrf_transfer (freq=${freqHz}Hz, txGain=${hk.txGain ?? 47})`);
+      }
+    } catch (err) {
+      // Rollback: stop any started services
+      this.logger.line('mux', `start failed, rolling back: ${err?.message || err}`, 'ERROR');
+      for (const svc of startedServices) {
+        try { await this._stopService(svc); } catch { /* ignore */ }
+      }
+      try { await this.pm.stop('mux:odr-dabmod'); } catch { /* ignore */ }
+      try { await this.pm.stop('mux:hackrf_transfer'); } catch { /* ignore */ }
+      try { await this.pm.stop('mux:odr-dabmux'); } catch { /* ignore */ }
+      this.muxStatus = 'fail';
+      throw err;
+    }
+
+    this.muxRunning = true;
+    this.muxStatus = 'on';
+    this.muxSinceMs = Date.now();
+    this._persistMuxState(true);
+    this._startWatchdog();
+    this._startMetadataLoop();
+  }
+
+  async stopMux() {
+    this.logger.line('mux', '--- STOP SEQUENCE ---');
+    this._stopWatchdog();
+    this._stopMetadataLoop();
+
+    if (!this.muxRunning) {
+      this.logger.line('mux', 'stop requested while muxRunning=false; forcing svc cleanup');
+      await this.pm.stopAll('svc:');
+      await this.pm.stopAll('mux:');
+
+      // Reset DLS and status for clean UI display when stopped
+      for (const svc of this.preset.services) {
+        const rt = this.serviceRuntime.get(svc.id);
+        if (rt) {
+          const defaultDlsAllowed = svc.metadata?.defaultDlsAllowed !== false;
+          rt.currentDls = defaultDlsAllowed ? (svc.metadata?.defaultDls || '') : '';
+          rt.dlplusActive = false;
+          rt.status = 'STOPPED';
+        }
+      }
+
+      if (this.muxStatus === 'fail') {
+        this.muxStatus = 'off';
+        this.muxSinceMs = Date.now();
+      }
+      this._persistMuxState(false);
+      return;
+    }
+
+    // Disarm onExit crash handler BEFORE killing dabmux
+    this.muxRunning = false;
+    this.muxSinceMs = Date.now();
+
+    // HACKRF: stop in reverse order (consumer first)
+    try { await this.pm.stop('mux:hackrf_transfer'); } catch (e) {
+      if (e?.message !== 'not running') this.logger.line('mux', `stop hackrf_transfer: ${e?.message || e}`, 'WARN');
+    }
+    try { await this.pm.stop('mux:odr-dabmod'); } catch (e) {
+      if (e?.message !== 'not running') this.logger.line('mux', `stop odr-dabmod: ${e?.message || e}`, 'WARN');
+    }
+    try { await this.pm.stop('mux:odr-dabmux'); } catch (e) {
+      this.logger.line('mux', `stop mux error: ${e?.message || e}`, 'WARN');
+    }
+
+    for (const svc of this.preset.services) {
+      try { await this._stopService(svc); } catch (e) {
+        this.logger.line(`svc:${svc.id}`, `stop error: ${e?.message || e}`, 'WARN');
+      }
+    }
+
+    // Fallback: clean up any remaining processes
+    await this.pm.stopAll('svc:');
+    await this.pm.stopAll('mux:');
+
+    // Reset DLS and status for clean UI display when stopped
+    for (const svc of this.preset.services) {
+      const rt = this.serviceRuntime.get(svc.id);
+      if (rt) {
+        const defaultDlsAllowed = svc.metadata?.defaultDlsAllowed !== false;
+        rt.currentDls = defaultDlsAllowed ? (svc.metadata?.defaultDls || '') : '';
+        rt.dlplusActive = false;
+        rt.status = 'STOPPED';
+      }
+    }
+
+    this.muxStatus = 'off';
+    this._persistMuxState(false);
+  }
+
+  async _startService(svc) {
+    const motDirAbs = this._resolveMotDir(svc);
+    const fifoPath = path.resolve(motDirAbs, svc.pad.fifoName);
+    const mtaPath = this._getMtaPath(svc);
+
+    ensureDir(motDirAbs);
+    ensureDir(path.dirname(mtaPath));
+
+    // Direct input modes: external encoder pushes audio directly to dabmux — no audioenc/padenc
+    const inputMode = (svc.input?.mode || '').toUpperCase();
+    if (inputMode === 'ZMQ' || inputMode === 'EDI') {
+      const rt = this.serviceRuntime.get(svc.id);
+      if (rt) {
+        rt.lastStartMs = nowMs();
+        rt.encWasAlive = false;
+        rt.status = 'RUNNING';
+        rt.activeUri = null;
+      }
+      this.logger.line(`svc:${svc.id}`, `direct input mode ${inputMode} on port ${svc.network.ediOutputTcp.port} — no encoder spawned`);
+      return;
+    }
+
+    // Pre-write DLS file so odr-padenc has content immediately
+    const dlsAllowed = svc.metadata?.defaultDlsAllowed !== false;
+    const dlsText = dlsAllowed ? (svc.metadata?.defaultDls || '') : '';
+    if (dlsText) {
+      this._writeDlsFile(svc, dlsText);
+    }
+
+    // create fifo if missing — synchronous to avoid race with padenc/audioenc
+    if (!safeExists(fifoPath)) {
+      try { execFileSync('mkfifo', [fifoPath]); } catch (e) {
+        throw new Error(`Failed to create PAD FIFO ${fifoPath}: ${e.message}`);
+      }
+    }
+
+    // padenc (watch slide directory for logo.jpg, use runtime DLS file)
+    const slideDir = path.resolve(motDirAbs, svc.pad?.slideDir || 'slide');
+    const dlsRuntimePath = this._getDlsRuntimePath(svc);
+    ensureDir(slideDir);
+    const padCmd = buildPadEncCommand(svc, slideDir, dlsRuntimePath);
+    this.pm.spawn(`svc:${svc.id}:padenc`, padCmd.bin, padCmd.args, { cwd: motDirAbs });
+
+    // audioenc (uses the fifo name in cwd)
+    const rt = this.serviceRuntime.get(svc.id);
+    if (rt) rt.status = 'STARTING';
+
+    const activeUri = rt?.activeUri || svc.input.uri;
+    const codecArgs = this._getCodecArgs(svc.audio?.codec);
+    const audioCmd = buildAudioEncCommand({
+      svc: { ...svc, audio: { ...svc.audio, codecArgs } },
+      activeUri,
+      mtaPath
+    });
+    this.pm.spawn(`svc:${svc.id}:audioenc`, audioCmd.bin, audioCmd.args, {
+      cwd: motDirAbs,
+      onStderr: (text) => {
+        const lvl = parseAudioLevel(text);
+        if (lvl && rt) rt.audioLevels = lvl;
+      }
+    });
+
+    if (rt) {
+      rt.lastStartMs = nowMs();
+      rt.encWasAlive = true;
+      rt.status = 'RUNNING';
+      rt.activeUri = activeUri;
+    }
+  }
+
+  async _stopService(svc) {
+    const rt = this.serviceRuntime.get(svc.id);
+    if (rt) rt.status = 'STOPPING';
+
+    const _inputMode = (svc.input?.mode || '').toUpperCase();
+    if (_inputMode !== 'ZMQ' && _inputMode !== 'EDI') {
+      await this.pm.stop(`svc:${svc.id}:audioenc`);
+      await this.pm.stop(`svc:${svc.id}:padenc`);
+
+      // mkfifo helper exits by itself
+      await this.pm.stop(`svc:${svc.id}:mkfifo`);
+    }
+
+    if (rt) rt.status = 'STOPPED';
+  }
+
+  _startWatchdog() {
+    if (this.watchdogTimer) return;
+
+    this.watchdogTimer = setInterval(async () => {
+      // CRITICAL FIX: Prevent concurrent watchdog execution
+      if (this._watchdogRunning) {
+        this.logger.line('watchdog', 'previous iteration still running, skipping', 'DEBUG');
+        return;
+      }
+
+      if (!this.muxRunning) return;
+
+      this._watchdogRunning = true;
+      try {
+        for (const svc of this.preset.services.filter((s) => s.enabled && s.watchdog?.enabled)) {
+          const rt = this.serviceRuntime.get(svc.id);
+          if (!rt) continue;
+
+          // Skip direct input modes — no local encoder to monitor
+          const _wdMode = (svc.input?.mode || '').toUpperCase();
+          if (_wdMode === 'ZMQ' || _wdMode === 'EDI') continue;
+
+          if (!rt.activeUri) rt.activeUri = svc.input.uri;
+
+          // Check if encoder process is still alive
+          const encKey = `svc:${svc.id}:audioenc`;
+          const encAlive = this.pm.isRunning(encKey);
+
+          // Health check main & backup (always, for both alive/dead paths)
+          const hasDistinctBackup = svc.input.backupUri && svc.input.backupUri !== svc.input.uri;
+          const okMain = await headOk(svc.input.uri);
+          const okBackup = hasDistinctBackup ? await headOk(svc.input.backupUri) : false;
+
+          // --- CRASH DETECTION (transition-based) ---
+          // Only count a NEW crash on alive→dead transition
+          if (!encAlive && rt.encWasAlive) {
+            rt.consecutiveCrashes = (rt.consecutiveCrashes || 0) + 1;
+            rt.lastDeathMs = nowMs();
+            const ranMs = rt.lastStartMs ? (rt.lastDeathMs - rt.lastStartMs) : 0;
+            rt.status = 'ERROR';
+            this.logger.line(`svc:${svc.id}`, `encoder died — crash #${rt.consecutiveCrashes}/${FAILOVER_CRASH_THRESHOLD}, ran ${Math.round(ranMs / 1000)}s, uri=${rt.activeUri}`, 'ERROR');
+          }
+          rt.encWasAlive = encAlive;
+
+          // --- ENCODER DEAD: restart or failover ---
+          if (!encAlive) {
+            // CRITICAL: Check if mux is still running before attempting restart
+            // Prevents race condition where stop was called during watchdog iteration
+            if (!this.muxRunning) {
+              this.logger.line(`svc:${svc.id}`, `encoder dead but mux stopping — skip restart`);
+              continue;
+            }
+
+            const crashes = rt.consecutiveCrashes || 0;
+            const activeIsMainUri = (rt.activeUri || svc.input.uri) === svc.input.uri;
+
+            // Decide: switch to backup or restart on same URI?
+            // When on backup, crashes restart on backup — probe handles return to main.
+            if (crashes >= FAILOVER_CRASH_THRESHOLD && hasDistinctBackup && activeIsMainUri) {
+              // Threshold reached on main — switch to backup
+              const targetUri = svc.input.backupUri;
+              const targetOk = activeIsMainUri ? okBackup : okMain;
+
+              this.logger.line(`svc:${svc.id}`, `failover: ${crashes} crashes — switching ${activeIsMainUri ? 'main' : 'backup'} => ${activeIsMainUri ? 'backup' : 'main'} (${targetUri}) [headOk=${targetOk}]`);
+              rt.consecutiveCrashes = 0;
+              await Promise.race([
+                this._switchServiceUri(svc, targetUri),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('switch timeout')), 5000))
+              ]).catch(err => {
+                this.logger.line(`svc:${svc.id}`, `switch failed: ${err.message}`, 'WARN');
+                rt.status = 'ERROR';
+              });
+            } else if (crashes >= FAILOVER_CRASH_THRESHOLD && !hasDistinctBackup) {
+              // Threshold reached but no distinct backup — restart on same, log once
+              this.logger.line(`svc:${svc.id}`, `failover: ${crashes} crashes but no distinct backup — restarting on ${rt.activeUri}`);
+              await Promise.race([
+                this._switchServiceUri(svc, rt.activeUri || svc.input.uri),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('switch timeout')), 5000))
+              ]).catch(err => {
+                this.logger.line(`svc:${svc.id}`, `restart failed: ${err.message}`, 'WARN');
+                rt.status = 'ERROR';
+              });
+            } else {
+              // Under threshold — restart on current URI
+              this.logger.line(`svc:${svc.id}`, `failover: restarting on ${rt.activeUri} (crash ${crashes}/${FAILOVER_CRASH_THRESHOLD})`);
+              await Promise.race([
+                this._switchServiceUri(svc, rt.activeUri || svc.input.uri),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('switch timeout')), 5000))
+              ]).catch(err => {
+                this.logger.line(`svc:${svc.id}`, `restart failed: ${err.message}`, 'WARN');
+                rt.status = 'ERROR';
+              });
+            }
+            continue;
+          }
+
+          // --- ENCODER ALIVE ---
+          // Only reset crash counter after proven stability
+          if (rt.consecutiveCrashes > 0 && rt.lastStartMs) {
+            const upMs = nowMs() - rt.lastStartMs;
+            if (upMs >= FAILOVER_STABLE_MS) {
+              this.logger.line(`svc:${svc.id}`, `encoder stable for ${Math.round(upMs / 1000)}s — crash counter reset`);
+              rt.consecutiveCrashes = 0;
+            }
+          }
+
+          if (okMain) rt.lastOkMainMs = nowMs();
+          if (okBackup) rt.lastOkBackupMs = nowMs();
+
+          const thresholdMs = (svc.watchdog.silenceThresholdSec ?? 10) * 1000;
+
+          // determine if active is failing
+          let activeIsMain = false;
+          if (rt.activeUri) {
+            activeIsMain = rt.activeUri === svc.input.uri;
+          }
+          const activeOk = activeIsMain ? okMain : okBackup;
+          // When encoder is alive, trust encoder state for status display regardless
+          // of HTTP check result — headOk can fail for Icecast/SRT/HTTPS streams
+          // even when audio is fine (HEAD rejected, timeout, slot full, etc.).
+          const effectiveActiveOk = activeOk || encAlive;
+
+          if (effectiveActiveOk) {
+            rt.failuresSinceMs = 0;
+            rt.warningSinceMs = 0;
+            const backupUnstable = !activeIsMain && rt.consecutiveCrashes > 0;
+            if (backupUnstable) {
+              if (rt.status !== 'WARNING') rt.status = 'WARNING';
+            } else if (rt.status && rt.status !== 'RUNNING') {
+              rt.status = 'RUNNING';
+            }
+            // try returning to main if on backup
+            if (!activeIsMain && svc.watchdog.returnToMainAfterSec > 0) {
+              const backMs = svc.watchdog.returnToMainAfterSec * 1000;
+              if (nowMs() - (rt.lastSwitchMs || 0) >= backMs && okMain) {
+                // CRITICAL: Check if mux is still running before switching
+                if (!this.muxRunning) {
+                  this.logger.line(`svc:${svc.id}`, `mux stopping — skip return to main`);
+                  continue;
+                }
+                // CRITICAL FIX: Timeout on switch to prevent blocking watchdog
+                await Promise.race([
+                  this._switchServiceUri(svc, svc.input.uri),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('switch timeout')), 5000))
+                ]).catch(err => {
+                  this.logger.line(`svc:${svc.id}`, `switch to main failed: ${err.message}`, 'WARN');
+                });
+              }
+            }
+            continue;
+          }
+
+          // active failed
+          if (!rt.failuresSinceMs) rt.failuresSinceMs = nowMs();
+          if (!rt.warningSinceMs) rt.warningSinceMs = nowMs();
+
+          const warnSec = Math.max(1, Number(svc.watchdog.warningThresholdSec ?? Math.floor((svc.watchdog.silenceThresholdSec ?? 10) / 2)));
+          if (nowMs() - rt.warningSinceMs >= warnSec * 1000 && rt.status !== 'WARNING') {
+            rt.status = 'WARNING';
+          }
+
+          if (nowMs() - rt.failuresSinceMs >= thresholdMs) {
+            if (svc.watchdog.switchToBackupOnSilence && svc.input.backupUri) {
+              const target = activeIsMain ? svc.input.backupUri : svc.input.uri;
+              const targetOk = activeIsMain ? okBackup : okMain;
+
+              if (targetOk) {
+                // CRITICAL: Check if mux is still running before switching
+                if (!this.muxRunning) {
+                  this.logger.line(`svc:${svc.id}`, `mux stopping — skip switch to backup`);
+                  continue;
+                }
+                // CRITICAL FIX: Timeout on switch to prevent blocking watchdog
+                await Promise.race([
+                  this._switchServiceUri(svc, target),
+                  new Promise((_, reject) => setTimeout(() => reject(new Error('switch timeout')), 5000))
+                ]).catch(err => {
+                  this.logger.line(`svc:${svc.id}`, `switch to backup failed: ${err.message}`, 'WARN');
+                });
+                rt.failuresSinceMs = 0;
+                rt.warningSinceMs = 0;
+              }
+            }
+          }
+        }
+        // HACKRF: verify dabmod + hackrf_transfer are alive
+        const wdTxMode = (this.settings.dabmux?.txMode || 'EASYDAB').toUpperCase();
+        if (wdTxMode === 'HACKRF') {
+          const dabmodAlive = this.pm.isRunning('mux:odr-dabmod');
+          const hackrfAlive = this.pm.isRunning('mux:hackrf_transfer');
+          if (!dabmodAlive || !hackrfAlive) {
+            this.logger.line('watchdog', `HACKRF chain broken: dabmod=${dabmodAlive} hackrf=${hackrfAlive}`, 'ERROR');
+            this.muxStatus = 'fail';
+          }
+        }
+      } catch (err) {
+        this.logger.line('watchdog', `error: ${err?.message || err}`, 'ERROR');
+      } finally {
+        // CRITICAL FIX: Always release lock
+        this._watchdogRunning = false;
+      }
+    }, 5000);
+
+    this.logger.line('watchdog', 'started');
+    this._startProbeLoop();
+  }
+
+  _stopWatchdog() {
+    if (this.watchdogTimer) {
+      clearInterval(this.watchdogTimer);
+      this.watchdogTimer = null;
+      this.logger.line('watchdog', 'stopped');
+    }
+    this._stopProbeLoop();
+  }
+
+  // Probe loop: runs a minimal odr-audioenc on the main URI for services currently
+  // on backup, to detect audio return. One probe at a time, sequential per service.
+  _startProbeLoop() {
+    if (this._probeTimer) return;
+    this._probeRunning = false;
+    this._probeTimer = setInterval(async () => {
+      if (this._probeRunning) return;
+      if (!this.muxRunning) return;
+
+      // Collect services currently on backup that have a main URI to probe
+      const candidates = this.preset.services.filter(svc => {
+        if (!svc.enabled || !svc.watchdog?.enabled) return false;
+        const rt = this.serviceRuntime.get(svc.id);
+        if (!rt || !rt.activeUri) return false;
+        return rt.activeUri !== svc.input.uri && svc.input.uri;
+      });
+      if (!candidates.length) return;
+
+      this._probeRunning = true;
+      try {
+        for (const svc of candidates) {
+          if (!this.muxRunning) break;
+          const rt = this.serviceRuntime.get(svc.id);
+          if (!rt || rt.activeUri === svc.input.uri) continue; // already back on main
+
+          const mainUri = svc.input.uri;
+
+          // Audio probe — odr-audioenc with -s 15 exits on silence
+          const probeKey = 'mux:probe-audioenc';
+          if (this.pm.isRunning(probeKey)) await this.pm.stop(probeKey);
+          this.logger.line('probe', `svc:${svc.id}: probing audio on ${mainUri}`);
+          const cmd = buildProbeCommand(mainUri, svc.input.mode);
+          this.pm.spawn(probeKey, cmd.bin, cmd.args);
+
+          // Wait 17s: if probe still alive → audio present (-s 15 would have killed it on silence)
+          await new Promise(resolve => setTimeout(resolve, 17000));
+          if (!this.muxRunning) break;
+
+          const audioDetected = this.pm.isRunning(probeKey);
+          await this.pm.stop(probeKey);
+
+          if (audioDetected) {
+            this.logger.line('probe', `svc:${svc.id}: audio detected on ${mainUri} — switching back to main`);
+            await Promise.race([
+              this._switchServiceUri(svc, mainUri),
+              new Promise((_, reject) => setTimeout(() => reject(new Error('switch timeout')), 5000))
+            ]).catch(err => {
+              this.logger.line('probe', `svc:${svc.id}: switch back failed: ${err.message}`, 'WARN');
+            });
+          } else {
+            this.logger.line('probe', `svc:${svc.id}: no audio on ${mainUri} — still down`);
+          }
+        }
+      } catch (err) {
+        this.logger.line('probe', `error: ${err?.message || err}`, 'ERROR');
+      } finally {
+        this._probeRunning = false;
+        this.pm.stop('mux:probe-audioenc').catch(() => {});
+      }
+    }, 5000);
+    this.logger.line('probe', 'loop started');
+  }
+
+  _stopProbeLoop() {
+    if (this._probeTimer) {
+      clearInterval(this._probeTimer);
+      this._probeTimer = null;
+      this.logger.line('probe', 'loop stopped');
+    }
+    this.pm.stop('mux:probe-audioenc').catch(() => {});
+  }
+
+  async _switchServiceUri(svc, newUri) {
+    // Per-service lock to prevent concurrent switches
+    const lockKey = `switch:${svc.id}`;
+    if (this._switchLocks.has(lockKey)) {
+      this.logger.line(`svc:${svc.id}`, `[failover] switch SKIPPED — lock active`);
+      return;
+    }
+
+    const rt = this.serviceRuntime.get(svc.id);
+    if (!rt) return;
+
+    const prevUri = rt.activeUri || svc.input.uri;
+    this._switchLocks.set(lockKey, true);
+    try {
+      this.logger.line(`svc:${svc.id}`, `[failover] switch: ${prevUri} => ${newUri}`);
+
+      // Stop current audioenc (padenc stays alive)
+      this.logger.line(`svc:${svc.id}`, `[failover] stopping audioenc...`);
+      await this.pm.stop(`svc:${svc.id}:audioenc`);
+      this.logger.line(`svc:${svc.id}`, `[failover] audioenc stopped`);
+
+      rt.activeUri = newUri;
+      rt.lastSwitchMs = nowMs();
+      rt.status = 'RESTARTING';
+
+      // Rebuild audioenc command with new URI
+      const motDirAbs = this._resolveMotDir(svc);
+      const mtaPath = this._getMtaPath(svc);
+      const codecArgs = this._getCodecArgs(svc.audio?.codec);
+      const audioCmd = buildAudioEncCommand({
+        svc: { ...svc, audio: { ...svc.audio, codecArgs } },
+        activeUri: newUri,
+        mtaPath
+      });
+
+      this.logger.line(`svc:${svc.id}`, `[failover] spawn: ${audioCmd.bin} ... ${newUri}`);
+      this.pm.spawn(`svc:${svc.id}:audioenc`, audioCmd.bin, audioCmd.args, {
+        cwd: motDirAbs,
+        onStderr: (text) => {
+          const lvl = parseAudioLevel(text);
+          if (lvl && rt) rt.audioLevels = lvl;
+        }
+      });
+
+      rt.lastStartMs = nowMs();
+      rt.encWasAlive = true;
+      rt.status = 'RUNNING';
+      this.logger.line(`svc:${svc.id}`, `[failover] switch OK — now on ${newUri}`);
+    } catch (err) {
+      this.logger.line(`svc:${svc.id}`, `[failover] switch FAILED: ${err.message}`, 'ERROR');
+      rt.status = 'ERROR';
+      throw err;
+    } finally {
+      this._switchLocks.delete(lockKey);
+    }
+  }
+}

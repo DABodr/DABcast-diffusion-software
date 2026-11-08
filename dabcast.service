@@ -1,0 +1,47 @@
+[Unit]
+Description=DABcast - DAB+ multiplex manager
+Documentation=https://github.com/DABodr/DABcast
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=odr
+Group=odr
+
+# WorkingDirectory MUST be server/ — appDir is resolved as process.cwd()/..
+# so the server finds web/, data/, defaults/ at the project root.
+WorkingDirectory=/home/odr/projets/Emissions_DAB/DABcast/server
+ExecStart=/usr/bin/node src/index.js
+
+# Clean shutdown: let Node.js call stopMux() on SIGTERM before systemd force-kills.
+# ODR child processes are spawned detached+unref'd, so KillMode=process is correct
+# (systemd only kills the Node.js process; the app kills ODR tools itself via stopMux).
+KillMode=process
+TimeoutStopSec=15s
+
+# Restart automatically on crash, but not on clean exit (e.g. systemctl stop)
+Restart=on-failure
+RestartSec=5s
+
+# Logs go to journald (follow with: journalctl -u dabcast -f)
+# The server also writes to data/logs/dabweb.log
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dabcast
+
+# Uncomment to override port or data directory:
+# Environment=PORT=9590
+# Environment=HOST=0.0.0.0
+# Environment=DABCAST_DATA_DIR=/home/odr/projets/Emissions_DAB/DABcast/data
+
+# Required for the Dablin button (launches dablin_gtk, a GUI app).
+# Without these, systemd has no X11 display/audio and dablin_gtk silently fails.
+# Uncomment and adapt to your display setup (replace 1000 with your UID: id -u):
+# Environment=DISPLAY=:0
+# Environment=XAUTHORITY=/home/odr/.Xauthority
+# XDG_RUNTIME_DIR gives access to PulseAudio and D-Bus session (needed for audio):
+# Environment=XDG_RUNTIME_DIR=/run/user/1000
+
+[Install]
+WantedBy=multi-user.target

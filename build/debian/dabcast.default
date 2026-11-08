@@ -1,0 +1,42 @@
+# /etc/default/dabcast — DABcast service configuration
+# Edit this file to customize the service, then restart:
+#   sudo systemctl restart dabcast
+
+# Utilisateur système qui exécute le service.
+# Si commenté : détecté automatiquement depuis SUDO_USER (utilisateur qui a lancé
+# sudo dpkg -i) ou à défaut le premier compte non-système (UID >= 1000).
+# Décommentez uniquement pour forcer un utilisateur spécifique.
+# Exemples : odr, pi, ubuntu, tintin…
+#RUN_AS_USER=odr
+
+# Data directory (presets, logs, runtime, mot images)
+#DABCAST_DATA_DIR=/var/lib/dabcast
+
+# Web server port and listen address
+#PORT=9090
+#HOST=0.0.0.0
+
+# ── Telegram log notifications ────────────────────────────────────────────────
+# Create a bot with @BotFather, send it a message, then set the bot token and
+# destination chat ID below. Notifications are disabled while these are unset.
+# Keep this file readable by root only because it contains the bot token.
+#DABCAST_TELEGRAM_BOT_TOKEN=123456789:replace_with_bot_token
+#DABCAST_TELEGRAM_CHAT_ID=-1001234567890
+# Minimum forwarded level: DEBUG, INFO, WARN, or ERROR (default: ERROR)
+#DABCAST_TELEGRAM_MIN_LEVEL=ERROR
+# Set to true to send messages without a notification sound.
+#DABCAST_TELEGRAM_SILENT=false
+
+# ── GUI / Dablin button ───────────────────────────────────────────────────────
+# Required ONLY if you use the in-browser "Launch Dablin" button.
+# Uncomment and adapt to your display setup.
+#
+# Your X display (run: echo $DISPLAY)
+#DISPLAY=:0
+#
+# Your X authority file (usually ~/.Xauthority)
+#XAUTHORITY=/home/USER/.Xauthority
+#
+# Your XDG runtime directory — gives access to PulseAudio and D-Bus session.
+# Replace 1000 with your user UID (run: id -u)
+#XDG_RUNTIME_DIR=/run/user/1000

@@ -1,0 +1,36 @@
+[Unit]
+Description=DABcast - DAB+ multiplex manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=dabcast
+Group=dabcast
+ExecStart=/opt/dabcast/bin/dabcast
+WorkingDirectory=/opt/dabcast
+
+# Default data directory — can be overridden via /etc/default/dabcast
+Environment=DABCAST_DATA_DIR=/var/lib/dabcast
+
+# Machine-specific overrides (port, data dir, GUI env for dablin_gtk)
+# Edit /etc/default/dabcast — see comments in that file for available variables.
+EnvironmentFile=-/etc/default/dabcast
+
+# Clean shutdown: let the app call stopMux() on SIGTERM before force-kill.
+# ODR child processes are spawned detached, so KillMode=process is correct
+# (systemd only kills the dabcast process; the app kills ODR tools itself).
+KillMode=process
+TimeoutStopSec=15s
+
+# Restart automatically on crash, but not on clean exit (systemctl stop)
+Restart=on-failure
+RestartSec=5s
+
+# Logs go to journald (follow with: journalctl -u dabcast -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dabcast
+
+[Install]
+WantedBy=multi-user.target
