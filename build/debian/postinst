@@ -103,6 +103,34 @@ case "$1" in
       log "  -> systemd non disponible en mode live, demarrage ignore"
     fi
 
+    # --- Script de mise a jour privilegiee ---
+    log "[+] Installation du helper de mise a jour..."
+    cat > /opt/dabcast/bin/dabcast-install-update << 'UPDATER'
+#!/bin/bash
+set -e
+PKG=$(ls /tmp/dabcast-update_*.deb 2>/dev/null | sort -V | tail -1)
+if [ -z "$PKG" ]; then
+  echo "dabcast-install-update: no package found in /tmp" >&2
+  exit 1
+fi
+echo "dabcast-install-update: installing $PKG"
+dpkg -i "$PKG"
+rm -f "$PKG"
+UPDATER
+    chmod 755 /opt/dabcast/bin/dabcast-install-update
+    log "  -> /opt/dabcast/bin/dabcast-install-update installe"
+
+    # Regle sudoers : autoriser l'utilisateur du service a lancer uniquement ce script
+    SUDOERS_FILE=/etc/sudoers.d/dabcast-update
+    echo "$RUN_AS_USER ALL=(root) NOPASSWD: /opt/dabcast/bin/dabcast-install-update" > "$SUDOERS_FILE"
+    chmod 440 "$SUDOERS_FILE"
+    if visudo -c -f "$SUDOERS_FILE" >/dev/null 2>&1; then
+      log "  -> Regle sudoers installee pour $RUN_AS_USER"
+    else
+      rm -f "$SUDOERS_FILE"
+      log "  AVERTISSEMENT : regle sudoers invalide, mise a jour automatique non disponible"
+    fi
+
     log ""
     log "=== Installation terminee ==="
     log "Chemins installs :"

@@ -15,6 +15,9 @@ case "$1" in
     systemctl daemon-reload 2>/dev/null || true
     ;;
   remove)
+    # Remove update helper and sudoers rule
+    rm -f /opt/dabcast/bin/dabcast-install-update
+    rm -f /etc/sudoers.d/dabcast-update
     systemctl daemon-reload 2>/dev/null || true
     ;;
 esac

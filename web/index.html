@@ -12,7 +12,7 @@
     <div class="brand">
       <img src="logodab.png" class="logo" alt="DAB" />
       <div>
-        <div class="title" id="muxName">Mux</div><span class="app-version" id="appVersion"></span><a id="updateBadge" class="update-badge hidden" target="_blank" rel="noopener noreferrer"></a>
+        <div class="title" id="muxName">Mux</div><span class="app-version" id="appVersion"></span><button id="updateBadge" class="update-badge hidden" type="button"></button>
         <div class="subtitle" id="muxSubtitle">Demo preset</div>
       </div>
     </div>
@@ -811,6 +811,42 @@
         <div class="spacer"></div>
         <button type="button" class="btn" data-action="telegram-cancel">Cancel</button>
         <button type="button" class="btn btn-success" id="btnTelegramSave">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgUpdate" class="modal">
+    <form method="dialog" class="modal-body">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Software update</div>
+          <div class="modal-sub" id="updateDialogSub"></div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close" id="btnUpdateClose">✕</button>
+      </div>
+      <div id="updateDialogBody" class="update-dialog-body">
+        <div id="updateOnAirWarning" class="update-onair-warning hidden">
+          ⚠️ The mux is currently ON AIR. Installing the update will restart the service and interrupt the broadcast.
+        </div>
+        <div class="update-info-row">
+          <span>Current version:</span><span id="updateCurrentVer"></span>
+        </div>
+        <div class="update-info-row">
+          <span>New version:</span><span id="updateNewVer" class="update-new-ver"></span>
+        </div>
+        <div id="updateProgressWrap" class="update-progress-wrap hidden">
+          <div class="update-progress-label" id="updateProgressLabel">Downloading…</div>
+          <div class="update-progress-track">
+            <div class="update-progress-fill" id="updateProgressFill"></div>
+          </div>
+          <div class="update-progress-pct" id="updateProgressPct">0%</div>
+        </div>
+        <div id="updateErrorMsg" class="update-error hidden"></div>
+      </div>
+      <div class="modal-actions">
+        <div class="spacer"></div>
+        <button type="button" value="cancel" class="btn" id="btnUpdateCancel">Cancel</button>
+        <button type="button" class="btn btn-success" id="btnUpdateStart">Download &amp; Install</button>
       </div>
     </form>
   </dialog>

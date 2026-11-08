@@ -1238,18 +1238,88 @@ app.get('/api/update/check', async (req, res) => {
         signal: AbortSignal.timeout(8000)
       }
     );
-    if (!r.ok) return res.json({ latestVersion: null, releaseUrl: null });
+    if (!r.ok) return res.json({ latestVersion: null, releaseUrl: null, assets: [] });
     const data = await r.json();
     _releaseCache = {
       latestVersion: String(data.tag_name || '').replace(/^v/, ''),
-      releaseUrl: data.html_url || null
+      releaseUrl: data.html_url || null,
+      assets: (data.assets || []).map(a => ({ name: a.name, url: a.browser_download_url, size: a.size || 0 }))
     };
     _releaseCacheTime = now;
     res.json(_releaseCache);
   } catch (_) {
-    res.json({ latestVersion: null, releaseUrl: null });
+    res.json({ latestVersion: null, releaseUrl: null, assets: [] });
   }
 });
+
+// Update progress state
+let _updateState = { status: 'idle', progress: 0, error: null, version: null };
+
+app.get('/api/update/progress', (req, res) => {
+  res.json(_updateState);
+});
+
+app.post('/api/update/apply', async (req, res) => {
+  if (_updateState.status !== 'idle' && _updateState.status !== 'error') {
+    return res.status(409).json({ error: 'Update already in progress' });
+  }
+  if (!_releaseCache?.assets?.length) {
+    return res.status(400).json({ error: 'No release info — call /api/update/check first' });
+  }
+  if (state.getState().muxRunning) {
+    return res.status(409).json({ error: 'Cannot update while ON AIR. Stop the broadcast first.' });
+  }
+
+  const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+  const asset = _releaseCache.assets.find(a => a.name.endsWith('.deb') && a.name.includes(arch));
+  if (!asset) {
+    return res.status(400).json({ error: `No .deb asset found for architecture: ${arch}` });
+  }
+
+  _updateState = { status: 'downloading', progress: 0, error: null, version: _releaseCache.latestVersion };
+  res.json({ ok: true, arch, asset: asset.name });
+
+  _doUpdate(asset).catch(err => {
+    logger.line('update', `Update failed: ${err.message || err}`, 'ERROR');
+    _updateState = { status: 'error', progress: 0, error: String(err.message || err), version: null };
+  });
+});
+
+async function _doUpdate(asset) {
+  const tmpPath = path.join(os.tmpdir(), `dabcast-update_${asset.name}`);
+
+  // Stream download with progress
+  const r = await fetch(asset.url, {
+    headers: { 'User-Agent': 'DABcast' },
+    redirect: 'follow',
+    signal: AbortSignal.timeout(180000)
+  });
+  if (!r.ok) throw new Error(`Download failed: ${r.status} ${r.statusText}`);
+
+  const total = Number(r.headers.get('content-length') || asset.size || 0);
+  let received = 0;
+  const dest = fs.createWriteStream(tmpPath);
+  for await (const chunk of r.body) {
+    dest.write(chunk);
+    received += chunk.byteLength;
+    if (total > 0) _updateState.progress = Math.round((received / total) * 100);
+  }
+  await new Promise((ok, fail) => { dest.end(); dest.on('finish', ok); dest.on('error', fail); });
+
+  _updateState = { ..._updateState, status: 'installing', progress: 100 };
+  logger.line('update', `Installing ${asset.name}...`);
+
+  await new Promise((ok, fail) => {
+    const child = spawn('sudo', ['/opt/dabcast/bin/dabcast-install-update'], {
+      stdio: ['ignore', 'inherit', 'inherit']
+    });
+    child.on('exit', code => code === 0 ? ok() : fail(new Error(`Installer exited with code ${code}`)));
+    child.on('error', fail);
+  });
+
+  _updateState = { ..._updateState, status: 'restarting' };
+  logger.line('update', 'Update installed, service restarting...');
+}
 
 const listenHost = process.env.HOST || settings.host || '0.0.0.0';
 const listenPort = Number(process.env.PORT || settings.port || 9090);

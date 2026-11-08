@@ -314,7 +314,6 @@ function render() {
   if (badgeEl) {
     if (_updateInfo?.updateAvailable) {
       badgeEl.textContent = `↑ v${_updateInfo.latestVersion}`;
-      badgeEl.href = _updateInfo.releaseUrl || 'https://github.com/DABodr/DABcast-diffusion-software/releases';
       badgeEl.classList.remove('hidden');
     } else {
       badgeEl.classList.add('hidden');
@@ -1513,6 +1512,96 @@ $('#btnTelegramTest')?.addEventListener('click', async () => {
 
 // events
 $('#btnAbout').addEventListener('click', showAbout);
+
+// ── Update dialog ──────────────────────────────────────────────────────────
+const dlgUpdate = $('#dlgUpdate');
+let _updatePollingTimer = null;
+
+function showUpdateDialog() {
+  if (!dlgUpdate || !_updateInfo?.updateAvailable) return;
+  $('#updateCurrentVer').textContent = STATE?.appVersion ? `v${STATE.appVersion}` : '—';
+  $('#updateNewVer').textContent = `v${_updateInfo.latestVersion}`;
+  const warn = $('#updateOnAirWarning');
+  if (warn) warn.classList.toggle('hidden', !STATE?.muxRunning);
+  $('#updateProgressWrap')?.classList.add('hidden');
+  $('#updateErrorMsg')?.classList.add('hidden');
+  $('#btnUpdateStart').disabled = false;
+  $('#btnUpdateStart').textContent = 'Download & Install';
+  dlgUpdate.showModal();
+}
+
+function _setUpdateProgress(label, pct) {
+  const wrap = $('#updateProgressWrap');
+  if (!wrap) return;
+  wrap.classList.remove('hidden');
+  $('#updateProgressLabel').textContent = label;
+  $('#updateProgressFill').style.width = `${pct}%`;
+  $('#updateProgressPct').textContent = `${pct}%`;
+}
+
+$('#updateBadge')?.addEventListener('click', showUpdateDialog);
+
+$('#btnUpdateCancel')?.addEventListener('click', () => {
+  dlgUpdate?.close();
+  clearInterval(_updatePollingTimer);
+});
+
+$('#btnUpdateClose')?.addEventListener('click', () => {
+  clearInterval(_updatePollingTimer);
+});
+
+$('#btnUpdateStart')?.addEventListener('click', async () => {
+  const startBtn = $('#btnUpdateStart');
+  const cancelBtn = $('#btnUpdateCancel');
+  const errEl = $('#updateErrorMsg');
+  errEl?.classList.add('hidden');
+  startBtn.disabled = true;
+  startBtn.textContent = 'Starting…';
+  cancelBtn.disabled = true;
+  $('#btnUpdateClose').disabled = true;
+
+  try {
+    await api('/api/update/apply', { method: 'POST', body: '{}' });
+  } catch (err) {
+    errEl.textContent = err.message || String(err);
+    errEl.classList.remove('hidden');
+    startBtn.disabled = false;
+    startBtn.textContent = 'Download & Install';
+    cancelBtn.disabled = false;
+    $('#btnUpdateClose').disabled = false;
+    return;
+  }
+
+  // Poll progress until restarting or error
+  _updatePollingTimer = setInterval(async () => {
+    try {
+      const prog = await api('/api/update/progress');
+      if (prog.status === 'downloading') {
+        _setUpdateProgress(`Downloading… (${prog.progress}%)`, prog.progress);
+      } else if (prog.status === 'installing') {
+        _setUpdateProgress('Installing…', 100);
+      } else if (prog.status === 'restarting') {
+        _setUpdateProgress('Restarting service…', 100);
+        clearInterval(_updatePollingTimer);
+        // Wait for service to come back
+        setTimeout(() => {
+          dlgUpdate?.close();
+          _updateInfo = null;
+          refresh();
+        }, 6000);
+      } else if (prog.status === 'error') {
+        clearInterval(_updatePollingTimer);
+        errEl.textContent = prog.error || 'Unknown error';
+        errEl.classList.remove('hidden');
+        startBtn.disabled = false;
+        startBtn.textContent = 'Retry';
+        cancelBtn.disabled = false;
+        $('#btnUpdateClose').disabled = false;
+      }
+    } catch (_) { /* connection may drop during restart */ }
+  }, 800);
+});
+
 $('#btnStart').addEventListener('click', start);
 $('#btnStop').addEventListener('click', stop);
 $('#btnLogs').addEventListener('click', showLogs);
