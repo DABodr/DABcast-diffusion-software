@@ -2,7 +2,7 @@
 
 Modern web interface for managing DAB/DAB+ multiplexes with ODR-mmbTools.
 
-Version: **1.3.0**
+Version: **1.3.1**
 
 > *Free to use. Free to modify. Not for resale.*
 
