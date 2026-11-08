@@ -55,8 +55,8 @@ An automatic installation script is provided for Debian and Ubuntu:
 
 ```bash
 # Clone the repository
-git clone https://github.com/DABodr/DABcast.git
-cd DABcast
+git clone https://github.com/DABodr/DABcast-diffusion-software.git
+cd DABcast-diffusion-software
 
 # Run the installation script
 sudo ./install-tools.sh
