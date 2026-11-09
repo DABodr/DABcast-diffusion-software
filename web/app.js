@@ -1623,6 +1623,7 @@ $('#btnUpdateStart')?.addEventListener('click', async () => {
 
   // Poll progress until restarting or error
   let _netErrCount = 0;
+  let _sawInstalling = false;
   _updatePollingTimer = setInterval(async () => {
     try {
       const prog = await api('/api/update/progress');
@@ -1630,7 +1631,12 @@ $('#btnUpdateStart')?.addEventListener('click', async () => {
       if (prog.status === 'downloading') {
         _setUpdateProgress(`Downloading… (${prog.progress}%)`, prog.progress);
       } else if (prog.status === 'installing') {
+        _sawInstalling = true;
         _setUpdateProgress('Installing…', 100);
+      } else if (prog.status === 'idle' && _sawInstalling) {
+        // New server already up — restart was fast
+        clearInterval(_updatePollingTimer);
+        dlgUpdate?.close(); _updateInfo = null; refresh();
       } else if (prog.status === 'restarting') {
         _setUpdateProgress('Restarting service…', 100);
         clearInterval(_updatePollingTimer);
