@@ -6,6 +6,9 @@ const DEFAULT_MAX_SIZE = 10 * 1024 * 1024; // 10 MB
 const DEFAULT_MAX_FILES = 5;
 const DEDUP_WINDOW_MS = 5000;
 const DEDUP_MAX_ENTRIES = 200;
+// ERROR dedup for loop-based scopes (metadata loop, probe) — 5-minute window
+const DEDUP_ERROR_WINDOW_MS = 300000;
+const DEDUP_ERROR_SCOPES = new Set(['sls', 'img', 'dls', 'probe']);
 
 export class FileLogger {
   constructor(logFilePath, { maxSize = DEFAULT_MAX_SIZE, maxFiles = DEFAULT_MAX_FILES, notifier = null } = {}) {
@@ -30,13 +33,16 @@ export class FileLogger {
   line(scope, msg, level = 'INFO') {
     const lvl = String(level).toUpperCase();
 
-    // Anti-spam dedup for DEBUG and WARN only (INFO/ERROR always written)
-    if (lvl === 'DEBUG' || lvl === 'WARN') {
+    // Anti-spam dedup for DEBUG and WARN (5s window)
+    // and for ERROR in loop-based scopes (5-minute window)
+    const isLoopError = lvl === 'ERROR' && DEDUP_ERROR_SCOPES.has(scope);
+    if (lvl === 'DEBUG' || lvl === 'WARN' || isLoopError) {
+      const window = isLoopError ? DEDUP_ERROR_WINDOW_MS : DEDUP_WINDOW_MS;
       const dedupKey = `${scope}|${this._msgSignature(msg)}`;
       const now = Date.now();
       const entry = this._dedup.get(dedupKey);
 
-      if (entry && (now - entry.lastWriteMs) < DEDUP_WINDOW_MS) {
+      if (entry && (now - entry.lastWriteMs) < window) {
         entry.count++;
         return;
       }
@@ -90,7 +96,9 @@ export class FileLogger {
 
   _cleanupDedup(now) {
     for (const [key, entry] of this._dedup) {
-      if (now - entry.lastWriteMs > DEDUP_WINDOW_MS * 2) {
+      const scope = key.split('|')[0];
+      const maxAge = DEDUP_ERROR_SCOPES.has(scope) ? DEDUP_ERROR_WINDOW_MS * 2 : DEDUP_WINDOW_MS * 2;
+      if (now - entry.lastWriteMs > maxAge) {
         this._dedup.delete(key);
       }
     }
