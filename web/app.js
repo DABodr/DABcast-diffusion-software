@@ -747,6 +747,7 @@ function openDialogFor(service) {
   $('#f_json_artist').value = service?.metadata?.artistKey || 'artist';
   $('#f_json_title').value = service?.metadata?.titleKey || 'title';
   $('#f_json_sls').value = service?.metadata?.slsKey || 'slide';
+  $('#f_dlplus_enabled').value = service?.dlplus?.enabled !== false ? 'yes' : 'no';
   $('#f_json_default_dls').value = service?.metadata?.defaultDlsAllowed !== false ? 'yes' : 'no';
   $('#jsonTestStatus').textContent = '';
   const cpb = $('#coverPreviewBox'); if (cpb) cpb.style.display = 'none';
@@ -2080,6 +2081,9 @@ $('#svcForm').addEventListener('submit', async (e) => {
       slsKey: $('#f_json_sls').value.trim() || 'slide',
       dlsIncluded: true,
       defaultDlsAllowed: $('#f_json_default_dls').value === 'yes'
+    },
+    dlplus: {
+      enabled: $('#f_dlplus_enabled').value !== 'no'
     }
   };
 
