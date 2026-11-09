@@ -479,6 +479,7 @@ input:disabled, select:disabled {
   /* G) Full-width table */
   .main { padding: 10px 6px 24px; }
   .card { border-radius: 12px; }
+  .table { min-width: 0; }
   .table-wide { min-width: 0; }
   .table th, .table td { padding: 8px 6px; font-size: 12px; }
   .tablewrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
