@@ -44,12 +44,10 @@ RELEASE_JSON=$(curl -sf -X POST \
     \"body\": $BODY_JSON,
     \"draft\": false,
     \"prerelease\": false
-  }") || true
+  }") || RELEASE_JSON=""
 
-# If release already exists, fetch it
-if [ -z "$RELEASE_JSON" ] || echo "$RELEASE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if 'upload_url' in d else 1)" 2>/dev/null; then
-  : # release created successfully
-else
+# If POST failed (empty or missing upload_url), fetch existing release
+if ! echo "$RELEASE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if 'upload_url' in d else 1)" 2>/dev/null; then
   echo "    Release already exists — fetching existing release..."
   RELEASE_JSON=$(curl -sf \
     "https://api.github.com/repos/$REPO/releases/tags/$TAG" \
