@@ -246,7 +246,7 @@ export class AppState {
         defaultSlsAllowed: svc.metadata?.defaultSlsAllowed !== false,
         dlsIncluded: svc.metadata?.dlsIncluded === true
       },
-      dlplus: svc.dlplus || { enabled: false },
+      dlplus: { enabled: svc.dlplus?.enabled !== false, ...svc.dlplus },
       ui: {
         order: svc.ui?.order ?? (this.preset.services.length + 1),
         ...svc.ui
