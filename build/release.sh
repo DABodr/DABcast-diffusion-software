@@ -58,24 +58,39 @@ UPLOAD_URL=$(echo "$RELEASE_JSON" | python3 -c \
   "import sys,json; print(json.load(sys.stdin)['upload_url'])" | sed 's/{.*}//')
 HTML_URL=$(echo "$RELEASE_JSON" | python3 -c \
   "import sys,json; print(json.load(sys.stdin)['html_url'])")
+RELEASE_ID=$(echo "$RELEASE_JSON" | python3 -c \
+  "import sys,json; print(json.load(sys.stdin)['id'])")
 
 echo "    Release created: $HTML_URL"
 
+# Helper: upload one asset, skip if already present
+upload_asset() {
+  local name="$1"
+  local file="$2"
+  # Check if asset already exists on this release
+  local exists
+  exists=$(curl -sf \
+    "https://api.github.com/repos/$REPO/releases/$RELEASE_ID/assets" \
+    -H "Authorization: Bearer $GITHUB_TOKEN" | \
+    python3 -c "import sys,json; assets=json.load(sys.stdin); print('yes' if any(a['name']=='$name' for a in assets) else 'no')")
+  if [ "$exists" = "yes" ]; then
+    echo "    Already uploaded — skipping."
+    return 0
+  fi
+  curl -sf -X POST "${UPLOAD_URL}?name=${name}" \
+    -H "Authorization: Bearer $GITHUB_TOKEN" \
+    -H "Content-Type: application/octet-stream" \
+    --data-binary "@$file" > /dev/null
+  echo "    Done."
+}
+
 # Upload amd64
 echo "[2/3] Uploading dabcast_${VERSION}_amd64.deb..."
-curl -sf -X POST "${UPLOAD_URL}?name=dabcast_${VERSION}_amd64.deb" \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary "@$AMD64_DEB" > /dev/null
-echo "    Done."
+upload_asset "dabcast_${VERSION}_amd64.deb" "$AMD64_DEB"
 
 # Upload arm64
 echo "[3/3] Uploading dabcast_${VERSION}_arm64.deb..."
-curl -sf -X POST "${UPLOAD_URL}?name=dabcast_${VERSION}_arm64.deb" \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary "@$ARM64_DEB" > /dev/null
-echo "    Done."
+upload_asset "dabcast_${VERSION}_arm64.deb" "$ARM64_DEB"
 
 echo ""
 echo "==> Release $TAG published successfully"
