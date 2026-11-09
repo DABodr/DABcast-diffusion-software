@@ -33,6 +33,7 @@ done
 
 # Create the GitHub release (or reuse existing one)
 echo "[1/3] Creating release $TAG..."
+BODY_JSON=$(python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))" <<< "${RELEASE_NOTES:-}")
 RELEASE_JSON=$(curl -sf -X POST \
   "https://api.github.com/repos/$REPO/releases" \
   -H "Authorization: Bearer $GITHUB_TOKEN" \
@@ -40,6 +41,7 @@ RELEASE_JSON=$(curl -sf -X POST \
   -d "{
     \"tag_name\": \"$TAG\",
     \"name\": \"DABcast $TAG\",
+    \"body\": $BODY_JSON,
     \"draft\": false,
     \"prerelease\": false
   }") || true
