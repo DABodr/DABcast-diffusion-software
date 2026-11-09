@@ -1224,6 +1224,7 @@ app.get('/api/mot/:svcId/slide/:filename', (req, res) => {
 // In-memory cache for GitHub release check (1 hour TTL)
 let _releaseCache = null;
 let _releaseCacheTime = 0;
+let _updateNotifiedVersion = null;
 
 app.get('/api/update/check', async (req, res) => {
   try {
@@ -1252,9 +1253,29 @@ app.get('/api/update/check', async (req, res) => {
     _releaseCache = {
       latestVersion: String(data.tag_name || '').replace(/^v/, ''),
       releaseUrl: data.html_url || null,
+      releaseNotes: data.body || null,
       assets
     };
     _releaseCacheTime = now;
+
+    // Telegram notification — once per new version
+    const currentVersion = state.getState().appVersion;
+    const latestVersion = _releaseCache.latestVersion;
+    if (latestVersion && currentVersion && latestVersion !== _updateNotifiedVersion) {
+      const toNums = s => s.replace(/^v/, '').split('.').map(Number);
+      const latest = toNums(latestVersion);
+      const current = toNums(currentVersion);
+      let newer = false;
+      for (let i = 0; i < 3; i++) {
+        if ((latest[i] || 0) > (current[i] || 0)) { newer = true; break; }
+        if ((latest[i] || 0) < (current[i] || 0)) break;
+      }
+      if (newer) {
+        _updateNotifiedVersion = latestVersion;
+        logger.line('update', `New version available: v${latestVersion}`, 'WARN');
+      }
+    }
+
     res.json(_releaseCache);
   } catch (_) {
     res.json({ latestVersion: null, releaseUrl: null, assets: [] });

@@ -828,7 +828,7 @@ async function checkForUpdate() {
       if ((latest[i] || 0) > (current[i] || 0)) { newer = true; break; }
       if ((latest[i] || 0) < (current[i] || 0)) break;
     }
-    _updateInfo = { updateAvailable: newer, latestVersion: data.latestVersion, releaseUrl: data.releaseUrl };
+    _updateInfo = { updateAvailable: newer, latestVersion: data.latestVersion, releaseUrl: data.releaseUrl, releaseNotes: data.releaseNotes || null };
     if (newer) render();
   } catch (_) { /* non-critical */ }
 }
@@ -1523,6 +1523,15 @@ function showUpdateDialog() {
   $('#updateNewVer').textContent = `v${_updateInfo.latestVersion}`;
   const warn = $('#updateOnAirWarning');
   if (warn) warn.classList.toggle('hidden', !STATE?.muxRunning);
+  const changelogEl = $('#updateChangelog');
+  if (changelogEl) {
+    if (_updateInfo.releaseNotes) {
+      changelogEl.textContent = _updateInfo.releaseNotes;
+      changelogEl.classList.remove('hidden');
+    } else {
+      changelogEl.classList.add('hidden');
+    }
+  }
   $('#updateProgressWrap')?.classList.add('hidden');
   $('#updateErrorMsg')?.classList.add('hidden');
   $('#btnUpdateStart').disabled = false;
