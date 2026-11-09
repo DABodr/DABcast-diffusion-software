@@ -454,8 +454,15 @@ export class AppState {
       }
     }
     if (patch.dlplus && typeof patch.dlplus.enabled === 'boolean') {
+      const dlplusPrev = existing.dlplus?.enabled !== false;
+      const dlplusNext = patch.dlplus.enabled !== false;
       if (!next.dlplus) next.dlplus = {};
       next.dlplus.enabled = patch.dlplus.enabled;
+      // If DL+ enabled state changed, force immediate DLS rewrite on next metadata tick
+      if (dlplusPrev !== dlplusNext) {
+        const rt = this.serviceRuntime.get(id);
+        if (rt) { rt.lastMetaUpdateMs = 0; rt.currentDls = ''; }
+      }
     }
     if (patch.watchdog) {
       if (typeof patch.watchdog.enabled === 'boolean') next.watchdog.enabled = patch.watchdog.enabled;
