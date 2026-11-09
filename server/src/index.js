@@ -833,9 +833,11 @@ app.get('/api/system/info', (req, res) => {
       }
     } catch { /* ignore */ }
 
-    // ODR tool versions (cached 60s)
+    // ODR tool versions (cached 60s) — skip when mux is running to avoid
+    // spawning a second odr-dabmux process that could conflict with live ports
     const now = Date.now();
-    if (!app._odrVersionsCache || now - app._odrVersionsCacheTs > 60000) {
+    const muxLive = state.getState().muxRunning;
+    if (!muxLive && (!app._odrVersionsCache || now - app._odrVersionsCacheTs > 60000)) {
       const bins = {
         'ODR-DabMux': 'odr-dabmux',
         'ODR-AudioEnc': 'odr-audioenc',
