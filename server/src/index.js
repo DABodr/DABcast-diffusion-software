@@ -881,18 +881,8 @@ app.get('/api/mux/stats', async (req, res) => {
     serviceMap[`sub_${idx + 1}`] = { name: svc.identity?.ps8 || svc.id, id: svc.id };
   });
 
-  const port = st.settings?.dabmux?.managementPort || 12720;
-  try {
-    const r = await fetch(`http://127.0.0.1:${port}/`, {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(1000)
-    });
-    if (!r.ok) return res.json({ running: true, error: `HTTP ${r.status}`, serviceMap });
-    const data = await r.json();
-    res.json({ running: true, data, serviceMap });
-  } catch (err) {
-    res.json({ running: true, error: String(err.message || err), serviceMap });
-  }
+  // Management port query disabled — format varies by odr-dabmux version
+  res.json({ running: true, serviceMap });
 });
 
 app.get('/api/logs', (req, res) => {
