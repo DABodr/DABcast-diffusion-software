@@ -782,7 +782,7 @@ export class AppState {
    */
   _writeDlsFile(svc, dlsValue) {
     const dlsPath = this._getDlsRuntimePath(svc);
-    const dlplusEnabled = svc.dlplus?.enabled === true;
+    const dlplusEnabled = svc.dlplus?.enabled !== false;
 
     let content = dlsValue || '';
 
