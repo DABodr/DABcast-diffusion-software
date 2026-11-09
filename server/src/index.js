@@ -1229,7 +1229,7 @@ let _updateNotifiedVersion = null;
 app.get('/api/update/check', async (req, res) => {
   try {
     const now = Date.now();
-    if (_releaseCache && (now - _releaseCacheTime) < 3600000) {
+    if (_releaseCache && (now - _releaseCacheTime) < 3600000 && !req.query.force) {
       return res.json(_releaseCache);
     }
     const r = await fetch(

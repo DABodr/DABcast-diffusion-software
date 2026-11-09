@@ -367,6 +367,11 @@ input:disabled, select:disabled {
 .about-grid .about-label { color: var(--muted); }
 .about-grid .about-value { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; color: #fff; }
 .about-sep { grid-column: 1 / -1; border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+.about-update-row { margin-top: 14px; min-height: 20px; }
+.about-update-badge { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
+.about-update-badge.ok { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
+.about-update-badge.new { background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); }
+.about-update-badge.error { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
 
 /* Toast notifications */
 .toast {

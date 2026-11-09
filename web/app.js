@@ -1206,12 +1206,26 @@ function renderAboutGrid(grid, info) {
   grid.innerHTML = html;
 }
 
+function renderAboutUpdateRow(container) {
+  if (!container) return;
+  if (!_updateInfo) {
+    container.innerHTML = '';
+    return;
+  }
+  if (_updateInfo.updateAvailable) {
+    container.innerHTML = `<span class="about-update-badge new">↑ v${esc(_updateInfo.latestVersion)} available</span>`;
+  } else {
+    container.innerHTML = `<span class="about-update-badge ok">✓ Up to date</span>`;
+  }
+}
+
 async function showAbout() {
   const grid = $('#aboutGrid');
   const verEl = $('#aboutVersion');
   if (!grid) return;
   grid.innerHTML = '<span class="about-label">Loading…</span><span></span>';
   if (verEl && STATE?.appVersion) verEl.textContent = `DABcast v${STATE.appVersion}`;
+  renderAboutUpdateRow($('#aboutUpdateRow'));
   dlgAbout.showModal();
   try {
     const info = await api('/api/system/info');
@@ -1232,6 +1246,32 @@ async function showAbout() {
 dlgAbout.addEventListener('close', () => {
   clearInterval(aboutTimer);
   aboutTimer = null;
+});
+
+$('#btnCheckUpdate')?.addEventListener('click', async () => {
+  const btn = $('#btnCheckUpdate');
+  const row = $('#aboutUpdateRow');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking…'; }
+  try {
+    const data = await api('/api/update/check?force=true');
+    if (data?.latestVersion && STATE?.appVersion) {
+      const toNums = s => s.replace(/^v/, '').split('.').map(Number);
+      const latest = toNums(data.latestVersion);
+      const current = toNums(STATE.appVersion);
+      let newer = false;
+      for (let i = 0; i < 3; i++) {
+        if (latest[i] > current[i]) { newer = true; break; }
+        if (latest[i] < current[i]) break;
+      }
+      _updateInfo = { updateAvailable: newer, latestVersion: data.latestVersion, releaseUrl: data.releaseUrl, releaseNotes: data.releaseNotes || null };
+      renderAboutUpdateRow(row);
+      render();
+    }
+  } catch (_) {
+    if (row) row.innerHTML = '<span class="about-update-badge error">Check failed</span>';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Check for updates'; }
+  }
 });
 
 // Logo management functions
