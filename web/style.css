@@ -370,7 +370,8 @@ input:disabled, select:disabled {
 .about-update-row { margin-top: 14px; min-height: 20px; }
 .about-update-badge { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
 .about-update-badge.ok { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }
-.about-update-badge.new { background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); }
+.about-update-badge.new { background: color-mix(in srgb, var(--blue) 15%, transparent); color: var(--blue); cursor: pointer; border: 1px solid color-mix(in srgb, var(--blue) 40%, transparent); }
+.about-update-badge.new:hover { background: color-mix(in srgb, var(--blue) 25%, transparent); }
 .about-update-badge.error { background: color-mix(in srgb, var(--red) 15%, transparent); color: var(--red); }
 
 /* Toast notifications */

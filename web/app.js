@@ -1213,7 +1213,11 @@ function renderAboutUpdateRow(container) {
     return;
   }
   if (_updateInfo.updateAvailable) {
-    container.innerHTML = `<span class="about-update-badge new">↑ v${esc(_updateInfo.latestVersion)} available</span>`;
+    container.innerHTML = `<button type="button" class="about-update-badge new" id="btnAboutUpdate">↑ v${esc(_updateInfo.latestVersion)} available — click to update</button>`;
+    container.querySelector('#btnAboutUpdate')?.addEventListener('click', () => {
+      dlgAbout.close();
+      showUpdateDialog();
+    });
   } else {
     container.innerHTML = `<span class="about-update-badge ok">✓ Up to date</span>`;
   }
