@@ -1567,7 +1567,9 @@ function showUpdateDialog() {
   $('#updateCurrentVer').textContent = STATE?.appVersion ? `v${STATE.appVersion}` : '—';
   $('#updateNewVer').textContent = `v${_updateInfo.latestVersion}`;
   const warn = $('#updateOnAirWarning');
-  if (warn) warn.classList.toggle('hidden', !STATE?.muxRunning);
+  const onAir = !!STATE?.muxRunning;
+  if (warn) warn.classList.toggle('hidden', !onAir);
+  $('#btnUpdateStart').disabled = onAir;
   const changelogEl = $('#updateChangelog');
   if (changelogEl) {
     if (_updateInfo.releaseNotes) {

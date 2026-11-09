@@ -453,6 +453,10 @@ export class AppState {
         if (rt) rt.currentSlsUrl = '';
       }
     }
+    if (patch.dlplus && typeof patch.dlplus.enabled === 'boolean') {
+      if (!next.dlplus) next.dlplus = {};
+      next.dlplus.enabled = patch.dlplus.enabled;
+    }
     if (patch.watchdog) {
       if (typeof patch.watchdog.enabled === 'boolean') next.watchdog.enabled = patch.watchdog.enabled;
       if (Number.isInteger(patch.watchdog.silenceThresholdSec)) next.watchdog.silenceThresholdSec = patch.watchdog.silenceThresholdSec;
