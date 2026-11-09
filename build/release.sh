@@ -31,7 +31,7 @@ for f in "$AMD64_DEB" "$ARM64_DEB"; do
   fi
 done
 
-# Create the GitHub release
+# Create the GitHub release (or reuse existing one)
 echo "[1/3] Creating release $TAG..."
 RELEASE_JSON=$(curl -sf -X POST \
   "https://api.github.com/repos/$REPO/releases" \
@@ -42,7 +42,17 @@ RELEASE_JSON=$(curl -sf -X POST \
     \"name\": \"DABcast $TAG\",
     \"draft\": false,
     \"prerelease\": false
-  }")
+  }") || true
+
+# If release already exists, fetch it
+if [ -z "$RELEASE_JSON" ] || echo "$RELEASE_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if 'upload_url' in d else 1)" 2>/dev/null; then
+  : # release created successfully
+else
+  echo "    Release already exists — fetching existing release..."
+  RELEASE_JSON=$(curl -sf \
+    "https://api.github.com/repos/$REPO/releases/tags/$TAG" \
+    -H "Authorization: Bearer $GITHUB_TOKEN")
+fi
 
 UPLOAD_URL=$(echo "$RELEASE_JSON" | python3 -c \
   "import sys,json; print(json.load(sys.stdin)['upload_url'])" | sed 's/{.*}//')
