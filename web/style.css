@@ -367,6 +367,14 @@ input:disabled, select:disabled {
 .about-grid .about-label { color: var(--muted); }
 .about-grid .about-value { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; color: #fff; }
 .about-sep { grid-column: 1 / -1; border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+.mux-stats-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 10px; }
+.mux-stats-off { font-size: 12px; color: var(--muted); }
+.mux-stats-grid { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; font-size: 12px; }
+.mux-stat-label { color: var(--muted); white-space: nowrap; }
+.mux-stat-bar-wrap { background: var(--surface2); border-radius: 3px; height: 6px; overflow: hidden; }
+.mux-stat-bar { height: 100%; border-radius: 3px; transition: width .4s ease; }
+.mux-stat-pct { font-variant-numeric: tabular-nums; color: #fff; font-weight: 600; white-space: nowrap; }
+.mux-stat-warn { color: var(--yellow); font-weight: 700; }
 .about-update-row { margin-top: 14px; min-height: 20px; }
 .about-update-badge { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; }
 .about-update-badge.ok { background: color-mix(in srgb, var(--green) 15%, transparent); color: var(--green); }

@@ -868,6 +868,33 @@ app.get('/api/system/info', (req, res) => {
   }
 });
 
+app.get('/api/mux/stats', async (req, res) => {
+  const st = state.getState();
+  if (!st.muxRunning) return res.json({ running: false });
+
+  // Map sub_N keys to service names (same sort order as muxBuilder)
+  const sorted = st.services
+    .filter(s => s.enabled)
+    .sort((a, b) => (a.ui?.order ?? 999) - (b.ui?.order ?? 999));
+  const serviceMap = {};
+  sorted.forEach((svc, idx) => {
+    serviceMap[`sub_${idx + 1}`] = { name: svc.identity?.ps8 || svc.id, id: svc.id };
+  });
+
+  const port = st.settings?.dabmux?.managementPort || 12720;
+  try {
+    const r = await fetch(`http://127.0.0.1:${port}/`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(1000)
+    });
+    if (!r.ok) return res.json({ running: true, error: `HTTP ${r.status}`, serviceMap });
+    const data = await r.json();
+    res.json({ running: true, data, serviceMap });
+  } catch (err) {
+    res.json({ running: true, error: String(err.message || err), serviceMap });
+  }
+});
+
 app.get('/api/logs', (req, res) => {
   const logPath = path.resolve(dataDir, 'logs', 'dabweb.log');
   const content = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';

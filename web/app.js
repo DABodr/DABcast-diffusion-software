@@ -1224,28 +1224,69 @@ function renderAboutUpdateRow(container) {
   }
 }
 
+function renderMuxStats(container, stats) {
+  if (!container) return;
+  if (!stats?.running) {
+    container.innerHTML = '';
+    return;
+  }
+  let html = '<hr class="about-sep"><div class="mux-stats-title">Mux subchannel buffers</div>';
+  if (stats.error) {
+    html += `<div class="mux-stats-off">Stats unavailable: ${esc(stats.error)}</div>`;
+    container.innerHTML = html;
+    return;
+  }
+  const inputs = stats.data?.inputs || {};
+  const map = stats.serviceMap || {};
+  const entries = Object.entries(inputs);
+  if (!entries.length) {
+    html += '<div class="mux-stats-off">No subchannel data</div>';
+    container.innerHTML = html;
+    return;
+  }
+  html += '<div class="mux-stats-grid">';
+  for (const [key, inp] of entries) {
+    const name = map[key]?.name || key;
+    const max = inp.buffer_max ?? inp.max_size ?? 1;
+    const cur = inp.buffer_current ?? inp.current_size ?? 0;
+    const pct = max > 0 ? Math.min(100, Math.round((cur / max) * 100)) : 0;
+    const dropped = inp.num_frames_dropped || 0;
+    const color = pct < 20 ? 'var(--red)' : pct < 50 ? 'var(--yellow)' : 'var(--green)';
+    html += `<span class="mux-stat-label">${esc(name)}</span>`;
+    html += `<div class="mux-stat-bar-wrap"><div class="mux-stat-bar" style="width:${pct}%;background:${color}"></div></div>`;
+    html += `<span class="mux-stat-pct">${pct}%${dropped > 0 ? ` <span class="mux-stat-warn">⚠ ${dropped} dropped</span>` : ''}</span>`;
+  }
+  html += '</div>';
+  container.innerHTML = html;
+}
+
+async function _refreshAbout(grid, statsEl) {
+  const [info, stats] = await Promise.allSettled([
+    api('/api/system/info'),
+    api('/api/mux/stats')
+  ]);
+  if (info.status === 'fulfilled') renderAboutGrid(grid, info.value);
+  if (stats.status === 'fulfilled') renderMuxStats(statsEl, stats.value);
+}
+
 async function showAbout() {
   const grid = $('#aboutGrid');
+  const statsEl = $('#aboutMuxStats');
   const verEl = $('#aboutVersion');
   if (!grid) return;
   grid.innerHTML = '<span class="about-label">Loading…</span><span></span>';
+  if (statsEl) statsEl.innerHTML = '';
   if (verEl && STATE?.appVersion) verEl.textContent = `DABcast v${STATE.appVersion}`;
   renderAboutUpdateRow($('#aboutUpdateRow'));
   dlgAbout.showModal();
   try {
-    const info = await api('/api/system/info');
-    renderAboutGrid(grid, info);
+    await _refreshAbout(grid, statsEl);
   } catch (e) {
     grid.innerHTML = `<span class="about-label">Error</span><span class="about-value">${esc(String(e.message || e))}</span>`;
   }
-  // Live refresh CPU + memory every 2s
+  // Live refresh every 2s
   clearInterval(aboutTimer);
-  aboutTimer = setInterval(async () => {
-    try {
-      const info = await api('/api/system/info');
-      renderAboutGrid(grid, info);
-    } catch (_) { /* ignore refresh errors */ }
-  }, 2000);
+  aboutTimer = setInterval(() => _refreshAbout(grid, statsEl).catch(() => {}), 2000);
 }
 
 dlgAbout.addEventListener('close', () => {
