@@ -48,16 +48,20 @@ const METER_WINDOWS_PER_S = 20;
 const METER_KEEP = 30 * METER_WINDOWS_PER_S;   // ~30 s of history
 const meters = new Map();                     // listener key -> [[t, dbL, dbR], ...]
 const toDb = (x) => (x > 0 ? Math.max(-99, Math.round(200 * Math.log10(x)) / 10) : -99);
-export function makeMeter(rate, channels, out) {
+// sample format from parsePcmFormat(): float32 (FAAD2 builds of dablin) or s16 (fdk-aac builds)
+const F32 = { float: true, bytes: 4 };
+export function makeMeter(rate, channels, out, fmt = F32) {
   const win = Math.max(1, Math.round(rate / METER_WINDOWS_PER_S));
-  const frameBytes = 4 * channels;
+  const sb = fmt.bytes;
+  const frameBytes = sb * channels;
+  const read = fmt.float ? (b, o) => b.readFloatLE(o) : (b, o) => b.readInt16LE(o) / 32768;
   let rest = Buffer.alloc(0), n = 0, frames = 0, pl = 0, pr = 0;
   return (chunk) => {
     const b = rest.length ? Buffer.concat([rest, chunk]) : chunk;
     const usable = b.length - (b.length % frameBytes);
     for (let off = 0; off < usable; off += frameBytes) {
-      const l = Math.abs(b.readFloatLE(off));
-      const r = channels > 1 ? Math.abs(b.readFloatLE(off + 4)) : l;
+      const l = Math.abs(read(b, off));
+      const r = channels > 1 ? Math.abs(read(b, off + sb)) : l;
       if (l > pl) pl = l;
       if (r > pr) pr = r;
       if (++n === win) {
@@ -86,18 +90,19 @@ export function playerLevels(key, since = 0) {
   return lv ? lv.filter((x) => x[0] > since) : null;
 }
 
-// Float32 PCM from dablin → whole frames only, NaN/Inf replaced by 0. LAME (ffmpeg libmp3lame)
+// PCM from dablin → whole frames only; for float32, NaN/Inf replaced by 0. LAME (ffmpeg libmp3lame)
 // aborts on such values ("psymodel.c: calc_energy: Assertion `el >= 0' failed"), and a stream cut
-// in the middle of a sample is read as garbage floats (NaN, huge values).
+// in the middle of a sample — or s16 read as float32 — is read as garbage floats (NaN, huge values).
 // Returns (chunk) => Buffer of whole frames; the incomplete tail is kept for the next chunk.
-export function makePcmSanitizer(channels, onInvalid = () => {}) {
-  const frameBytes = 4 * channels;
+export function makePcmSanitizer(channels, onInvalid = () => {}, fmt = F32) {
+  const frameBytes = fmt.bytes * channels;
   let rest = Buffer.alloc(0);
   return (chunk) => {
     const b = rest.length ? Buffer.concat([rest, chunk]) : chunk;
     const usable = b.length - (b.length % frameBytes);
     rest = Buffer.from(b.subarray(usable));
     const out = Buffer.from(b.subarray(0, usable));   // own copy: aligned for the Float32Array view
+    if (!fmt.float) return out;                       // s16: always valid, alignment only
     const f = new Float32Array(out.buffer, out.byteOffset, usable / 4);
     let bad = 0;
     for (let i = 0; i < f.length; i++) if (!Number.isFinite(f[i])) { f[i] = 0; bad++; }
@@ -115,9 +120,13 @@ export function trimAligned(buf, maxBytes) {
 const EARLY_MAX_BYTES = 48000 * 2 * 4;   // ~1 s of 48 kHz stereo float32
 
 // dablin prints "PCMOutput: format set; samplerate: 48000, channels: 2, output: 32bit float"
+// The sample format depends on dablin's AAC decoder: "32bit float" (FAAD2) or "16bit integer"
+// (fdk-aac, and MP2). Reading s16 as float32 makes garbage that crashes the MP3 encoder.
 export function parsePcmFormat(text) {
-  const m = /samplerate:\s*(\d+),\s*channels:\s*(\d+)/.exec(text);
-  return m ? { rate: Number(m[1]), channels: Number(m[2]) } : null;
+  const m = /samplerate:\s*(\d+),\s*channels:\s*(\d+)(?:,\s*output:\s*(\d+)\s*bit\s*(\w+))?/.exec(text);
+  if (!m) return null;
+  const float = m[3] ? /float/i.test(m[4] || '') : true;   // no output info (old dablin): float32
+  return { rate: Number(m[1]), channels: Number(m[2]), float, bytes: float ? 4 : 2, ffmpegFormat: float ? 'f32le' : 's16le' };
 }
 
 /**
@@ -193,7 +202,7 @@ export function streamService({ port, subchId, dabPlus = true, key = '', req, re
     dablin.stderr.off('data', onStderr);
     dablin.stderr.on('data', (c) => { dablinErr = (dablinErr + c.toString()).slice(-2000); });   // keep draining, keep the tail for the logs
     ffmpeg = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error',
-      '-f', 'f32le', '-ar', String(fmt.rate), '-ac', String(fmt.channels), '-i', 'pipe:0',
+      '-f', fmt.ffmpegFormat, '-ar', String(fmt.rate), '-ac', String(fmt.channels), '-i', 'pipe:0',
       '-c:a', 'libmp3lame', '-b:a', '160k', '-f', 'mp3', 'pipe:1'], { stdio: ['pipe', 'pipe', 'pipe'] });
     ffmpeg.on('error', (e) => cleanup(`ffmpeg: ${e.message}`));
     ffmpeg.on('exit', (code, sig) => cleanup(`encoder (ffmpeg) stopped${code != null ? `, exit code ${code}` : ''}${sig ? `, ${sig}` : ''}`));
@@ -214,14 +223,14 @@ export function streamService({ port, subchId, dabPlus = true, key = '', req, re
     dablin.stdout.off('data', early);
     // meter sees exactly the PCM fed to ffmpeg, in the same order → same timeline as the MP3
     const levels = [];
-    const meter = makeMeter(fmt.rate, fmt.channels, levels);
+    const meter = makeMeter(fmt.rate, fmt.channels, levels, fmt);
     if (key) meters.set(key, levels);
     let invalidLogged = false;
     const sanitize = makePcmSanitizer(fmt.channels, (n) => {
       if (invalidLogged) return;
       invalidLogged = true;
       log(`player: sub-channel ${subchId}: decoder produced ${n} invalid samples (NaN/Inf), replaced by silence`, 'WARN');
-    });
+    }, fmt);
     const toEncoder = (b) => {
       const pcm = sanitize(b);
       if (!pcm.length) return;
@@ -237,7 +246,7 @@ export function streamService({ port, subchId, dabPlus = true, key = '', req, re
     earlyPcm = Buffer.alloc(0);
     dablin.stdout.on('data', toEncoder);
     ffmpeg.stdout.pipe(res, { end: false });   // only cleanup() ends the response, after logging why
-    log(`player: playing sub-channel ${subchId} (${fmt.rate} Hz, ${fmt.channels} ch)`);
+    log(`player: playing sub-channel ${subchId} (${fmt.rate} Hz, ${fmt.channels} ch, ${fmt.float ? 'float32' : 's16'} PCM)`);
   };
   dablin.stderr.on('data', onStderr);
 }
