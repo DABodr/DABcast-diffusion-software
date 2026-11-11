@@ -14,6 +14,7 @@ import { TelegramLogNotifier } from './telegramNotifier.js';
 import { OdrProcessManager } from './odr/processManager.js';
 import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
+import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
   REMEMBERED_SESSION_MAX_AGE_MS,
@@ -916,6 +917,36 @@ app.get('/api/mux/stats', async (req, res) => {
   const body = await _muxStatsInFlight;
   if (!body.error) _muxStatsCache = { at: Date.now(), body };
   res.json({ running: true, serviceMap, ...body });
+});
+
+// Web player: decodes one service of the running mux from its ETI monitoring output (the same
+// read-only source as the Dablin button) and streams it as MP3. See player.js.
+const PLAYER_TX_MODES = ['EDI', 'HACKRF', 'EASYDAB'];
+app.get('/api/player/info', (req, res) => {
+  const txMode = (state.settings?.dabmux?.txMode || 'EASYDAB').toUpperCase();
+  res.json({
+    missing: missingPlayerTools(),
+    supported: PLAYER_TX_MODES.includes(txMode),
+    txMode,
+    listeners: playerListeners(),
+    maxListeners: PLAYER_MAX_LISTENERS,
+  });
+});
+app.get('/api/player/stream', (req, res) => {
+  if (!state.muxRunning) return res.status(409).json({ error: 'Multiplex is off air' });
+  const txMode = (state.settings?.dabmux?.txMode || 'EASYDAB').toUpperCase();
+  if (!PLAYER_TX_MODES.includes(txMode)) return res.status(409).json({ error: `Player not available in ${txMode} mode` });
+  const missing = missingPlayerTools();
+  if (missing.length) return res.status(503).json({ error: `Not installed: ${missing.join(', ')}` });
+  // sub-channel id = position in the .mux (same filter and order as muxBuilder)
+  const sorted = [...(state.preset?.services || [])]
+    .filter((s) => s.enabled !== false)
+    .sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
+  const idx = sorted.findIndex((s) => s.id === String(req.query.id || ''));
+  if (idx < 0) return res.status(404).json({ error: 'Service not on air' });
+  if (!acquireListenerSlot()) return res.status(429).json({ error: `Player busy (max ${PLAYER_MAX_LISTENERS} listeners)` });
+  const port = Number(state.settings?.dabmux?.easyDabOutput?.netPort) || 9901;
+  streamService({ port, subchId: idx + 1, dabPlus: true, req, res, log: (m, l) => logger.line('web', m, l) });
 });
 
 app.get('/api/logs', (req, res) => {

@@ -9,4 +9,5 @@ Description: DABcast DAB+ Web UI
  Web interface for DAB+ multiplexing via ODR-mmbTools.
  Provides a browser-based control panel to manage DAB+ ensembles,
  services, audio encoding, PAD metadata and live monitoring.
+Recommends: dablin, ffmpeg
 Suggests: imagemagick, odr-dabmux, odr-audioenc, odr-padenc
