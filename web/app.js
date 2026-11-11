@@ -38,17 +38,23 @@ let MUX_STATS = null;
 let _muxStatsAt = 0;
 const _bufLastGlitchAt = new Map();  // service id -> last time dabmux underruns increased
 const BUF_GLITCH_WINDOW_MS = 30000;
-// First minute after mux Start: buffers fill up and dabmux reports start-up underruns / NoData.
-// Show a neutral STARTING tag and raise no warning or alarm during this window.
+// After mux Start, buffers fill up and dabmux reports start-up underruns / NoData: each input shows a
+// neutral STARTING tag (no warning, no alarm) until its underruns have stopped rising for
+// BUF_SETTLE_MS (adaptive: ~10-15 s for a fast stream), at most BUF_STARTUP_MS after Start.
 const BUF_STARTUP_MS = 60000;
+const BUF_SETTLE_MS = 5000;     // = one clean stats reading (stats are read every 5 s)
+const _bufStartAct = new Map();   // service id -> last start-up activity (underrun rise / NoData / first reading)
+const _bufSettled = new Set();    // service ids whose start-up is over (settled on a clean reading)
+let _bufStartFor = 0;             // muxSinceMs these belong to (new Start = reset)
 const muxStartingUp = () => Boolean(STATE?.muxRunning && STATE.muxSinceMs && Date.now() - STATE.muxSinceMs < BUF_STARTUP_MS);
+const inputStarting = (id) => muxStartingUp() && !_bufSettled.has(id);
 const BUF_STATES = {
   Streaming: ['ok', 'BUFFER OK'], Unstable: ['warn', 'UNSTABLE'], Silence: ['warn', 'SILENCE'], NoData: ['err', 'NO DATA'],
 };
 function bufTag(inp, always = false) {
   if (!inp) return '';
-  if (muxStartingUp() && inp.state !== 'Streaming') {
-    const tip = `Mux started less than ${BUF_STARTUP_MS / 1000} s ago: buffers are filling up, start-up underruns are normal (dabmux: ${inp.state})`;
+  if (inp.starting && inp.state !== 'Streaming') {
+    const tip = `Mux just started: buffers are filling up, start-up underruns are normal (dabmux: ${inp.state}). Ends once underruns stop rising for ${BUF_SETTLE_MS / 1000} s (at most ${BUF_STARTUP_MS / 1000} s after Start).`;
     return `<span class="buf-tag pend" title="${esc(tip)}">STARTING</span>`;
   }
   let [cls, label] = BUF_STATES[inp.state] || ['', String(inp.state || '?').toUpperCase()];
@@ -83,10 +89,19 @@ function maybeFetchMuxStats() {
   _muxStatsAt = Date.now();
   api('/api/mux/stats').then((st) => {
     const prev = MUX_STATS?.inputs || {};
+    if (_bufStartFor !== STATE.muxSinceMs) { _bufStartAct.clear(); _bufSettled.clear(); _bufStartFor = STATE.muxSinceMs; }
+    const now = Date.now();
     for (const [id, inp] of Object.entries(st.inputs || {})) {
       if (prev[id] && Number.isFinite(inp.underruns)) inp.underrunsDelta = inp.underruns - prev[id].underruns;
-      if (inp.underrunsDelta > 0 && !muxStartingUp()) _bufLastGlitchAt.set(id, Date.now());   // start-up underruns are expected
-      inp.recentGlitch = Date.now() - (_bufLastGlitchAt.get(id) || 0) < BUF_GLITCH_WINDOW_MS;
+      if (inputStarting(id)) {
+        // still starting: underruns are expected. Settles only on a clean reading (no new underrun,
+        // not NoData) at least BUF_SETTLE_MS after the last start-up activity.
+        const active = !(inp.underrunsDelta >= 0) || inp.underrunsDelta > 0 || inp.state === 'NoData';
+        if (active) _bufStartAct.set(id, now);
+        else if (now - (_bufStartAct.get(id) ?? 0) >= BUF_SETTLE_MS) _bufSettled.add(id);
+      } else if (inp.underrunsDelta > 0) _bufLastGlitchAt.set(id, now);   // settled: a new underrun is a real glitch
+      inp.starting = inputStarting(id);
+      inp.recentGlitch = now - (_bufLastGlitchAt.get(id) || 0) < BUF_GLITCH_WINDOW_MS;
     }
     MUX_STATS = st;
     recordLevels(st);
@@ -307,11 +322,11 @@ const _levelSamples = new Map();  // svc id -> { key, list: [{ t, db }] }
 // a measurement is valid for one gain and one source (new measurement after a gain change or a main/backup switch)
 const levelKey = (svc) => `${svc.audio?.gainDb ?? 0}|${svc.runtime?.activeUri ?? ''}`;
 function recordLevels(st) {
-  if (!STATE?.preset || muxStartingUp()) return;
+  if (!STATE?.preset) return;
   const now = Date.now();
   for (const [id, inp] of Object.entries(st.inputs || {})) {
     const svc = STATE.preset.services.find((s) => s.id === id);
-    if (!svc) continue;
+    if (!svc || inp.starting) continue;   // start-up peaks are not representative
     // saved gain not applied yet: the audio still has the old gain → do not mix the two
     if (svc.runtime?.pendingRestart?.includes('gainDb')) { _levelSamples.delete(id); continue; }
     const key = levelKey(svc);
@@ -481,10 +496,12 @@ function renderStats(cap) {
     : `TX: ${esc(tx)}`;
   const bufInputs = STATE.muxRunning && MUX_STATS?.inputs ? Object.values(MUX_STATS.inputs) : [];
   // healthy = Streaming, or Unstable with no recent underrun (dabmux keeps "Unstable" long after start-up)
-  const bufOk = bufInputs.filter((i) => i.state === 'Streaming' || (i.state === 'Unstable' && !i.recentGlitch)).length;
-  const bufStarting = muxStartingUp();
-  const bufBad = bufStarting ? 0 : bufInputs.filter((i) => i.state === 'NoData' || i.state === 'Silence').length;
-  const bufUnstable = bufStarting ? 0 : bufInputs.filter((i) => i.state === 'Unstable' && i.recentGlitch).length;
+  const settled = bufInputs.filter((i) => !(i.starting && i.state !== 'Streaming'));
+  const bufStartingN = bufInputs.length - settled.length;
+  const bufStarting = bufInputs.length > 0 && bufStartingN === bufInputs.length;
+  const bufOk = settled.filter((i) => i.state === 'Streaming' || (i.state === 'Unstable' && !i.recentGlitch)).length;
+  const bufBad = settled.filter((i) => i.state === 'NoData' || i.state === 'Silence').length;
+  const bufUnstable = settled.filter((i) => i.state === 'Unstable' && i.recentGlitch).length;
   const alarms = warn + err + bufBad;
   const card = (title, val, sub, valCls = '', tip = '', attrs = '') =>
     `<div class="stat-card"${tip ? ` title="${esc(tip)}"` : ''}${attrs}><div class="stat-title">${title}</div><div class="stat-val ${valCls}">${val}</div><div class="stat-sub">${sub}</div></div>`;
@@ -495,7 +512,7 @@ function renderStats(cap) {
     card('Services', `${enabled.length}`, `enabled / ${all.length}`, ''),
     card('Encoders', STATE.muxRunning ? `${running}` : '—', STATE.muxRunning ? `running / ${enabled.length}` : 'off air', STATE.muxRunning && running === enabled.length ? 'cap-ok' : ''),
     card('Mux inputs', bufInputs.length ? `${bufOk} / ${bufInputs.length}` : '—',
-      bufInputs.length ? (bufStarting ? 'starting · buffers filling' : `healthy · ${bufUnstable} glitching · ${bufBad} no audio`) : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
+      bufInputs.length ? (bufStarting ? 'starting · buffers filling' : `${bufStartingN ? `${bufStartingN} starting · ` : 'healthy · '}${bufUnstable} glitching · ${bufBad} no audio`) : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
       bufInputs.length ? (bufStarting ? '' : bufBad ? 'cap-bad' : bufUnstable ? 'cap-warn' : 'cap-ok') : '',
       'Click: audio levels and gain suggestions', ' data-act="levels" role="button" tabindex="0"'),
     card('Metadata', STATE.muxRunning ? `${dls} / ${dlsBase.length}` : '—',
@@ -1542,20 +1559,24 @@ function plEnsureAudio() {
   PL.audio.addEventListener('playing', () => plStatus('Playing'));
   // buffer ran dry: refill a full cushion instead of restarting on a few ms (repeated micro-cuts)
   PL.audio.addEventListener('waiting', () => { if (PL.playing && !PL.bufTimer) plPrebuffer(); });
-  PL.audio.addEventListener('ended', () => { if (PL.playing) { plStop(); plStatus('Stream ended (multiplex stopped or restarted)', true); } });
-  PL.audio.addEventListener('error', async () => {
+  // stream failed or ended: show the reason recorded by the server for this listener (also in the logs)
+  const onFail = async (fallback) => {
     if (!PL.playing) return;
+    const key = PL.key;
     plStop();
-    let why = 'Stream unavailable';
+    let why = fallback;
     try {
-      const info = await api('/api/player/info');
+      const info = await api(`/api/player/info?k=${encodeURIComponent(key)}`);
       if (info.missing?.length) why = `Not installed on the server: ${info.missing.join(', ')} (sudo apt install ${info.missing.join(' ')})`;
       else if (!info.supported) why = `Player not available in ${info.txMode} mode`;
       else if (!STATE?.muxRunning) why = 'Multiplex off air';
+      else if (info.lastError) why = `Stream failed: ${info.lastError} (details in Logs)`;
       else if (info.listeners >= info.maxListeners) why = `Player busy (max ${info.maxListeners} listeners)`;
-    } catch { /* keep generic message */ }
+    } catch { /* keep the fallback message */ }
     plStatus(why, true);
-  });
+  };
+  PL.audio.addEventListener('ended', () => onFail('Stream ended (multiplex stopped or restarted)'));
+  PL.audio.addEventListener('error', () => onFail('Stream unavailable'));
   try {
     PL.ctx = new (window.AudioContext || window.webkitAudioContext)();
     const src = PL.ctx.createMediaElementSource(PL.audio);

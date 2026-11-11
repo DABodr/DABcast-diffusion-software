@@ -70,6 +70,17 @@ export function makeMeter(rate, channels, out) {
     if (out.length > METER_KEEP) out.splice(0, out.length - METER_KEEP);
   };
 }
+// Last failure reason per listener key, so the page can show it (an <audio> element cannot read
+// the HTTP error body). Kept 5 min.
+const lastErrors = new Map();   // key -> { reason, at }
+export function playerLastError(key) {
+  const e = lastErrors.get(String(key || ''));
+  return e && Date.now() - e.at < 300000 ? e.reason : null;
+}
+const STALL_MS = 15000;   // no MP3 output for this long while the browser waits for data = stalled
+const tail = (txt, n = 3) => String(txt || '').replace(/\x1b\[[0-9;]*m|\x1b\][^\x07]*\x07/g, '')
+  .split('\n').map((l) => l.trim()).filter(Boolean).slice(-n).join(' | ');
+
 export function playerLevels(key, since = 0) {
   const lv = meters.get(String(key || ''));
   return lv ? lv.filter((x) => x[0] > since) : null;
@@ -95,51 +106,78 @@ export function streamService({ port, subchId, dabPlus = true, key = '', req, re
   let done = false;
   let sock = null, dablin = null, ffmpeg = null, formatTimer = null;
 
-  const cleanup = (why) => {
+  // byte counters per stage: tell which step stalls (mux output → dablin → ffmpeg)
+  const bytes = { eti: 0, pcm: 0, mp3: 0 };
+  let dablinErr = '', ffmpegErr = '', stallTimer = null;
+  const counters = () => `mux ${bytes.eti} B, decoded ${bytes.pcm} B, MP3 ${bytes.mp3} B`;
+
+  // normal = the listener closed the player; anything else is a failure → WARN in the logs
+  const cleanup = (why, normal = false) => {
     if (done) return;
     done = true;
     listeners--;
     clearTimeout(formatTimer);
+    clearInterval(stallTimer);
     if (key) meters.delete(key);
     try { sock?.destroy(); } catch { /* ignore */ }
     try { dablin?.kill('SIGTERM'); } catch { /* ignore */ }
     try { ffmpeg?.kill('SIGTERM'); } catch { /* ignore */ }
     if (!res.headersSent) res.status(502).json({ error: why });
     else res.end();
-    log(`player: stopped sub-channel ${subchId} (${why})`, 'DEBUG');
+    if (normal) {
+      log(`player: stopped sub-channel ${subchId} (${why})`, 'DEBUG');
+      return;
+    }
+    if (key) lastErrors.set(key, { reason: why, at: Date.now() });
+    const details = [tail(dablinErr) && `dablin: ${tail(dablinErr)}`, tail(ffmpegErr) && `ffmpeg: ${tail(ffmpegErr)}`].filter(Boolean).join(' · ');
+    log(`player: sub-channel ${subchId} FAILED — ${why} [${counters()}]${details ? ` — ${details}` : ''}`, 'WARN');
   };
-  req.on('close', () => cleanup('listener disconnected'));
+  // listener left: normal if audio was flowing; if no audio was ever produced, the browser gave up
+  // waiting → that is the failure to report (stage counters show where it blocked)
+  req.on('close', () => (bytes.mp3 > 0
+    ? cleanup('listener disconnected', true)
+    : cleanup(ffmpeg ? 'no audio produced (the browser gave up waiting)' : 'decoder found no audio before the browser gave up')));
 
   dablin = spawn('dablin', [dabPlus ? '-R' : '-r', String(subchId), '-p'], { stdio: ['pipe', 'pipe', 'pipe'] });
   dablin.on('error', (e) => cleanup(`dablin: ${e.message}`));
-  dablin.on('exit', () => cleanup('decoder stopped'));
+  dablin.on('exit', (code, sig) => cleanup(`decoder (dablin) stopped${code != null ? `, exit code ${code}` : ''}${sig ? `, ${sig}` : ''}`));
   dablin.stdin.on('error', () => { /* dablin gone: handled by exit */ });
 
   sock = net.connect({ host: '127.0.0.1', port });
   sock.on('error', (e) => cleanup(`mux monitoring output (port ${port}): ${e.message}`));
   sock.on('close', () => cleanup('mux monitoring output closed'));
   // Never slow down the mux output: always read it, drop data if the decoder lags behind
-  sock.on('data', (b) => feed(dablin.stdin, b));
+  sock.on('data', (b) => { bytes.eti += b.length; feed(dablin.stdin, b); });
 
   // Wait for the PCM format (sample rate depends on the service) before starting ffmpeg
   let stderrBuf = '';
   const pending = [];
-  formatTimer = setTimeout(() => cleanup(`sub-channel ${subchId} not found or no audio`), FORMAT_TIMEOUT_MS);
+  formatTimer = setTimeout(() => cleanup(`sub-channel ${subchId} not found or no audio after ${FORMAT_TIMEOUT_MS / 1000} s`), FORMAT_TIMEOUT_MS);
+  dablin.stdout.on('data', (b) => { bytes.pcm += b.length; });
   const early = (b) => { pending.push(b); while (pending.length > 100) pending.shift(); };   // PCM before ffmpeg starts (~1 s kept)
   dablin.stdout.on('data', early);
   const onStderr = (chunk) => {
     stderrBuf = (stderrBuf + chunk.toString()).slice(-4000);
+    dablinErr = stderrBuf;
     const fmt = parsePcmFormat(stderrBuf);
     if (!fmt || ffmpeg || done) return;
     clearTimeout(formatTimer);
     dablin.stderr.off('data', onStderr);
-    dablin.stderr.resume();   // keep draining dablin's stderr
+    dablin.stderr.on('data', (c) => { dablinErr = (dablinErr + c.toString()).slice(-2000); });   // keep draining, keep the tail for the logs
     ffmpeg = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error',
       '-f', 'f32le', '-ar', String(fmt.rate), '-ac', String(fmt.channels), '-i', 'pipe:0',
-      '-c:a', 'libmp3lame', '-b:a', '160k', '-f', 'mp3', 'pipe:1'], { stdio: ['pipe', 'pipe', 'ignore'] });
+      '-c:a', 'libmp3lame', '-b:a', '160k', '-f', 'mp3', 'pipe:1'], { stdio: ['pipe', 'pipe', 'pipe'] });
     ffmpeg.on('error', (e) => cleanup(`ffmpeg: ${e.message}`));
-    ffmpeg.on('exit', () => cleanup('encoder stopped'));
+    ffmpeg.on('exit', (code, sig) => cleanup(`encoder (ffmpeg) stopped${code != null ? `, exit code ${code}` : ''}${sig ? `, ${sig}` : ''}`));
     ffmpeg.stdin.on('error', () => { /* ffmpeg gone: handled by exit */ });
+    ffmpeg.stderr.on('data', (c) => { ffmpegErr = (ffmpegErr + c.toString()).slice(-2000); });
+    ffmpeg.stdout.on('data', (b) => { bytes.mp3 += b.length; });
+    // stall watchdog: no MP3 for STALL_MS while the browser is not the one holding back (no back-pressure)
+    let lastMp3 = 0, lastMoveAt = Date.now();
+    stallTimer = setInterval(() => {
+      if (bytes.mp3 !== lastMp3 || res.writableNeedDrain) { lastMp3 = bytes.mp3; lastMoveAt = Date.now(); return; }
+      if (Date.now() - lastMoveAt >= STALL_MS) cleanup(`stalled: no audio for ${STALL_MS / 1000} s`);
+    }, 2500);
     res.writeHead(200, {
       'Content-Type': 'audio/mpeg',
       'Cache-Control': 'no-store',
@@ -156,7 +194,7 @@ export function streamService({ port, subchId, dabPlus = true, key = '', req, re
     // Downstream of the decoder, normal piping: a slow browser slows ffmpeg and dablin, and the
     // excess is dropped at the decoder input (feed above) — never at the mux side.
     dablin.stdout.pipe(ffmpeg.stdin);
-    ffmpeg.stdout.pipe(res);
+    ffmpeg.stdout.pipe(res, { end: false });   // only cleanup() ends the response, after logging why
     log(`player: playing sub-channel ${subchId} (${fmt.rate} Hz, ${fmt.channels} ch)`);
   };
   dablin.stderr.on('data', onStderr);
