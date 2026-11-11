@@ -142,6 +142,7 @@ export class AppState {
 
     this.currentPresetId = DEFAULT_DEMO_PRESET_ID;
     this.preset = this._loadPreset(this.currentPresetId);
+    this._repairDuplicatePorts();
 
     // muxRunning is always false on startup (orphan processes were already cleaned)
     this.muxRunning = false;
@@ -349,6 +350,7 @@ export class AppState {
       return s;
     });
     this.preset = next;
+    this._repairDuplicatePorts();
     this._savePreset();
     this.serviceRuntime.clear();
     this._initRuntime();
@@ -370,6 +372,15 @@ export class AppState {
       next.enabled = false;
     }
     next.ui = { ...(next.ui || {}), order: next.ui?.order ?? (this.preset.services.length + 1) };
+    // A service exported from another mux keeps its port (9001, 9002…): if it is already used here,
+    // give it a free one, otherwise odr-dabmux cannot bind both inputs ("Could not bind").
+    const wantedPort = Number(next.network?.ediOutputTcp?.port);
+    const portTaken = this.preset.services.some((s) => s.id !== next.id && s.network?.ediOutputTcp?.port === wantedPort);
+    if (!Number.isInteger(wantedPort) || wantedPort < 1024 || wantedPort > 65535 || portTaken) {
+      const port = this._pickFreePort();
+      next.network = { ...next.network, ediOutputTcp: { host: '127.0.0.1', ...next.network?.ediOutputTcp, port } };
+      this.logger.line('service', `${next.id}: input port ${Number.isNaN(wantedPort) ? '(none)' : wantedPort} already used or invalid — assigned ${port}`, 'WARN');
+    }
 
     const { errors, warnings, normalized } = validateService(next, ALLOWED_BITRATES_KBPS);
     if (errors.length) throw new Error(errors.join(' '));
@@ -785,6 +796,25 @@ export class AppState {
     this.preset.services = reordered;
     this._savePreset();
     this.logger.line('preset', `services reordered: ${orderedIds.join(', ')}`);
+  }
+
+  // Two services on the same mux input port make odr-dabmux fail ("Could not bind").
+  // Keep the port of the first one (multiplex order) and give the others a free port.
+  _repairDuplicatePorts() {
+    const seen = new Set();
+    const sorted = [...(this.preset?.services || [])].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
+    let changed = 0;
+    for (const s of sorted) {
+      const port = s.network?.ediOutputTcp?.port;
+      if (!seen.has(port)) { seen.add(port); continue; }
+      const newPort = this._pickFreePort();
+      s.network = { ...s.network, ediOutputTcp: { ...s.network?.ediOutputTcp, port: newPort } };
+      seen.add(newPort);
+      changed++;
+      this.logger.line('service', `${s.id}: duplicate input port ${port} — reassigned to ${newPort}`, 'WARN');
+    }
+    if (changed) this._savePreset();
+    return changed;
   }
 
   // Validate a service mux input port: integer 1024–65535, not used by another service.
