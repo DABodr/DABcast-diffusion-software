@@ -1038,7 +1038,11 @@ dlgLogs.addEventListener('close', () => {
 
 async function exportAllConfig() {
   const payload = await api('/api/export/full');
-  const name = payload?.preset?.id ? payload.preset.id.replace(/\s+/g, '_') : 'dabcast';
+  // File named after the ensemble (mux) label; falls back to the preset id
+  const label = String(payload?.settings?.ensemble?.label || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+  const name = label || (payload?.preset?.id ? payload.preset.id.replace(/\s+/g, '_') : 'dabcast');
   downloadJson(`dabcast_config_${name}.json`, payload);
 }
 
