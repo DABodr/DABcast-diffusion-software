@@ -37,18 +37,19 @@ let _updateInfo = null;      // cached result of /api/update/check
 let MUX_STATS = null;
 let _muxStatsAt = 0;
 const _bufLastGlitchAt = new Map();  // service id -> last time dabmux underruns increased
-const BUF_GLITCH_WINDOW_MS = 60000;
+const BUF_GLITCH_WINDOW_MS = 30000;
 const BUF_STATES = {
   Streaming: ['ok', 'BUF OK'], Unstable: ['warn', 'UNSTABLE'], Silence: ['warn', 'SILENCE'], NoData: ['err', 'NO DATA'],
 };
 function bufTag(inp, always = false) {
   if (!inp) return '';
   let [cls, label] = BUF_STATES[inp.state] || ['', String(inp.state || '?').toUpperCase()];
-  // dabmux keeps "Unstable" long after old glitches (e.g. start-up prebuffering): only warn on recent ones
-  if (inp.state === 'Unstable' && !inp.recentGlitch) cls = '';
+  // dabmux keeps "Unstable" for minutes after old glitches (e.g. start-up prebuffering):
+  // with no new underrun in BUF_GLITCH_WINDOW_MS the input is healthy → show it as BUF OK
+  if (inp.state === 'Unstable' && !inp.recentGlitch) [cls, label] = BUF_STATES.Streaming;
   if (!always && !label) return '';
   const d = inp.underrunsDelta > 0 ? ` (+${inp.underrunsDelta})` : '';
-  const note = inp.state === 'Unstable' && !inp.recentGlitch ? ' (past glitches, no new underruns in the last minute)' : '';
+  const note = inp.state === 'Unstable' && !inp.recentGlitch ? ` (past glitches only, no new underruns in the last ${BUF_GLITCH_WINDOW_MS / 1000} s)` : '';
   const tip = `Mux input: ${inp.state}${note} · fill ${inp.minFill}–${inp.maxFill} · underruns ${inp.underruns}${d} · overruns ${inp.overruns} · peak ${inp.peakLeft}/${inp.peakRight} dBFS`;
   return `<span class="buf-tag ${cls}" title="${esc(tip)}">${label}${d ? ' ▲' : ''}</span>`;
 }
@@ -378,13 +379,13 @@ function renderStats(cap) {
     ? `${esc(block)} · ${((DAB_FREQ_TABLE[block] || 0) / 1e6).toFixed(3)} MHz`
     : `TX: ${esc(tx)}`;
   const bufInputs = STATE.muxRunning && MUX_STATS?.inputs ? Object.values(MUX_STATS.inputs) : [];
-  // healthy = Streaming, or Unstable with no new underrun in the last minute (dabmux keeps "Unstable" long after start-up)
+  // healthy = Streaming, or Unstable with no recent underrun (dabmux keeps "Unstable" long after start-up)
   const bufOk = bufInputs.filter((i) => i.state === 'Streaming' || (i.state === 'Unstable' && !i.recentGlitch)).length;
   const bufBad = bufInputs.filter((i) => i.state === 'NoData' || i.state === 'Silence').length;
   const bufUnstable = bufInputs.filter((i) => i.state === 'Unstable' && i.recentGlitch).length;
   const alarms = warn + err + bufBad;
-  const card = (title, val, sub, valCls = '') =>
-    `<div class="stat-card"><div class="stat-title">${title}</div><div class="stat-val ${valCls}">${val}</div><div class="stat-sub">${sub}</div></div>`;
+  const card = (title, val, sub, valCls = '', tip = '') =>
+    `<div class="stat-card"${tip ? ` title="${esc(tip)}"` : ''}><div class="stat-title">${title}</div><div class="stat-val ${valCls}">${val}</div><div class="stat-sub">${sub}</div></div>`;
   const html = [
     card('Ensemble', esc(ens.label || '—'), `${esc(ens.idHex || '')} · ${muxSub}`, 'stat-val-sm'),
     card('Capacity', `${cap.totalCu} / ${cap.maxCu} CU`,
@@ -394,7 +395,9 @@ function renderStats(cap) {
     card('Mux inputs', bufInputs.length ? `${bufOk} / ${bufInputs.length}` : '—',
       bufInputs.length ? `healthy · ${bufUnstable} glitching · ${bufBad} no audio` : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
       bufInputs.length ? (bufBad ? 'cap-bad' : bufUnstable ? 'cap-warn' : 'cap-ok') : ''),
-    card('Metadata', STATE.muxRunning ? `${dls} · ${sls}` : '—', 'DLS · SLS active'),
+    card('Metadata', STATE.muxRunning ? `${dls} / ${enabled.length}` : '—',
+      STATE.muxRunning ? `DLS text · ${sls} cover art` : 'off air', STATE.muxRunning && dls === enabled.length ? 'cap-ok' : '',
+      'DLS: enabled services currently sending a text (now playing or default text). Cover art: services currently sending a dynamic image (album cover from JSON/XML or SLS URL) — static logos are not counted.'),
     card('Alarms', `${alarms}`, alarms ? `${warn} warning · ${err} error · ${bufBad} mux input` : 'none', alarms ? (err ? 'cap-bad' : 'cap-warn') : 'cap-ok'),
   ].join('');
   if (el._last !== html) { el.innerHTML = html; el._last = html; }
