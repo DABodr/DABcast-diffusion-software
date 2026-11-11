@@ -448,16 +448,18 @@ input:disabled, select:disabled {
   /* A) Header minimal */
   .top { padding: 10px 12px; flex-wrap: wrap; gap: 8px; }
   .cu-gauge { display: none; }
-  #btnAbout, #btnDablin, #btnMux { display: none; }
+  #btnDablin { display: none; }   /* Dablin opens a local desktop player */
   #btnStop { order: 1; }
   #btnStart { order: 2; }
   #btnLogs { order: 3; }
+  #btnMux { order: 3; }
   .onair-group { order: 4; gap: 6px; }
   .onair { padding: 7px 10px; font-size: 12px; white-space: nowrap; }
   .onair-duration { font-size: 12px; }
   .brand .subtitle { font-size: 11px; }
   .actions { gap: 6px; }
   .actions .btn { padding: 8px 10px; font-size: 13px; }
+  .actions .btn-about { padding: 0; }
 
   /* B) Card head: hide action buttons */
   .card-head { padding: 12px; gap: 8px; }
@@ -494,6 +496,21 @@ input:disabled, select:disabled {
   .logs { height: 55vh; font-size: 11px; padding: 8px; word-break: break-all; white-space: pre-wrap; }
   .modal-actions { flex-wrap: wrap; gap: 6px; }
   .modal-actions .btn { font-size: 12px; padding: 6px 10px; }
+
+  /* F2) Dialogs fit the screen: full width, single-column forms */
+  .modal { max-width: calc(100vw - 12px); max-height: calc(100dvh - 12px); }
+  .modal-service, .modal-logs, .modal-about { width: calc(100vw - 12px); }
+  .modal-body { width: auto !important; max-width: 100%; box-sizing: border-box; }
+  .modal .grid, .modal .grid2, .modal .grid3, .modal .grid-meta-top, .modal .grid-keys { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .modal label, .modal .grid > *, .modal .grid2 > *, .modal .grid3 > * { min-width: 0; }
+  .modal input:not([type="checkbox"]):not([type="radio"]), .modal select, .modal textarea { min-width: 0; max-width: 100%; width: 100%; box-sizing: border-box; }
+  .grid-col2 { grid-column: auto; }
+  .tabs { flex-wrap: wrap; }
+  .slsrow { flex-direction: column; align-items: stretch; }
+  .slsrow > div:first-child { align-self: center; }
+  .slsctl { min-width: 0; }
+  .slsctl .row { flex-wrap: wrap; }
+  .modal-actions .btn, .modal-foot .btn { padding: 8px 12px; }
 
   /* G) Full-width table */
   .main { padding: 10px 6px 24px; }
