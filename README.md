@@ -239,6 +239,8 @@ The `dabcast.service` file at the root contains commented `Environment=` lines f
 - ✅ **Multi-source support**: HTTP(S), local file, ALSA sound card, GStreamer pipeline
 - ✅ **Backup sources**: automatic failover on failure (watchdog)
 - ✅ **Mono and stereo support**: adaptive VU meter (single "M" bar in mono, "L/R" dual in stereo)
+- ✅ **Web Player**: listen to any service of the running multiplex from the browser (PC or phone) — audio decoded from the mux output (dablin → ffmpeg MP3, a few seconds behind live), real-time L/R meter with peak hold, DLS / DL+ / slide of the service. Needs `dablin` and `ffmpeg` on the server (installed by `install-tools.sh`)
+- ✅ **Audio levels assistant**: click the "Mux inputs" card to compare the peaks of every service over a sliding 5-minute window and get a suggested gain (target -3 to -12 dBFS); Apply saves the gain, a mux restart applies it
 
 ### Metadata (DLS/SLS)
 
