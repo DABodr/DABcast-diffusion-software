@@ -24,6 +24,60 @@ let pwdDialogShown = false;  // auto-open password dialog once
 let activeServiceFilter = ''; // filter logs by service ID
 let durationTimer = null;    // 1-second interval for ON AIR duration
 let _updateInfo = null;      // cached result of /api/update/check
+// odr-dabmux input buffer stats (from /api/mux/stats, fetched at most every 5s while ON AIR)
+let MUX_STATS = null;
+let _muxStatsAt = 0;
+const _bufLastGlitchAt = new Map();  // service id -> last time dabmux underruns increased
+const BUF_GLITCH_WINDOW_MS = 60000;
+const BUF_STATES = {
+  Streaming: ['ok', 'BUF OK'], Unstable: ['warn', 'UNSTABLE'], Silence: ['warn', 'SILENCE'], NoData: ['err', 'NO DATA'],
+};
+function bufTag(inp, always = false) {
+  if (!inp) return '';
+  let [cls, label] = BUF_STATES[inp.state] || ['', String(inp.state || '?').toUpperCase()];
+  // dabmux keeps "Unstable" long after old glitches (e.g. start-up prebuffering): only warn on recent ones
+  if (inp.state === 'Unstable' && !inp.recentGlitch) cls = '';
+  if (!always && !label) return '';
+  const d = inp.underrunsDelta > 0 ? ` (+${inp.underrunsDelta})` : '';
+  const note = inp.state === 'Unstable' && !inp.recentGlitch ? ' (past glitches, no new underruns in the last minute)' : '';
+  const tip = `Mux input: ${inp.state}${note} · fill ${inp.minFill}–${inp.maxFill} · underruns ${inp.underruns}${d} · overruns ${inp.overruns} · peak ${inp.peakLeft}/${inp.peakRight} dBFS`;
+  return `<span class="buf-tag ${cls}" title="${esc(tip)}">${label}${d ? ' ▲' : ''}</span>`;
+}
+function maybeFetchMuxStats() {
+  if (!STATE?.muxRunning) { MUX_STATS = null; return; }
+  if (Date.now() - _muxStatsAt < 5000) return;
+  _muxStatsAt = Date.now();
+  api('/api/mux/stats').then((st) => {
+    const prev = MUX_STATS?.inputs || {};
+    for (const [id, inp] of Object.entries(st.inputs || {})) {
+      if (prev[id] && Number.isFinite(inp.underruns)) inp.underrunsDelta = inp.underruns - prev[id].underruns;
+      if (inp.underrunsDelta > 0) _bufLastGlitchAt.set(id, Date.now());
+      inp.recentGlitch = Date.now() - (_bufLastGlitchAt.get(id) || 0) < BUF_GLITCH_WINDOW_MS;
+    }
+    MUX_STATS = st;
+    render();
+  }).catch(() => { /* stats are best-effort */ });
+}
+// v1.4 table view prefs (display only — never written to ui.order)
+const VIEW = { q: '', sort: 'order', compact: false };
+try { Object.assign(VIEW, JSON.parse(localStorage.getItem('dabcast.view') || '{}'), { q: '' }); } catch { /* ignore */ }
+function saveView() { try { localStorage.setItem('dabcast.view', JSON.stringify({ sort: VIEW.sort, compact: VIEW.compact })); } catch { /* ignore */ } }
+function viewSort(list) {
+  const key = {
+    ps: (s) => (s.identity?.ps8 || '').toLowerCase(),
+    pid: (s) => String(s.id || '').toUpperCase(),
+    bitrate: (s) => -(s.dab?.bitrateKbps ?? 0),
+    cu: (s) => -(s.cu ?? 0),
+    port: (s) => s.network?.ediOutputTcp?.port ?? 0,
+  }[VIEW.sort];
+  if (!key) return list;
+  return [...list].sort((a, b) => { const x = key(a), y = key(b); return x < y ? -1 : x > y ? 1 : 0; });
+}
+function viewMatch(svc) {
+  const q = VIEW.q.trim().toLowerCase();
+  if (!q) return true;
+  return [svc.identity?.ps8, svc.identity?.ps16, svc.id].some((v) => String(v || '').toLowerCase().includes(q));
+}
 /** @type {Map<string, {files: string[], index: number, key: string}>} slide rotation state per service */
 const slideRotation = new Map();
 
@@ -286,6 +340,48 @@ function updateDuration() {
   el.textContent = formatDuration(Math.max(0, elapsed));
 }
 
+// v1.4 stats cards — derived only from existing /api/state fields
+function renderStats(cap) {
+  const el = $('#statsRow');
+  if (!el) return;
+  const all = STATE.preset.services || [];
+  const enabled = all.filter((s) => s.enabled);
+  const st = (s) => String(s.runtime?.status || 'UNKNOWN').toUpperCase();
+  const running = enabled.filter((s) => st(s) === 'RUNNING').length;
+  const warn = enabled.filter((s) => st(s) === 'WARNING').length;
+  const err = STATE.muxRunning ? enabled.filter((s) => st(s) === 'ERROR' || st(s) === 'RESTARTING').length : 0;
+  const dls = STATE.muxRunning ? enabled.filter((s) => s.runtime?.currentDls).length : 0;
+  const sls = STATE.muxRunning ? enabled.filter((s) => s.runtime?.currentSlsUrl).length : 0;
+  const ratio = cap.maxCu ? cap.totalCu / cap.maxCu : 0;
+  const capCls = ratio < 0.8 ? 'cap-ok' : ratio <= 1.0 ? 'cap-warn' : 'cap-bad';
+  const ens = STATE.settings.ensemble || {};
+  const tx = STATE.settings.dabmux?.txMode || 'EASYDAB';
+  const block = STATE.settings.dabmux?.hackrf?.dabBlock || '7A';
+  const muxSub = tx === 'HACKRF'
+    ? `${esc(block)} · ${((DAB_FREQ_TABLE[block] || 0) / 1e6).toFixed(3)} MHz`
+    : `TX: ${esc(tx)}`;
+  const bufInputs = STATE.muxRunning && MUX_STATS?.inputs ? Object.values(MUX_STATS.inputs) : [];
+  const bufOk = bufInputs.filter((i) => i.state === 'Streaming').length;
+  const bufBad = bufInputs.filter((i) => i.state === 'NoData' || i.state === 'Silence').length;
+  const bufUnstable = bufInputs.filter((i) => i.state === 'Unstable' && i.recentGlitch).length;
+  const alarms = warn + err + bufBad;
+  const card = (title, val, sub, valCls = '') =>
+    `<div class="stat-card"><div class="stat-title">${title}</div><div class="stat-val ${valCls}">${val}</div><div class="stat-sub">${sub}</div></div>`;
+  const html = [
+    card('Ensemble', esc(ens.label || '—'), `${esc(ens.idHex || '')} · ${muxSub}`, 'stat-val-sm'),
+    card('Capacity', `${cap.totalCu} / ${cap.maxCu} CU`,
+      `<div class="stat-bar"><div class="stat-bar-fill ${capCls}" style="width:${Math.min(ratio * 100, 100).toFixed(0)}%"></div></div>${Math.round(ratio * 100)} %`, capCls),
+    card('Services', `${enabled.length}`, `enabled / ${all.length}`),
+    card('Encoders', STATE.muxRunning ? `${running}` : '—', STATE.muxRunning ? `running / ${enabled.length}` : 'off air', STATE.muxRunning && running === enabled.length ? 'cap-ok' : ''),
+    card('Mux inputs', bufInputs.length ? `${bufOk} / ${bufInputs.length}` : '—',
+      bufInputs.length ? `streaming · ${bufUnstable} glitching · ${bufBad} no audio` : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
+      bufInputs.length ? (bufBad ? 'cap-bad' : bufUnstable ? 'cap-warn' : 'cap-ok') : ''),
+    card('Metadata', STATE.muxRunning ? `${dls} · ${sls}` : '—', 'DLS · SLS active'),
+    card('Alarms', `${alarms}`, alarms ? `${warn} warning · ${err} error · ${bufBad} mux input` : 'none', alarms ? (err ? 'cap-bad' : 'cap-warn') : 'cap-ok'),
+  ].join('');
+  if (el._last !== html) { el.innerHTML = html; el._last = html; }
+}
+
 function render() {
   if (!STATE) return;
 
@@ -336,7 +432,7 @@ function render() {
 
   const capEl = $('#capHint');
   if (capEl) {
-    capEl.textContent = `Capacity: ${cap.totalCu}/${cap.maxCu} CU (estim.)`;
+    capEl.textContent = ratio > 1.0 ? `Capacity exceeded: ${cap.totalCu}/${cap.maxCu} CU — Start disabled` : '';
     capEl.classList.remove('cap-ok','cap-warn','cap-bad');
     if (ratio < 0.8) capEl.classList.add('cap-ok');
     else if (ratio <= 1.0) capEl.classList.add('cap-warn');
@@ -393,7 +489,13 @@ function render() {
     durationTimer = setInterval(updateDuration, 1000);
   }
 
-  const services = [...STATE.preset.services].sort((a,b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
+  renderStats(cap);
+
+  const services = viewSort([...STATE.preset.services].sort((a,b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0)));
+  const viewActive = VIEW.sort !== 'order' || VIEW.q.trim() !== '';
+  $('#svcTable')?.classList.toggle('compact', VIEW.compact);
+  const viewHint = $('#svcViewHint');
+  if (viewHint) viewHint.textContent = viewActive ? 'Drag & drop reordering disabled while sorted or filtered' : '';
   if (!services.length) {
     svcTableBody.innerHTML = `<tr><td class="muted" colspan="17">No service found.</td></tr>`;
     return;
@@ -416,8 +518,9 @@ function render() {
     oldRows.delete(svc.id);
 
     tr.dataset.order = svc.ui?.order ?? 0;
-    tr.draggable = !STATE.muxRunning;
-    tr.style.cursor = STATE.muxRunning ? 'default' : 'grab';
+    tr.draggable = !STATE.muxRunning && !viewActive;
+    tr.style.cursor = tr.draggable ? 'grab' : 'default';
+    tr.style.display = viewMatch(svc) ? '' : 'none';
     tr.classList.toggle('selected', selectedServiceId === svc.id);
 
     const status = svc.runtime?.status || 'UNKNOWN';
@@ -441,7 +544,7 @@ function render() {
 
     // Cell definitions: [cssClass, innerHTML]
     const cells = [
-      ['', badge(status)],
+      ['', badge(status) + (STATE.muxRunning ? bufTag(MUX_STATS?.inputs?.[svc.id]) : '')],
       ['', `<div class="ps"${ps8Title ? ` title="${esc(ps8Title)}"` : ''}>${esc(ps8)}</div><div class="muted">${esc(ps16)}</div>`],
       ['col-pid hide-mobile', esc(svc.id)],
       ['col-bitrate', `${svc.dab.bitrateKbps} kbps`],
@@ -841,6 +944,7 @@ async function refresh() {
   try {
     STATE = await api('/api/state', { signal: refreshAbort.signal });
     render();
+    maybeFetchMuxStats();
     if (STATE.mustChangePassword && !pwdDialogShown) {
       pwdDialogShown = true;
       showAuth();
@@ -872,6 +976,7 @@ async function start() {
 }
 
 async function stop() {
+  if (STATE?.muxRunning && !confirm('Stop the multiplex? This interrupts the broadcast.')) return;
   await api('/api/mux/stop', { method: 'POST', body: '{}' });
   await refresh();
 }
@@ -880,7 +985,7 @@ async function startDablin() {
   const h = window.location.hostname;
   const isLocal = (h === 'localhost' || h === '127.0.0.1' || h === '::1');
   if (!isLocal) {
-    showToast('Dablin requires local access — open DABcast on the server machine directly (localhost:9090).', 'error');
+    showToast(`Dablin opens on the server's own screen — open DABcast on the server machine at localhost:${window.location.port || 80}.`, 'error');
     return;
   }
 
@@ -907,7 +1012,7 @@ async function showLogs() {
   const sel = $('#selLogService');
   if (sel && STATE?.preset?.services) {
     const prev = sel.value;
-    sel.innerHTML = '<option value="">Tous les services</option>';
+    sel.innerHTML = '<option value="">All services</option>';
     for (const svc of STATE.preset.services) {
       const opt = document.createElement('option');
       opt.value = svc.id;
@@ -931,10 +1036,17 @@ dlgLogs.addEventListener('close', () => {
   _logRefreshTimer = null;
 });
 
+// Config export file name: ensemble (mux) label made filename-safe; falls back to the preset id
+function configExportBaseName(payload) {
+  const label = String(payload?.settings?.ensemble?.label || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+  return label || (payload?.preset?.id ? payload.preset.id.replace(/\s+/g, '_') : 'dabcast');
+}
+
 async function exportAllConfig() {
   const payload = await api('/api/export/full');
-  const name = payload?.preset?.id ? payload.preset.id.replace(/\s+/g, '_') : 'dabcast';
-  downloadJson(`dabcast_config_${name}.json`, payload);
+  downloadJson(`dabcast_config_${configExportBaseName(payload)}.json`, payload);
 }
 
 async function importAllConfig(file) {
@@ -1230,31 +1342,23 @@ function renderMuxStats(container, stats) {
     container.innerHTML = '';
     return;
   }
-  let html = '<hr class="about-sep"><div class="mux-stats-title">Mux subchannel buffers</div>';
+  let html = '<hr class="about-sep"><div class="mux-stats-title">Mux input buffers (odr-dabmux)</div>';
   if (stats.error) {
     html += `<div class="mux-stats-off">Stats unavailable: ${esc(stats.error)}</div>`;
     container.innerHTML = html;
     return;
   }
-  const inputs = stats.data?.inputs || {};
-  const map = stats.serviceMap || {};
-  const entries = Object.entries(inputs);
+  const entries = Object.values(stats.inputs || {});
   if (!entries.length) {
     html += '<div class="mux-stats-off">No subchannel data</div>';
     container.innerHTML = html;
     return;
   }
   html += '<div class="mux-stats-grid">';
-  for (const [key, inp] of entries) {
-    const name = map[key]?.name || key;
-    const max = inp.buffer_max ?? inp.max_size ?? 1;
-    const cur = inp.buffer_current ?? inp.current_size ?? 0;
-    const pct = max > 0 ? Math.min(100, Math.round((cur / max) * 100)) : 0;
-    const dropped = inp.num_frames_dropped || 0;
-    const color = pct < 20 ? 'var(--red)' : pct < 50 ? 'var(--yellow)' : 'var(--green)';
-    html += `<span class="mux-stat-label">${esc(name)}</span>`;
-    html += `<div class="mux-stat-bar-wrap"><div class="mux-stat-bar" style="width:${pct}%;background:${color}"></div></div>`;
-    html += `<span class="mux-stat-pct">${pct}%${dropped > 0 ? ` <span class="mux-stat-warn">⚠ ${dropped} dropped</span>` : ''}</span>`;
+  for (const inp of entries) {
+    html += `<span class="mux-stat-label">${esc(inp.name)}</span>`;
+    html += `<span>${bufTag(inp, true)}</span>`;
+    html += `<span class="mux-stat-pct">U ${inp.underruns ?? 0} · O ${inp.overruns ?? 0} · ${inp.peakLeft ?? '—'}/${inp.peakRight ?? '—'} dB</span>`;
   }
   html += '</div>';
   container.innerHTML = html;
@@ -1503,13 +1607,15 @@ $('#btnAuthSave').addEventListener('click', async () => {
   }
 });
 
-$('#btnLogout')?.addEventListener('click', async () => {
+async function signOut() {
   try {
     await fetch('/api/logout', { method: 'POST' });
   } finally {
     window.location.replace('/login.html');
   }
-});
+}
+$('#btnLogout')?.addEventListener('click', signOut);
+$('#btnSignOut')?.addEventListener('click', signOut);
 
 // ── Telegram dialog ──
 const dlgTelegram = $('#dlgTelegram');
@@ -1735,6 +1841,26 @@ if (btnDablin) {
 
 $('#btnMux').addEventListener('click', openMuxDialog);
 $('#btnAdd').addEventListener('click', () => openDialogFor(null));
+$('#svcSearch')?.addEventListener('input', (e) => { VIEW.q = e.target.value; render(); });
+$('#svcSearch')?.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; VIEW.q = ''; render(); e.target.blur(); } });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (document.querySelector('dialog[open]') || e.target.closest?.('input, select, textarea, [contenteditable]')) return;
+  e.preventDefault();
+  $('#svcSearch')?.focus();
+});
+svcTableBody.addEventListener('dblclick', (e) => {
+  if (e.target.closest('button, .sls-thumb')) return;
+  const row = e.target.closest('tr[data-service-id]');
+  const svc = row && STATE?.preset.services.find((s) => s.id === row.dataset.serviceId);
+  if (svc) openDialogFor(svc);
+});
+$('#ioMenu')?.addEventListener('click', (e) => { if (e.target.closest('.menu-list button')) $('#ioMenu').open = false; });
+document.addEventListener('click', (e) => { const m = $('#ioMenu'); if (m?.open && !m.contains(e.target)) m.open = false; });
+if ($('#svcSort')) $('#svcSort').value = VIEW.sort;
+$('#svcSort')?.addEventListener('change', (e) => { VIEW.sort = e.target.value; saveView(); render(); });
+$('#btnCompact')?.classList.toggle('active', VIEW.compact);
+$('#btnCompact')?.addEventListener('click', (e) => { VIEW.compact = !VIEW.compact; e.currentTarget.classList.toggle('active', VIEW.compact); saveView(); render(); });
 
 document.querySelectorAll('.logs-tabs .tab').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -2056,7 +2182,7 @@ svcTableBody.addEventListener('click', async (e) => {
   // Handle row selection (if not clicking a button)
   if (row && row.dataset.serviceId) {
     selectedServiceId = row.dataset.serviceId;
-    await refresh();  // Re-render to highlight selected row
+    render();  // Re-render to highlight selected row
   }
 });
 
@@ -2146,7 +2272,7 @@ $('#svcForm').addEventListener('submit', async (e) => {
 $('#btnExportConfig')?.addEventListener('click', async () => {
   try {
     const payload = await api('/api/export/full');
-    const defaultName = payload?.preset?.id ? payload.preset.id.replace(/\s+/g, '_') : 'dabcast';
+    const defaultName = configExportBaseName(payload);
     const fileName = prompt('Configuration file name:', defaultName);
     if (!fileName) return; // User cancelled
     const sanitized = fileName.trim().replace(/\.json$/i, ''); // Remove .json if present

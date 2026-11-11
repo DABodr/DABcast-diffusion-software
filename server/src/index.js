@@ -13,6 +13,7 @@ import { FileLogger } from './logger.js';
 import { TelegramLogNotifier } from './telegramNotifier.js';
 import { OdrProcessManager } from './odr/processManager.js';
 import { AppState } from './appState.js';
+import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import {
   LoginAttemptLimiter,
   REMEMBERED_SESSION_MAX_AGE_MS,
@@ -394,7 +395,9 @@ app.patch('/api/auth', (req, res) => {
 });
 
 app.get('/api/export/full', (req, res) => {
-  const result = { settings, preset: state.preset };
+  // Never export credentials (username + password hash); /api/import/full ignores them anyway
+  const { auth: _auth, ...exportedSettings } = settings;
+  const result = { settings: exportedSettings, preset: state.preset };
 
   // Include all service logos as base64
   const logos = {};
@@ -870,21 +873,37 @@ app.get('/api/system/info', (req, res) => {
   }
 });
 
+// odr-dabmux management server = ZMQ REP (not HTTP). Read-only "values" query,
+// shared between concurrent clients and cached 2s to spare the Pi and dabmux.
+let _muxStatsCache = { at: 0, body: null };
+let _muxStatsInFlight = null;
 app.get('/api/mux/stats', async (req, res) => {
-  const st = state.getState();
-  if (!st.muxRunning) return res.json({ running: false });
+  // Read fields directly: getState() would consume lastError meant for /api/state.
+  if (!state.muxRunning) return res.json({ running: false });
 
-  // Map sub_N keys to service names (same sort order as muxBuilder)
-  const sorted = st.services
-    .filter(s => s.enabled)
-    .sort((a, b) => (a.ui?.order ?? 999) - (b.ui?.order ?? 999));
+  // sub_N numbering must match muxBuilder: ALL services (enabled or not), sorted by ui.order ?? 0
+  const sorted = [...(state.preset?.services || [])]
+    .sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
   const serviceMap = {};
   sorted.forEach((svc, idx) => {
     serviceMap[`sub_${idx + 1}`] = { name: svc.identity?.ps8 || svc.id, id: svc.id };
   });
 
-  // Management port query disabled — format varies by odr-dabmux version
-  res.json({ running: true, serviceMap });
+  const port = Number(state.settings?.dabmux?.managementPort) || 0;
+  if (!port) return res.json({ running: true, serviceMap, error: 'Management port disabled' });
+
+  if (_muxStatsCache.body && Date.now() - _muxStatsCache.at < 2000) {
+    return res.json({ running: true, serviceMap, ..._muxStatsCache.body });
+  }
+  if (!_muxStatsInFlight) {
+    _muxStatsInFlight = queryDabmux(port, 'values', { timeoutMs: 1000 })
+      .then((text) => ({ inputs: normalizeValues(JSON.parse(text), serviceMap), at: Date.now() }))
+      .catch((err) => ({ error: String(err.message || err) }))
+      .finally(() => { _muxStatsInFlight = null; });
+  }
+  const body = await _muxStatsInFlight;
+  if (!body.error) _muxStatsCache = { at: Date.now(), body };
+  res.json({ running: true, serviceMap, ...body });
 });
 
 app.get('/api/logs', (req, res) => {

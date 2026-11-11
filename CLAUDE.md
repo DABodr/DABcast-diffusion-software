@@ -14,7 +14,7 @@ processes to produce and multiplex DAB+ radio signals.
 **Stack:**
 - Backend: Node.js 18+ (ESM `type: "module"`), Express 4, no TypeScript
 - Frontend: Vanilla JS single-page app (`web/app.js`), no framework, no build step
-- Tests: Node.js built-in test runner (`node --test server/tests/`)  — **205 tests, 49 suites**
+- Tests: Node.js built-in test runner (`node --test server/tests/*.test.js` — Node 24 no longer accepts a bare directory)  — **178 tests, 40 suites**
 - Build: `esbuild` (bundle) → `@yao-pkg/pkg` (binary) → `dpkg-deb` (.deb package)
 - Targets: `./build.sh` → amd64 | `./build.sh arm64` → Raspberry Pi OS 64-bit
 - Service port: **9090** (default)
@@ -51,10 +51,11 @@ project root/
 │   │   │   ├── processManager.js # spawn/stop/kill ODR processes, pids.json, orphan cleanup
 │   │   │   ├── commandBuilder.js # Build odr-audioenc / odr-padenc / odr-dabmod command args
 │   │   │   ├── muxBuilder.js     # Generate odr-dabmux .mux config file text
+│   │   │   ├── dabmuxStats.js    # Read-only ZMQ (ZMTP 3) client for the dabmux management port
 │   │   │   └── validate.js       # validateService() — normalization + errors + warnings
 │   │   └── utils/
 │   │       └── dlplus.js         # DL+ tag parsing, buildDlPlusFileContent, parseNowPlaying
-│   └── tests/                    # 205 tests — run with: node --test server/tests/
+│   └── tests/                    # 178 tests — run with: node --test server/tests/*.test.js
 │
 ├── web/
 │   ├── index.html                # Single-page app shell (all dialogs inline)
@@ -119,6 +120,7 @@ Never modify multiple critical layers in a single patch. The subsystems are:
 | Service validation | `odr/validate.js` |
 | State machine / CRUD | `appState.js` (rest) |
 | API routes | `server/src/index.js` |
+| Mux input stats (read-only) | `odr/dabmuxStats.js`, `/api/mux/stats` route |
 | Frontend rendering | `web/app.js` |
 | Frontend UI | `web/index.html`, `web/style.css` |
 | Telegram notifications | `server/src/telegramNotifier.js`, `server/src/logger.js`, Telegram routes/UI |
@@ -415,7 +417,7 @@ Describe:
 
 ### Step 5 — Verify tests
 After any backend change: `node --test server/tests/`
-All 205 tests must pass. If a test fails, fix the code (not the test) unless the test is demonstrably wrong.
+All 178 tests must pass. If a test fails, fix the code (not the test) unless the test is demonstrably wrong.
 
 ## 7.1 — RELEASE & ROLLBACK POLICY
 
@@ -557,6 +559,10 @@ These are non-obvious behaviors that have caused bugs in the past:
 | **Data preservation on upgrade** | `/var/lib/dabcast/` is never modified by dpkg. demo.json only copied if absent. Logos only seeded if no logo.jpg found. |
 | **Telegram token** | Stored in `data/.telegram.json` with mode `0600`. Never expose it through `/api/telegram`, `/data`, config exports, logs, tests, or commits. |
 | **Telegram failure isolation** | Network/API failures must never interrupt file logging or the ON AIR process chain. Default forwarding threshold is `ERROR`. |
+| **dabmux management port** | `managementport` (12720) is a **ZMQ REP** socket, not HTTP/telnet. Send `values` → per-subchannel `inputstat` (state, min/max fill, `num_underruns`, `num_overruns`, peaks). Use `odr/dabmuxStats.js` (pure-JS ZMTP client, no native zeromq dep). Telnet 12721 = parameters only, no fill stats. |
+| **sub_N ↔ service mapping** | `.mux` subchannels are `sub_1…sub_N` over **all** services (enabled or not) sorted by `ui.order ?? 0` — same as `muxBuilder`. Never filter on `enabled` when mapping stats. |
+| **dabmux "Unstable" is sticky** | Start-up prebuffering underruns put every input in `Unstable`, and it stays so for minutes after counters stop increasing. Judge health on **counter increases**, not on the state string. The UI greys `Unstable` unless underruns rose in the last 60s. |
+| **/api/mux/stats and getState()** | Do not call `getState()` there: it consumes `lastError`, which the frontend must receive via `/api/state`. Read `state.muxRunning` / `state.preset` / `state.settings` directly. Results cached 2s, concurrent requests share one query. |
 
 ## ARCHITECTURE LOCK MODE
 

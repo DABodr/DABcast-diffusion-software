@@ -26,6 +26,7 @@
 
     <div class="actions">
       <button id="btnAuth" class="btn btn-about hide-mobile" title="Account and password">&#128274;</button>
+      <button id="btnSignOut" class="btn btn-about" title="Sign out" aria-label="Sign out">&#x23FB;</button>
       <button id="btnTelegram" class="btn" title="Telegram notifications">Telegram</button>
       <button id="btnAbout" class="btn btn-about" title="About">?</button>
       <button id="btnDablin" class="btn">Dablin</button>
@@ -44,22 +45,45 @@
     Default password detected — please change your password before continuing.
     <button id="btnPwdBanner" class="btn btn-mini">Change password</button>
   </div>
+  <div class="stats-row" id="statsRow"></div>
   <main class="main">
     <div class="card">
       <div class="card-head">
         <div>
           <div class="card-title">Services</div>
-          <div class="card-hint hide-mobile">Add / edit via dialog. Some fields are locked when ON AIR.</div>
+          <div class="card-hint hide-mobile">Double-click a row to edit · press / to search. Some fields are locked when ON AIR.</div>
           <div class="card-hint" id="capHint"></div>
         </div>
         <div class="row">
-          <button id="btnExportConfig" class="btn btn-mini">Export config</button>
-          <button id="btnImportAll" class="btn btn-mini">Import config</button>
-          <button id="btnExportService" class="btn btn-mini">Export service</button>
-          <button id="btnImportService" class="btn btn-mini">Import service</button>
-          <button id="btnExportAllServices" class="btn btn-mini">Export all services (.zip)</button>
-          <button id="btnAdd" class="btn">+ Add service</button>
+          <details class="menu" id="ioMenu">
+            <summary class="btn btn-mini">Import / Export ▾</summary>
+            <div class="menu-list">
+              <button id="btnExportConfig" class="btn btn-mini">Export config</button>
+              <button id="btnImportAll" class="btn btn-mini">Import config</button>
+              <hr class="menu-sep" />
+              <button id="btnExportService" class="btn btn-mini" title="Exports the selected row">Export selected service</button>
+              <button id="btnImportService" class="btn btn-mini">Import service</button>
+              <button id="btnExportAllServices" class="btn btn-mini">Export all services (.zip)</button>
+            </div>
+          </details>
+          <button id="btnAdd" class="btn btn-primary">+ Add service</button>
         </div>
+      </div>
+
+      <div class="svc-toolbar">
+        <input type="search" id="svcSearch" class="svc-search" placeholder="Search service (PS, PID)…" autocomplete="off" />
+        <label class="svc-sort"><span>Sort</span>
+          <select id="svcSort">
+            <option value="order">Multiplex order</option>
+            <option value="ps">PS</option>
+            <option value="pid">PID</option>
+            <option value="bitrate">Bitrate</option>
+            <option value="cu">CU</option>
+            <option value="port">Port</option>
+          </select>
+        </label>
+        <button id="btnCompact" class="btn btn-mini" type="button" title="Compact / normal view">Compact</button>
+        <span class="muted svc-toolbar-hint" id="svcViewHint"></span>
       </div>
 
       <div class="tablewrap">
@@ -530,15 +554,15 @@
         <button class="icon" value="cancel" aria-label="Close">✕</button>
       </div>
       <div class="tabs logs-tabs" role="tablist" aria-label="Logs tabs">
-        <button type="button" class="tab active" data-logtab="all">Tous</button>
+        <button type="button" class="tab active" data-logtab="all">All</button>
         <button type="button" class="tab" data-logtab="dabmux">odr-dabmux</button>
         <button type="button" class="tab" data-logtab="audio">odr-audioenc / odr-padenc</button>
         <button type="button" class="tab" data-logtab="proc">Running process</button>
         <button type="button" class="tab" data-logtab="errors">Errors</button>
       </div>
       <div class="logs-filters">
-        <label><input type="checkbox" id="chkRawOutput"> Sortie brute (DEBUG)</label>
-        <select id="selLogService"><option value="">Tous les services</option></select>
+        <label><input type="checkbox" id="chkRawOutput"> Raw output (DEBUG)</label>
+        <select id="selLogService"><option value="">All services</option></select>
       </div>
       <pre id="logsPre" class="logs"></pre>
       <div class="modal-actions">
