@@ -41,6 +41,40 @@ function feed(stream, chunk) {
   if (stream.writable && stream.writableLength < MAX_QUEUED) stream.write(chunk);
 }
 
+// Server-side meter: per-listener peak levels of the decoded PCM, time-stamped on the stream
+// timeline (seconds of audio fed to ffmpeg = position in the MP3). Used by browsers whose Web Audio
+// cannot analyse a live stream (iOS Safari): the page shows the level matching audio.currentTime.
+const METER_WINDOWS_PER_S = 20;
+const METER_KEEP = 30 * METER_WINDOWS_PER_S;   // ~30 s of history
+const meters = new Map();                     // listener key -> [[t, dbL, dbR], ...]
+const toDb = (x) => (x > 0 ? Math.max(-99, Math.round(200 * Math.log10(x)) / 10) : -99);
+export function makeMeter(rate, channels, out) {
+  const win = Math.max(1, Math.round(rate / METER_WINDOWS_PER_S));
+  const frameBytes = 4 * channels;
+  let rest = Buffer.alloc(0), n = 0, frames = 0, pl = 0, pr = 0;
+  return (chunk) => {
+    const b = rest.length ? Buffer.concat([rest, chunk]) : chunk;
+    const usable = b.length - (b.length % frameBytes);
+    for (let off = 0; off < usable; off += frameBytes) {
+      const l = Math.abs(b.readFloatLE(off));
+      const r = channels > 1 ? Math.abs(b.readFloatLE(off + 4)) : l;
+      if (l > pl) pl = l;
+      if (r > pr) pr = r;
+      if (++n === win) {
+        frames += n;
+        out.push([Math.round(frames / rate * 1000) / 1000, toDb(pl), toDb(pr)]);
+        n = 0; pl = 0; pr = 0;
+      }
+    }
+    rest = Buffer.from(b.subarray(usable));
+    if (out.length > METER_KEEP) out.splice(0, out.length - METER_KEEP);
+  };
+}
+export function playerLevels(key, since = 0) {
+  const lv = meters.get(String(key || ''));
+  return lv ? lv.filter((x) => x[0] > since) : null;
+}
+
 // dablin prints "PCMOutput: format set; samplerate: 48000, channels: 2, output: 32bit float"
 export function parsePcmFormat(text) {
   const m = /samplerate:\s*(\d+),\s*channels:\s*(\d+)/.exec(text);
@@ -56,7 +90,7 @@ export function parsePcmFormat(text) {
  * @param {object} o.req / o.res  Express request / response
  * @param {function} o.log     (msg, level) => void
  */
-export function streamService({ port, subchId, dabPlus = true, req, res, log }) {
+export function streamService({ port, subchId, dabPlus = true, key = '', req, res, log }) {
   listeners++;
   let done = false;
   let sock = null, dablin = null, ffmpeg = null, formatTimer = null;
@@ -66,6 +100,7 @@ export function streamService({ port, subchId, dabPlus = true, req, res, log }) 
     done = true;
     listeners--;
     clearTimeout(formatTimer);
+    if (key) meters.delete(key);
     try { sock?.destroy(); } catch { /* ignore */ }
     try { dablin?.kill('SIGTERM'); } catch { /* ignore */ }
     try { ffmpeg?.kill('SIGTERM'); } catch { /* ignore */ }
@@ -111,6 +146,12 @@ export function streamService({ port, subchId, dabPlus = true, req, res, log }) 
       'X-Accel-Buffering': 'no',
     });
     dablin.stdout.off('data', early);
+    // meter sees exactly the PCM fed to ffmpeg, in the same order → same timeline as the MP3
+    const levels = [];
+    const meter = makeMeter(fmt.rate, fmt.channels, levels);
+    if (key) meters.set(key, levels);
+    for (const b of pending) meter(b);
+    dablin.stdout.on('data', meter);
     for (const b of pending.splice(0)) feed(ffmpeg.stdin, b);
     // Downstream of the decoder, normal piping: a slow browser slows ffmpeg and dablin, and the
     // excess is dropped at the decoder input (feed above) — never at the mux side.

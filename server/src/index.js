@@ -14,7 +14,7 @@ import { TelegramLogNotifier } from './telegramNotifier.js';
 import { OdrProcessManager } from './odr/processManager.js';
 import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
-import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, PLAYER_MAX_LISTENERS } from './player.js';
+import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
   REMEMBERED_SESSION_MAX_AGE_MS,
@@ -946,7 +946,14 @@ app.get('/api/player/stream', (req, res) => {
   if (idx < 0) return res.status(404).json({ error: 'Service not on air' });
   if (!acquireListenerSlot()) return res.status(429).json({ error: `Player busy (max ${PLAYER_MAX_LISTENERS} listeners)` });
   const port = Number(state.settings?.dabmux?.easyDabOutput?.netPort) || 9901;
-  streamService({ port, subchId: idx + 1, dabPlus: true, req, res, log: (m, l) => logger.line('web', m, l) });
+  const key = String(req.query.k || '').slice(0, 40);
+  streamService({ port, subchId: idx + 1, dabPlus: true, key, req, res, log: (m, l) => logger.line('web', m, l) });
+});
+// Server-side meter of a playing stream (for browsers that cannot analyse it, e.g. iOS Safari)
+app.get('/api/player/levels', (req, res) => {
+  const levels = playerLevels(req.query.k, Number(req.query.since) || 0);
+  if (!levels) return res.status(404).json({ error: 'No such stream' });
+  res.json({ levels });
 });
 
 app.get('/api/logs', (req, res) => {
