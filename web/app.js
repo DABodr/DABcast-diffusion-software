@@ -265,6 +265,21 @@ function streamDot(isActive, hasUri, isOnAir, isWarn = false) {
   return `<span class="${cls}" title="${title}"></span>`;
 }
 
+// ZMQ/EDI direct inputs have no local odr-audioenc (whose stderr feeds rt.audioLevels):
+// use the input peaks measured by odr-dabmux (dBFS, /api/mux/stats), mapped to the same
+// 0–6 bar scale as odr-audioenc's level() (2 dB per step, '!' clip from -1 dBFS).
+function dbToVuBar(db) {
+  if (!Number.isFinite(db) || db <= -90) return { n: 0, clip: false };
+  const vu = Math.floor(27 + db);
+  const idx = vu < 26 ? Math.max(Math.floor(vu / 2), 0) : Math.min(vu - 13, 13);
+  return { n: Math.min(Math.ceil(idx / 2), 6), clip: idx >= 13 };
+}
+function muxPeakLevels(inp) {
+  if (!inp || !Number.isFinite(inp.peakLeft)) return null;
+  const l = dbToVuBar(inp.peakLeft), r = dbToVuBar(inp.peakRight);
+  return { left: l.n, right: r.n, clipLeft: l.clip, clipRight: r.clip };
+}
+
 function vuMeter(audioLevels) {
   const l = audioLevels?.left ?? 0;
   const r = audioLevels?.right ?? 0;
@@ -580,7 +595,9 @@ function render() {
       ['col-port', `${svc.network.ediOutputTcp.port}`],
       ['col-main', streamDot(activeIsMain, Boolean(svc.input?.uri), on && svc.enabled !== false, isWarning && activeIsMain)],
       ['col-bkp', streamDot(activeIsBackup, Boolean(backupUri), false, isWarning && activeIsBackup)],
-      ['', vuMeter(STATE.muxRunning ? svc.runtime?.audioLevels : null)],
+      ['', vuMeter(!STATE.muxRunning ? null
+        : ['ZMQ', 'EDI'].includes(String(svc.input?.mode || '').toUpperCase()) ? muxPeakLevels(MUX_STATS?.inputs?.[svc.id])
+        : svc.runtime?.audioLevels)],
       ['muted', `<div class="dls-text" title="${esc(dlsPreview)}">${esc(dlsPreview)}</div>`],
       ['col-dlplus', svc.runtime?.dlplusActive ? '<span class="dlplus-icon" title="DL+ active">DL+</span>' : ''],
       ['muted sls-cell', ''],  // placeholder — image handled separately
