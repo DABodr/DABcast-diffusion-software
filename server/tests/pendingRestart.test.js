@@ -218,3 +218,58 @@ describe('service input port', () => {
     assert.throws(() => state.addService({ identity: { pi: 'FAF2', ps8: 'PORTB' }, network: { ediOutputTcp: { port: 9888 } } }), /already used/);
   });
 });
+
+describe('duplicate input ports', () => {
+  const mk = (presetMutator) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-dup-'));
+    fs.mkdirSync(path.join(dir, 'presets'), { recursive: true });
+    const p = JSON.parse(fs.readFileSync(demoPreset, 'utf8'));
+    if (presetMutator) presetMutator(p);
+    fs.writeFileSync(path.join(dir, 'presets', 'demo.json'), JSON.stringify(p));
+    const state = new AppState({
+      settings: structuredClone(DEFAULT_SETTINGS), dataDir: dir,
+      logger: { line() {} }, processManager: { isRunning: () => false },
+    });
+    return { dir, state };
+  };
+  const ports = (st) => st.preset.services.map((s) => s.network.ediOutputTcp.port);
+
+  it('an imported service whose port is taken gets a free port', () => {
+    const { dir, state } = mk();
+    const src = structuredClone(state.preset.services[0]);
+    src.id = 'FA01'; src.identity.pi = 'FA01'; src.identity.serviceIdHex = '0xFA01';
+    const svc = state.upsertService(src);
+    assert.notEqual(svc.network.ediOutputTcp.port, state.preset.services[0].network.ediOutputTcp.port);
+    assert.equal(new Set(ports(state)).size, state.preset.services.length);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('an imported service keeps its port when it is free', () => {
+    const { dir, state } = mk();
+    const src = structuredClone(state.preset.services[0]);
+    src.id = 'FA02'; src.identity.pi = 'FA02'; src.identity.serviceIdHex = '0xFA02'; src.network.ediOutputTcp.port = 9444;
+    assert.equal(state.upsertService(src).network.ediOutputTcp.port, 9444);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('repairs duplicates in a saved preset at load, keeping the first in mux order', () => {
+    let firstId, firstPort;
+    const { dir, state } = mk((p) => {
+      p.services.forEach((s, i) => { s.ui = { order: i + 1 }; });
+      firstId = p.services[0].id; firstPort = p.services[0].network.ediOutputTcp.port;
+      p.services[1].network.ediOutputTcp.port = firstPort;
+    });
+    assert.equal(new Set(ports(state)).size, state.preset.services.length);
+    assert.equal(state.preset.services.find((s) => s.id === firstId).network.ediOutputTcp.port, firstPort);
+    const saved = JSON.parse(fs.readFileSync(path.join(dir, 'presets', 'demo.json'), 'utf8'));
+    assert.equal(new Set(saved.services.map((s) => s.network.ediOutputTcp.port)).size, saved.services.length);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('leaves a preset without duplicates untouched', () => {
+    const { dir, state } = mk();
+    const before = JSON.parse(fs.readFileSync(demoPreset, 'utf8')).services.map((s) => s.network.ediOutputTcp.port);
+    assert.deepEqual(ports(state), before);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

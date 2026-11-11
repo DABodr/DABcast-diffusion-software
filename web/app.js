@@ -1156,8 +1156,12 @@ async function importService(file) {
     await api(`/api/services/${serviceId}`, { method: 'DELETE' });
   }
 
-  await api('/api/import/service', { method: 'POST', body: JSON.stringify(payload) });
+  const res = await api('/api/import/service', { method: 'POST', body: JSON.stringify(payload) });
   await refresh();
+  // Port already used here (e.g. service exported from another mux): the server assigned a free one
+  const wanted = payload?.service?.network?.ediOutputTcp?.port;
+  const got = res?.service?.network?.ediOutputTcp?.port;
+  return wanted && got && wanted !== got ? `${serviceName}: input port ${wanted} → ${got}` : null;
 }
 
 function logLineScope(line) {
@@ -2548,10 +2552,12 @@ fileImportService?.addEventListener('change', async (e) => {
   let imported = 0;
   let failed = 0;
   const errors = [];
+  const portNotes = [];
 
   for (const file of files) {
     try {
-      await importService(file);
+      const note = await importService(file);
+      if (note) portNotes.push(note);
       imported++;
     } catch (err) {
       failed++;
@@ -2562,7 +2568,8 @@ fileImportService?.addEventListener('change', async (e) => {
   e.target.value = '';
 
   // Show summary
-  const offNote = STATE?.muxRunning && imported ? '\n\nON AIR: imported services are OFF — press ON to put them on air.' : '';
+  const offNote = (STATE?.muxRunning && imported ? '\n\nON AIR: imported services are OFF — press ON to put them on air.' : '')
+    + (portNotes.length ? `\n\nInput port already used, a free one was assigned:\n${portNotes.join('\n')}` : '');
   if (failed === 0) {
     alert(`✓ ${imported} service(s) imported successfully!${offNote}`);
   } else if (imported === 0) {
