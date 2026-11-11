@@ -557,7 +557,7 @@ function render() {
       ['col-main', streamDot(activeIsMain, Boolean(svc.input?.uri), on, isWarning && activeIsMain)],
       ['col-bkp', streamDot(activeIsBackup, Boolean(backupUri), false, isWarning && activeIsBackup)],
       ['', vuMeter(STATE.muxRunning ? svc.runtime?.audioLevels : null)],
-      ['muted', esc(dlsPreview)],
+      ['muted', `<div class="dls-text" title="${esc(dlsPreview)}">${esc(dlsPreview)}</div>`],
       ['col-dlplus', svc.runtime?.dlplusActive ? '<span class="dlplus-icon" title="DL+ active">DL+</span>' : ''],
       ['muted sls-cell', ''],  // placeholder — image handled separately
       ['row-actions col-actions', `<button class="btn btn-mini" data-act="edit" data-id="${svc.id}">Edit</button><button class="btn btn-mini" data-act="del" data-id="${svc.id}">Del</button>`],
@@ -1859,8 +1859,18 @@ $('#ioMenu')?.addEventListener('click', (e) => { if (e.target.closest('.menu-lis
 document.addEventListener('click', (e) => { const m = $('#ioMenu'); if (m?.open && !m.contains(e.target)) m.open = false; });
 if ($('#svcSort')) $('#svcSort').value = VIEW.sort;
 $('#svcSort')?.addEventListener('change', (e) => { VIEW.sort = e.target.value; saveView(); render(); });
-$('#btnCompact')?.classList.toggle('active', VIEW.compact);
-$('#btnCompact')?.addEventListener('click', (e) => { VIEW.compact = !VIEW.compact; e.currentTarget.classList.toggle('active', VIEW.compact); saveView(); render(); });
+function syncViewButtons() {
+  document.querySelectorAll('.seg-btn[data-view]').forEach((b) => {
+    const on = (b.dataset.view === 'compact') === VIEW.compact;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+}
+syncViewButtons();
+document.querySelectorAll('.seg-btn[data-view]').forEach((b) => b.addEventListener('click', () => {
+  VIEW.compact = b.dataset.view === 'compact';
+  syncViewButtons(); saveView(); render();
+}));
 
 document.querySelectorAll('.logs-tabs .tab').forEach((btn) => {
   btn.addEventListener('click', () => {

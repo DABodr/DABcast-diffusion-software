@@ -598,7 +598,13 @@ input, select { background: var(--surface2); border-radius: 6px; padding: 8px 10
 .svc-sort select { padding: 5px 8px; font-size: 12px; }
 .svc-toolbar-hint { font-size: 11px; }
 .btn.active { background: var(--surface3); color: var(--text); }
-.table.compact td { padding: 3px 10px; }
+.table.compact td { padding: 3px 10px; white-space: nowrap; }
+.table.compact .dls-text { max-width: 22vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg-btn { background: transparent; border: none; color: var(--muted); padding: 5px 11px; font-size: 12px; font-weight: 500; cursor: pointer; font-family: inherit; }
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn:hover { background: var(--surface2); color: var(--text); }
+.seg-btn.active { background: var(--surface3); color: var(--text); font-weight: 600; }
 .table.compact td .ps + .muted { display: none; }
 .table.compact .sls-thumb { height: 22px; width: 32px; }
 /* v1.4 coherence pass */

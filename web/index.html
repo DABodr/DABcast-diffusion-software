@@ -82,7 +82,10 @@
             <option value="port">Port</option>
           </select>
         </label>
-        <button id="btnCompact" class="btn btn-mini" type="button" title="Compact / normal view">Compact</button>
+        <div class="seg" role="group" aria-label="Table view">
+          <button type="button" class="seg-btn" data-view="full" title="Full view: all details, long texts wrap">Full</button>
+          <button type="button" class="seg-btn" data-view="compact" title="Compact view: one line per service, long texts truncated">Compact</button>
+        </div>
         <span class="muted svc-toolbar-hint" id="svcViewHint"></span>
       </div>
 
