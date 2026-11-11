@@ -392,7 +392,7 @@ function renderStats(cap) {
     card('Services', `${enabled.length}`, `enabled / ${all.length}`),
     card('Encoders', STATE.muxRunning ? `${running}` : '—', STATE.muxRunning ? `running / ${enabled.length}` : 'off air', STATE.muxRunning && running === enabled.length ? 'cap-ok' : ''),
     card('Mux inputs', bufInputs.length ? `${bufOk} / ${bufInputs.length}` : '—',
-      bufInputs.length ? `streaming · ${bufUnstable} glitching · ${bufBad} no audio` : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
+      bufInputs.length ? `healthy · ${bufUnstable} glitching · ${bufBad} no audio` : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
       bufInputs.length ? (bufBad ? 'cap-bad' : bufUnstable ? 'cap-warn' : 'cap-ok') : ''),
     card('Metadata', STATE.muxRunning ? `${dls} · ${sls}` : '—', 'DLS · SLS active'),
     card('Alarms', `${alarms}`, alarms ? `${warn} warning · ${err} error · ${bufBad} mux input` : 'none', alarms ? (err ? 'cap-bad' : 'cap-warn') : 'cap-ok'),
@@ -832,7 +832,7 @@ function openDialogFor(service) {
   if ($('#f_codec').value === 'HE-AAC v2 (PS)') {
     chSel.value = '2';
     chSel.disabled = true;
-  } else if (!locked) {
+  } else if (!locked || editingId) {
     chSel.disabled = false;
   }
 
