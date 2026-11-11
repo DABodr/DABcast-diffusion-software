@@ -16,7 +16,7 @@ let activeLogTab = 'all';
 let STATE = null;
 let editingId = null;
 // Fields the server only accepts while the mux is stopped. Editing them ON AIR = Stop → save → Start.
-const MUX_RESTART_FIELDS = ['f_pi','f_ps8','f_ps16','f_bitrate','f_prot','f_sr','f_zbuf','f_zpre','f_codec','f_lang','f_pty','f_ch','f_padsize'];
+const MUX_RESTART_FIELDS = ['f_pi','f_ps8','f_ps16','f_bitrate','f_prot','f_sr','f_zbuf','f_zpre','f_codec','f_lang','f_pty','f_ch','f_padsize','f_direct_port'];
 let restartSnapshot = null;   // field values when the edit dialog opened ON AIR (null otherwise)
 const restartFieldValues = () => MUX_RESTART_FIELDS.map((id) => document.getElementById(id)?.value ?? '');
 const restartFieldsChanged = () => Boolean(restartSnapshot && STATE?.muxRunning
@@ -263,6 +263,21 @@ function streamDot(isActive, hasUri, isOnAir, isWarn = false) {
   const cls = isActive ? (isWarn ? 'dot warn' : 'dot ok') : (isOnAir ? 'dot err' : 'dot');
   const title = isActive ? (isWarn ? 'Instable' : 'En lecture') : (isOnAir ? 'Hors ligne' : 'En attente');
   return `<span class="${cls}" title="${title}"></span>`;
+}
+
+// ZMQ/EDI direct inputs have no local odr-audioenc (whose stderr feeds rt.audioLevels):
+// use the input peaks measured by odr-dabmux (dBFS, /api/mux/stats), mapped to the same
+// 0–6 bar scale as odr-audioenc's level() (2 dB per step, '!' clip from -1 dBFS).
+function dbToVuBar(db) {
+  if (!Number.isFinite(db) || db <= -90) return { n: 0, clip: false };
+  const vu = Math.floor(27 + db);
+  const idx = vu < 26 ? Math.max(Math.floor(vu / 2), 0) : Math.min(vu - 13, 13);
+  return { n: Math.min(Math.ceil(idx / 2), 6), clip: idx >= 13 };
+}
+function muxPeakLevels(inp) {
+  if (!inp || !Number.isFinite(inp.peakLeft)) return null;
+  const l = dbToVuBar(inp.peakLeft), r = dbToVuBar(inp.peakRight);
+  return { left: l.n, right: r.n, clipLeft: l.clip, clipRight: r.clip };
 }
 
 function vuMeter(audioLevels) {
@@ -580,7 +595,9 @@ function render() {
       ['col-port', `${svc.network.ediOutputTcp.port}`],
       ['col-main', streamDot(activeIsMain, Boolean(svc.input?.uri), on && svc.enabled !== false, isWarning && activeIsMain)],
       ['col-bkp', streamDot(activeIsBackup, Boolean(backupUri), false, isWarning && activeIsBackup)],
-      ['', vuMeter(STATE.muxRunning ? svc.runtime?.audioLevels : null)],
+      ['', vuMeter(!STATE.muxRunning ? null
+        : ['ZMQ', 'EDI'].includes(String(svc.input?.mode || '').toUpperCase()) ? muxPeakLevels(MUX_STATS?.inputs?.[svc.id])
+        : svc.runtime?.audioLevels)],
       ['muted', `<div class="dls-text" title="${esc(dlsPreview)}">${esc(dlsPreview)}</div>`],
       ['col-dlplus', svc.runtime?.dlplusActive ? '<span class="dlplus-icon" title="DL+ active">DL+</span>' : ''],
       ['muted sls-cell', ''],  // placeholder — image handled separately
@@ -2383,6 +2400,24 @@ $('#svcForm').addEventListener('submit', async (e) => {
       enabled: $('#f_dlplus_enabled').value !== 'no'
     }
   };
+
+  // ZMQ/EDI direct: input port chosen by the user (empty on a new service = automatic)
+  if (['ZMQ', 'EDI'].includes($('#f_src').value)) {
+    const rawPort = String($('#f_direct_port').value || '').trim();
+    if (rawPort) {
+      const port = Number(rawPort);
+      if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+        showServiceError('Input port must be a number between 1024 and 65535.');
+        return;
+      }
+      const other = STATE.preset.services.find((s) => s.id !== editingId && s.network?.ediOutputTcp?.port === port);
+      if (other) {
+        showServiceError(`Port ${port} is already used by ${other.identity?.ps8 || other.id}.`);
+        return;
+      }
+      payload.network = { ediOutputTcp: { port } };
+    }
+  }
 
   const needMuxRestart = Boolean(editingId && restartFieldsChanged());
   if (needMuxRestart) {

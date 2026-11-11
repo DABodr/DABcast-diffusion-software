@@ -519,6 +519,11 @@ export class AppState {
         if (Number.isInteger(patch.input.zmqPrebuffering)) next.input.zmqPrebuffering = patch.input.zmqPrebuffering;
       }
 
+      // Mux input port (written to the .mux; for ZMQ/EDI direct it is the port the external encoder sends to)
+      if (patch.network?.ediOutputTcp?.port != null) {
+        const port = this._checkInputPort(patch.network.ediOutputTcp.port, existing.id);
+        next.network = { ...next.network, ediOutputTcp: { ...next.network?.ediOutputTcp, port } };
+      }
     }
 
     const { errors, warnings, normalized } = validateService(next, ALLOWED_BITRATES_KBPS);
@@ -667,7 +672,7 @@ export class AppState {
       network: {
         ediOutputTcp: {
           host: '127.0.0.1',
-          port: Number.isInteger(svc.network?.ediOutputTcp?.port) ? svc.network.ediOutputTcp.port : this._pickFreePort()
+          port: svc.network?.ediOutputTcp?.port != null ? this._checkInputPort(svc.network.ediOutputTcp.port) : this._pickFreePort()
         }
       },
       watchdog: {
@@ -780,6 +785,17 @@ export class AppState {
     this.preset.services = reordered;
     this._savePreset();
     this.logger.line('preset', `services reordered: ${orderedIds.join(', ')}`);
+  }
+
+  // Validate a service mux input port: integer 1024–65535, not used by another service.
+  _checkInputPort(value, exceptId = null) {
+    const port = Number(value);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+      throw new Error(`Invalid input port: ${value} (1024–65535)`);
+    }
+    const other = this.preset.services.find((s) => s.id !== exceptId && s.network?.ediOutputTcp?.port === port);
+    if (other) throw new Error(`Port ${port} is already used by ${other.identity?.ps8 || other.id}`);
+    return port;
   }
 
   _pickFreePort() {

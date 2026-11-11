@@ -378,8 +378,8 @@
 
           <!-- Direct input info (ZMQ / EDI): port + bitrate + protection -->
           <label id="f_direct_port_row" style="display:none;">
-            <span>Input port (non-modifiable)</span>
-            <input id="f_direct_port" type="text" readonly style="background:var(--surface2);cursor:default;font-family:monospace;" />
+            <span>Input port (external encoder sends here)</span>
+            <input id="f_direct_port" type="number" min="1024" max="65535" placeholder="auto" style="font-family:monospace;" />
           </label>
           <label id="f_direct_bitrate_row" style="display:none;">
             <span>Bitrate (kbps)</span>
