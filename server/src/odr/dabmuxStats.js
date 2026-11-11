@@ -130,6 +130,8 @@ export function normalizeValues(valuesJson, subToService) {
       overruns: s.num_overruns,
       peakLeft: s.peak_left,         // dBFS
       peakRight: s.peak_right,
+      peakLeftSlow: s.peak_left_slow,    // dBFS, peak over a longer window (catches the real maximum)
+      peakRightSlow: s.peak_right_slow,
     };
   }
   return out;

@@ -100,13 +100,16 @@ describe('dabmuxStats — queryDabmux', () => {
 describe('dabmuxStats — normalizeValues', () => {
   it('maps sub_N to service ids and strips the state code', () => {
     const v = { values: {
-      sub_1: { inputstat: { state: 'Streaming (3)', min_fill: 10, max_fill: 20, num_underruns: 1, num_overruns: 0, peak_left: -5, peak_right: -6 } },
+      sub_1: { inputstat: { state: 'Streaming (3)', min_fill: 10, max_fill: 20, num_underruns: 1, num_overruns: 0, peak_left: -5, peak_right: -6, peak_left_slow: -1, peak_right_slow: -2 } },
       sub_2: { inputstat: { state: 'NoData (1)' } },
     } };
     const out = normalizeValues(v, { sub_1: { id: '0xF201', name: 'RADIO1' } });
     assert.equal(out['0xF201'].state, 'Streaming');
     assert.equal(out['0xF201'].name, 'RADIO1');
     assert.equal(out['0xF201'].underruns, 1);
+    assert.equal(out['0xF201'].peakLeft, -5);
+    assert.equal(out['0xF201'].peakLeftSlow, -1);
+    assert.equal(out['0xF201'].peakRightSlow, -2);
     assert.equal(out.sub_2.state, 'NoData');
   });
 
