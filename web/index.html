@@ -82,7 +82,10 @@
             <option value="port">Port</option>
           </select>
         </label>
-        <button id="btnCompact" class="btn btn-mini" type="button" title="Compact / normal view">Compact</button>
+        <div class="seg" role="group" aria-label="Table view">
+          <button type="button" class="seg-btn" data-view="full" title="Full view: all details, long texts wrap">Full</button>
+          <button type="button" class="seg-btn" data-view="compact" title="Compact view: one line per service, long texts truncated">Compact</button>
+        </div>
         <span class="muted svc-toolbar-hint" id="svcViewHint"></span>
       </div>
 
@@ -129,6 +132,7 @@
         <button class="icon" value="cancel" aria-label="Close">✕</button>
       </div>
       <div class="alert hidden" id="svcError"></div>
+      <div class="alert alert-warn hidden" id="dlgRestartWarn">⚠ These changes require a multiplex restart: on save, ALL services go off air for a few seconds.</div>
 
       <div class="tabs" role="tablist" aria-label="Service tabs">
         <button type="button" class="tab active" data-tab="general">General</button>

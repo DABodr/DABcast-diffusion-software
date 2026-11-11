@@ -15,6 +15,15 @@ let activeLogTab = 'all';
 
 let STATE = null;
 let editingId = null;
+// Fields the server only accepts while the mux is stopped. Editing them ON AIR = Stop → save → Start.
+const MUX_RESTART_FIELDS = ['f_pi','f_ps8','f_ps16','f_bitrate','f_prot','f_sr','f_zbuf','f_zpre','f_codec','f_lang','f_pty','f_ch','f_padsize'];
+let restartSnapshot = null;   // field values when the edit dialog opened ON AIR (null otherwise)
+const restartFieldValues = () => MUX_RESTART_FIELDS.map((id) => document.getElementById(id)?.value ?? '');
+const restartFieldsChanged = () => Boolean(restartSnapshot && STATE?.muxRunning
+  && restartFieldValues().some((v, i) => v !== restartSnapshot[i]));
+function updateRestartWarn() {
+  document.getElementById('dlgRestartWarn')?.classList.toggle('hidden', !restartFieldsChanged());
+}
 let selectedServiceId = null;  // Track selected service for export
 let logoManagingServiceId = null;  // Track service for logo management
 let LOGS_TEXT = '';
@@ -42,6 +51,14 @@ function bufTag(inp, always = false) {
   const note = inp.state === 'Unstable' && !inp.recentGlitch ? ' (past glitches, no new underruns in the last minute)' : '';
   const tip = `Mux input: ${inp.state}${note} · fill ${inp.minFill}–${inp.maxFill} · underruns ${inp.underruns}${d} · overruns ${inp.overruns} · peak ${inp.peakLeft}/${inp.peakRight} dBFS`;
   return `<span class="buf-tag ${cls}" title="${esc(tip)}">${label}${d ? ' ▲' : ''}</span>`;
+}
+// ON AIR edits saved but not yet applied (rt.pendingRestart from setService)
+const PENDING_LABELS = { gainDb: 'audio gain', encoderBufferMs: 'encoder buffer', channels: 'channels', pty: 'PTY', languageHex: 'language', enabled: 'enabled' };
+function pendingTag(rt) {
+  const keys = rt?.pendingRestart;
+  if (!keys?.length) return '';
+  const tip = `Saved, not applied yet: ${keys.map((k) => PENDING_LABELS[k] || k).join(', ')} — takes effect at the next mux Start (or when this encoder restarts)`;
+  return `<span class="buf-tag pend" title="${esc(tip)}">PENDING</span>`;
 }
 function maybeFetchMuxStats() {
   if (!STATE?.muxRunning) { MUX_STATS = null; return; }
@@ -361,7 +378,8 @@ function renderStats(cap) {
     ? `${esc(block)} · ${((DAB_FREQ_TABLE[block] || 0) / 1e6).toFixed(3)} MHz`
     : `TX: ${esc(tx)}`;
   const bufInputs = STATE.muxRunning && MUX_STATS?.inputs ? Object.values(MUX_STATS.inputs) : [];
-  const bufOk = bufInputs.filter((i) => i.state === 'Streaming').length;
+  // healthy = Streaming, or Unstable with no new underrun in the last minute (dabmux keeps "Unstable" long after start-up)
+  const bufOk = bufInputs.filter((i) => i.state === 'Streaming' || (i.state === 'Unstable' && !i.recentGlitch)).length;
   const bufBad = bufInputs.filter((i) => i.state === 'NoData' || i.state === 'Silence').length;
   const bufUnstable = bufInputs.filter((i) => i.state === 'Unstable' && i.recentGlitch).length;
   const alarms = warn + err + bufBad;
@@ -374,7 +392,7 @@ function renderStats(cap) {
     card('Services', `${enabled.length}`, `enabled / ${all.length}`),
     card('Encoders', STATE.muxRunning ? `${running}` : '—', STATE.muxRunning ? `running / ${enabled.length}` : 'off air', STATE.muxRunning && running === enabled.length ? 'cap-ok' : ''),
     card('Mux inputs', bufInputs.length ? `${bufOk} / ${bufInputs.length}` : '—',
-      bufInputs.length ? `streaming · ${bufUnstable} glitching · ${bufBad} no audio` : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
+      bufInputs.length ? `healthy · ${bufUnstable} glitching · ${bufBad} no audio` : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
       bufInputs.length ? (bufBad ? 'cap-bad' : bufUnstable ? 'cap-warn' : 'cap-ok') : ''),
     card('Metadata', STATE.muxRunning ? `${dls} · ${sls}` : '—', 'DLS · SLS active'),
     card('Alarms', `${alarms}`, alarms ? `${warn} warning · ${err} error · ${bufBad} mux input` : 'none', alarms ? (err ? 'cap-bad' : 'cap-warn') : 'cap-ok'),
@@ -544,7 +562,7 @@ function render() {
 
     // Cell definitions: [cssClass, innerHTML]
     const cells = [
-      ['', badge(status) + (STATE.muxRunning ? bufTag(MUX_STATS?.inputs?.[svc.id]) : '')],
+      ['', badge(status) + (STATE.muxRunning ? bufTag(MUX_STATS?.inputs?.[svc.id]) + pendingTag(svc.runtime) : '')],
       ['', `<div class="ps"${ps8Title ? ` title="${esc(ps8Title)}"` : ''}>${esc(ps8)}</div><div class="muted">${esc(ps16)}</div>`],
       ['col-pid hide-mobile', esc(svc.id)],
       ['col-bitrate', `${svc.dab.bitrateKbps} kbps`],
@@ -557,7 +575,7 @@ function render() {
       ['col-main', streamDot(activeIsMain, Boolean(svc.input?.uri), on, isWarning && activeIsMain)],
       ['col-bkp', streamDot(activeIsBackup, Boolean(backupUri), false, isWarning && activeIsBackup)],
       ['', vuMeter(STATE.muxRunning ? svc.runtime?.audioLevels : null)],
-      ['muted', esc(dlsPreview)],
+      ['muted', `<div class="dls-text" title="${esc(dlsPreview)}">${esc(dlsPreview)}</div>`],
       ['col-dlplus', svc.runtime?.dlplusActive ? '<span class="dlplus-icon" title="DL+ active">DL+</span>' : ''],
       ['muted sls-cell', ''],  // placeholder — image handled separately
       ['row-actions col-actions', `<button class="btn btn-mini" data-act="edit" data-id="${svc.id}">Edit</button><button class="btn btn-mini" data-act="del" data-id="${svc.id}">Del</button>`],
@@ -784,7 +802,7 @@ function openDialogFor(service) {
   showServiceError('');
 
   $('#dlgTitle').textContent = editingId ? `Edit: ${service?.identity?.ps8}` : 'Add service';
-  $('#dlgLockHint').textContent = locked ? 'ON AIR: identity/bitrate/protection locked' : '';
+  $('#dlgLockHint').textContent = locked ? 'ON AIR: changing identity, bitrate, protection or audio format restarts the whole multiplex on save · audio gain and encoder buffer alone apply at the next mux Start' : '';
 
   // --- General tab ---
   $('#f_pi').value = (service?.identity?.pi || '').replace(/^0x/i, '');
@@ -814,7 +832,7 @@ function openDialogFor(service) {
   if ($('#f_codec').value === 'HE-AAC v2 (PS)') {
     chSel.value = '2';
     chSel.disabled = true;
-  } else if (!locked) {
+  } else if (!locked || editingId) {
     chSel.disabled = false;
   }
 
@@ -894,11 +912,13 @@ function openDialogFor(service) {
     }
   }
 
-  // lock fields when ON AIR (identity + dab + audio encoding params)
-  ['f_pi','f_ps8','f_ps16','f_bitrate','f_prot','f_sr','f_zbuf','f_zpre','f_codec','f_lang','f_pty','f_ch','f_padsize'].forEach((id) => {
+  // ON AIR: these fields stay editable for an existing service; saving a change restarts the mux
+  MUX_RESTART_FIELDS.forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.disabled = locked;
+    if (el) el.disabled = (locked && !editingId) || (id === 'f_ch' && $('#f_codec').value === 'HE-AAC v2 (PS)');
   });
+  restartSnapshot = locked && editingId ? restartFieldValues() : null;
+  updateRestartWarn();
 
   // reset tabs
   setActiveTab('general');
@@ -1859,8 +1879,18 @@ $('#ioMenu')?.addEventListener('click', (e) => { if (e.target.closest('.menu-lis
 document.addEventListener('click', (e) => { const m = $('#ioMenu'); if (m?.open && !m.contains(e.target)) m.open = false; });
 if ($('#svcSort')) $('#svcSort').value = VIEW.sort;
 $('#svcSort')?.addEventListener('change', (e) => { VIEW.sort = e.target.value; saveView(); render(); });
-$('#btnCompact')?.classList.toggle('active', VIEW.compact);
-$('#btnCompact')?.addEventListener('click', (e) => { VIEW.compact = !VIEW.compact; e.currentTarget.classList.toggle('active', VIEW.compact); saveView(); render(); });
+function syncViewButtons() {
+  document.querySelectorAll('.seg-btn[data-view]').forEach((b) => {
+    const on = (b.dataset.view === 'compact') === VIEW.compact;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
+  });
+}
+syncViewButtons();
+document.querySelectorAll('.seg-btn[data-view]').forEach((b) => b.addEventListener('click', () => {
+  VIEW.compact = b.dataset.view === 'compact';
+  syncViewButtons(); saveView(); render();
+}));
 
 document.querySelectorAll('.logs-tabs .tab').forEach((btn) => {
   btn.addEventListener('click', () => {
@@ -1901,6 +1931,10 @@ $('#btnClearLogs')?.addEventListener('click', async () => {
 $('#f_src')?.addEventListener('change', updateSourceVisibility);
 
 // Sync direct-mode bitrate/prot selects → canonical selects (submit always reads f_bitrate/f_prot)
+// Live "mux restart required" banner (bubbling: runs after field-specific handlers such as direct→f_bitrate sync)
+$('#svcForm')?.addEventListener('input', updateRestartWarn);
+$('#svcForm')?.addEventListener('change', updateRestartWarn);
+
 $('#f_direct_bitrate')?.addEventListener('change', () => {
   const el = $('#f_bitrate');
   if (el) el.value = $('#f_direct_bitrate').value;
@@ -1918,7 +1952,7 @@ $('#f_codec')?.addEventListener('change', () => {
   if (codec === 'HE-AAC v2 (PS)') {
     chSel.value = '2';
     chSel.disabled = true;
-  } else if (!STATE?.muxRunning) {
+  } else if (!STATE?.muxRunning || editingId) {
     chSel.disabled = false;
   }
 });
@@ -2256,8 +2290,38 @@ $('#svcForm').addEventListener('submit', async (e) => {
     }
   };
 
+  const needMuxRestart = Boolean(editingId && restartFieldsChanged());
+  if (needMuxRestart) {
+    // Refuse before stopping anything if the new bitrate/protection would not fit (Start would fail)
+    const cur = STATE.preset.services.find((s) => s.id === editingId);
+    const cap = STATE.preset.capacity || { totalCu: 0, maxCu: 864 };
+    const newTotal = cap.totalCu + (cur?.enabled ? estimateCu(payload.dab.bitrateKbps, payload.dab.protectionLevel, payload.dab.eepMode) - (cur.cu ?? 0) : 0);
+    if (newTotal > cap.maxCu) {
+      showServiceError(`Capacity exceeded: ${newTotal}/${cap.maxCu} CU — the multiplex could not restart.`);
+      return;
+    }
+    if (!confirm('These changes require restarting the multiplex.\nALL services go off air for a few seconds.\n\nApply and restart now?')) return;
+  }
+
   try {
-    if (editingId) {
+    if (needMuxRestart) {
+      await api('/api/mux/stop', { method: 'POST', body: '{}' });
+      let saveErr = null;
+      try {
+        await api(`/api/services/${editingId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+      } catch (err) { saveErr = err; }
+      if (!saveErr) dlg.close();
+      try {
+        await api('/api/mux/start', { method: 'POST', body: '{}' });
+      } catch (err) {
+        await refresh();
+        throw new Error(`Multiplex restart FAILED — press Start: ${err.message || err}${saveErr ? ` (changes not saved: ${saveErr.message})` : ''}`);
+      }
+      if (saveErr) {
+        await refresh();
+        throw new Error(`Changes not saved, multiplex restarted with the previous settings: ${saveErr.message || saveErr}`);
+      }
+    } else if (editingId) {
       await api(`/api/services/${editingId}`, { method: 'PATCH', body: JSON.stringify(payload) });
     } else {
       await api('/api/services', { method: 'POST', body: JSON.stringify(payload) });
