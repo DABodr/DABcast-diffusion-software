@@ -38,11 +38,19 @@ let MUX_STATS = null;
 let _muxStatsAt = 0;
 const _bufLastGlitchAt = new Map();  // service id -> last time dabmux underruns increased
 const BUF_GLITCH_WINDOW_MS = 30000;
+// First minute after mux Start: buffers fill up and dabmux reports start-up underruns / NoData.
+// Show a neutral STARTING tag and raise no warning or alarm during this window.
+const BUF_STARTUP_MS = 60000;
+const muxStartingUp = () => Boolean(STATE?.muxRunning && STATE.muxSinceMs && Date.now() - STATE.muxSinceMs < BUF_STARTUP_MS);
 const BUF_STATES = {
   Streaming: ['ok', 'BUF OK'], Unstable: ['warn', 'UNSTABLE'], Silence: ['warn', 'SILENCE'], NoData: ['err', 'NO DATA'],
 };
 function bufTag(inp, always = false) {
   if (!inp) return '';
+  if (muxStartingUp() && inp.state !== 'Streaming') {
+    const tip = `Mux started less than ${BUF_STARTUP_MS / 1000} s ago: buffers are filling up, start-up underruns are normal (dabmux: ${inp.state})`;
+    return `<span class="buf-tag pend" title="${esc(tip)}">STARTING</span>`;
+  }
   let [cls, label] = BUF_STATES[inp.state] || ['', String(inp.state || '?').toUpperCase()];
   // dabmux keeps "Unstable" for minutes after old glitches (e.g. start-up prebuffering):
   // with no new underrun in BUF_GLITCH_WINDOW_MS the input is healthy → show it as BUF OK
@@ -69,7 +77,7 @@ function maybeFetchMuxStats() {
     const prev = MUX_STATS?.inputs || {};
     for (const [id, inp] of Object.entries(st.inputs || {})) {
       if (prev[id] && Number.isFinite(inp.underruns)) inp.underrunsDelta = inp.underruns - prev[id].underruns;
-      if (inp.underrunsDelta > 0) _bufLastGlitchAt.set(id, Date.now());
+      if (inp.underrunsDelta > 0 && !muxStartingUp()) _bufLastGlitchAt.set(id, Date.now());   // start-up underruns are expected
       inp.recentGlitch = Date.now() - (_bufLastGlitchAt.get(id) || 0) < BUF_GLITCH_WINDOW_MS;
     }
     MUX_STATS = st;
@@ -399,8 +407,9 @@ function renderStats(cap) {
   const bufInputs = STATE.muxRunning && MUX_STATS?.inputs ? Object.values(MUX_STATS.inputs) : [];
   // healthy = Streaming, or Unstable with no recent underrun (dabmux keeps "Unstable" long after start-up)
   const bufOk = bufInputs.filter((i) => i.state === 'Streaming' || (i.state === 'Unstable' && !i.recentGlitch)).length;
-  const bufBad = bufInputs.filter((i) => i.state === 'NoData' || i.state === 'Silence').length;
-  const bufUnstable = bufInputs.filter((i) => i.state === 'Unstable' && i.recentGlitch).length;
+  const bufStarting = muxStartingUp();
+  const bufBad = bufStarting ? 0 : bufInputs.filter((i) => i.state === 'NoData' || i.state === 'Silence').length;
+  const bufUnstable = bufStarting ? 0 : bufInputs.filter((i) => i.state === 'Unstable' && i.recentGlitch).length;
   const alarms = warn + err + bufBad;
   const card = (title, val, sub, valCls = '', tip = '') =>
     `<div class="stat-card"${tip ? ` title="${esc(tip)}"` : ''}><div class="stat-title">${title}</div><div class="stat-val ${valCls}">${val}</div><div class="stat-sub">${sub}</div></div>`;
@@ -411,8 +420,8 @@ function renderStats(cap) {
     card('Services', `${enabled.length}`, `enabled / ${all.length}`),
     card('Encoders', STATE.muxRunning ? `${running}` : '—', STATE.muxRunning ? `running / ${enabled.length}` : 'off air', STATE.muxRunning && running === enabled.length ? 'cap-ok' : ''),
     card('Mux inputs', bufInputs.length ? `${bufOk} / ${bufInputs.length}` : '—',
-      bufInputs.length ? `healthy · ${bufUnstable} glitching · ${bufBad} no audio` : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
-      bufInputs.length ? (bufBad ? 'cap-bad' : bufUnstable ? 'cap-warn' : 'cap-ok') : ''),
+      bufInputs.length ? (bufStarting ? 'starting · buffers filling' : `healthy · ${bufUnstable} glitching · ${bufBad} no audio`) : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
+      bufInputs.length ? (bufStarting ? '' : bufBad ? 'cap-bad' : bufUnstable ? 'cap-warn' : 'cap-ok') : ''),
     card('Metadata', STATE.muxRunning ? `${dls} / ${dlsBase.length}` : '—',
       STATE.muxRunning ? `DLS text · ${sls} cover art` : 'off air', STATE.muxRunning && dls === dlsBase.length ? 'cap-ok' : '',
       'DLS: enabled services currently sending a text (now playing or default text); ZMQ/EDI direct services send their own DLS and are not counted. Cover art: services currently sending a dynamic image (album cover from JSON/XML or SLS URL) — static logos are not counted.'),
