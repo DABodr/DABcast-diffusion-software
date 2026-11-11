@@ -892,8 +892,9 @@ app.get('/api/mux/stats', async (req, res) => {
   // Read fields directly: getState() would consume lastError meant for /api/state.
   if (!state.muxRunning) return res.json({ running: false });
 
-  // sub_N numbering must match muxBuilder: ALL services (enabled or not), sorted by ui.order ?? 0
+  // sub_N numbering must match muxBuilder: services not explicitly disabled, sorted by ui.order ?? 0
   const sorted = [...(state.preset?.services || [])]
+    .filter((s) => s.enabled !== false)
     .sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
   const serviceMap = {};
   sorted.forEach((svc, idx) => {

@@ -624,6 +624,10 @@ input, select { background: var(--surface2); border-radius: 6px; padding: 8px 10
 .menu-sep { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
 .table td.row-actions { display: table-cell; text-align: right; white-space: nowrap; }
 .table td.row-actions .btn { padding: 4px 9px; font-size: 11.5px; margin-left: 4px; }
+.table td.row-actions .svc-toggle { min-width: 38px; padding: 4px 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; }
+.svc-toggle.on { background: rgba(46,204,113,.14); border-color: rgba(46,204,113,.45); color: var(--green); }
+.svc-toggle.off { background: var(--surface3); color: var(--muted); }
+.table tr.svc-off td:not(.row-actions) { opacity: .45; }
 .table tbody tr[data-service-id] { cursor: default; }
 .modal-body .muted, .modal-body small.muted { font-size: 12px; }
 .logs-filters label { flex-direction: row; }

@@ -140,4 +140,24 @@ describe('buildMuxConfig', () => {
     const mux = buildMuxConfig(cfg);
     assert.ok(mux.includes('inputuri "tcp://127.0.0.1:9001"'));
   });
+  it("leaves explicitly disabled services out of the mux and renumbers sub_N", () => {
+    const cfg = makeConfig();
+    const base = cfg.preset.services[0];
+    cfg.preset.services = [
+      { ...base, enabled: false, ui: { order: 0 }, identity: { ...base.identity, ps8: "OFFSTA", serviceIdHex: "0xF401" }, network: { ediOutputTcp: { port: 9001 } } },
+      { ...base, enabled: true, ui: { order: 1 }, identity: { ...base.identity, ps8: "ONSTA", serviceIdHex: "0xF402" }, network: { ediOutputTcp: { port: 9002 } } },
+    ];
+    const mux = buildMuxConfig(cfg);
+    assert.ok(!mux.includes("OFFSTA"));
+    assert.ok(!mux.includes("0xF401"));
+    assert.ok(!mux.includes("127.0.0.1:9001"));
+    assert.ok(mux.includes("ONSTA"));
+    assert.ok(mux.includes("sub_1"));
+    assert.ok(!mux.includes("sub_2"));
+  });
+
+  it("keeps services without an enabled field (backward compatible)", () => {
+    const mux = buildMuxConfig(makeConfig());
+    assert.ok(mux.includes("RADIO1"));
+  });
 });
