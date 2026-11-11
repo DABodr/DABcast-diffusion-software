@@ -1194,9 +1194,23 @@ function normalizeHex(raw, expectedLen) {
   return hex;
 }
 
+// Multiplex settings read by odr-dabmux/dabmod at start. Editing them ON AIR = Stop → save → Start.
+const MUX_DLG_RESTART_FIELDS = ['m_ens_id','m_ecc','m_label','m_short','m_txmode','m_easydab_ip','m_easydab_port','m_edi_port','m_edi_pft','m_edi_fec','m_edi_tist_offset','m_mgmt','m_telnet',
+  'm_hackrf_block','m_hackrf_txgain','m_hackrf_maxframes','m_hackrf_gainmode','m_hackrf_diggain','m_hackrf_rate'];
+let muxRestartSnapshot = null;  // field values when the Multiplex dialog opened ON AIR (null otherwise)
+const muxDlgFieldValues = () => MUX_DLG_RESTART_FIELDS.map((id) => {
+  const el = document.getElementById(id);
+  return !el ? '' : el.type === 'checkbox' ? String(el.checked) : el.value;
+});
+const muxDlgFieldsChanged = () => Boolean(muxRestartSnapshot && STATE?.muxRunning
+  && muxDlgFieldValues().some((v, i) => v !== muxRestartSnapshot[i]));
+function updateMuxRestartWarn() {
+  document.getElementById('muxRestartWarn')?.classList.toggle('hidden', !muxDlgFieldsChanged());
+}
+
 function openMuxDialog() {
   const locked = STATE.muxRunning;
-  $('#muxLockHint').textContent = locked ? 'ON AIR: some fields are locked' : '';
+  $('#muxLockHint').textContent = locked ? 'ON AIR: changing ensemble or output settings restarts the multiplex on save' : '';
   showMuxError('');
 
   // ensemble (afficher sans préfixe 0x)
@@ -1237,13 +1251,13 @@ function openMuxDialog() {
   $('#m_hackrf_diggain').value = hackrf.digitalGain ?? 1;
   $('#m_hackrf_rate').value = String(hackrf.rate || 4096000);
 
-  // lock key fields when ON AIR
-  ['m_ens_id','m_ecc','m_label','m_short','m_txmode','m_easydab_ip','m_easydab_port','m_edi_port','m_edi_pft','m_edi_fec','m_edi_tist_offset','m_mgmt','m_telnet',
-   'm_hackrf_block','m_hackrf_txgain','m_hackrf_maxframes','m_hackrf_gainmode','m_hackrf_diggain','m_hackrf_rate'
-  ].forEach((id) => {
+  // ON AIR: fields stay editable; saving a change restarts the mux (see saveMuxSettings)
+  MUX_DLG_RESTART_FIELDS.forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.disabled = locked;
+    if (el) el.disabled = false;
   });
+  muxRestartSnapshot = locked ? muxDlgFieldValues() : null;
+  updateMuxRestartWarn();
 
   updateTxModeVisibility();
   dlgMux.showModal();
@@ -1316,8 +1330,27 @@ async function saveMuxSettings() {
       }
     }
   };
-  await api('/api/settings', { method: 'PATCH', body: JSON.stringify(patch) });
+  if (!muxDlgFieldsChanged()) {
+    await api('/api/settings', { method: 'PATCH', body: JSON.stringify(patch) });
+    await refresh();
+    return;
+  }
+  if (!confirm('These changes require restarting the multiplex.\nALL services go off air for a few seconds.\n\nApply and restart now?')) return false;
+  // Stop first (with the current ports / TX mode), save, then start with the new settings
+  await api('/api/mux/stop', { method: 'POST', body: '{}' });
+  let saveErr = null;
+  try {
+    await api('/api/settings', { method: 'PATCH', body: JSON.stringify(patch) });
+  } catch (err) { saveErr = err; }
+  if (!saveErr) dlgMux.close();
+  try {
+    await api('/api/mux/start', { method: 'POST', body: '{}' });
+  } catch (err) {
+    await refresh();
+    throw new Error(`Multiplex restart FAILED — press Start: ${err.message || err}${saveErr ? ` (changes not saved: ${saveErr.message})` : ''}`);
+  }
   await refresh();
+  if (saveErr) throw new Error(`Changes not saved, multiplex restarted with the previous settings: ${saveErr.message || saveErr}`);
 }
 
 // ── About dialog ──
@@ -2431,6 +2464,8 @@ setTimeout(checkForUpdate, 5000);
 setInterval(checkForUpdate, 3600000);
 
 // mux form
+$('#muxForm').addEventListener('input', updateMuxRestartWarn);
+$('#muxForm').addEventListener('change', updateMuxRestartWarn);
 $('#muxForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   try {
