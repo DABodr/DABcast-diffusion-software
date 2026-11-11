@@ -588,6 +588,10 @@ export class AppState {
     const uriChanged = existing.input.uri !== normalized.input.uri;
     const modeChanged = existing.input.mode !== normalized.input.mode;
     const needRestart = locked && (modeChanged || uriChanged);
+    // ON AIR gain change: restart only this service's encoder, on its active stream (same
+    // in-place restart as the watchdog) — the mux and the other services keep running.
+    const gainChanged = (existing.audio?.gainDb ?? 0) !== (normalized.audio?.gainDb ?? 0);
+    const gainRestart = locked && !needRestart && gainChanged && this.pm.isRunning(`svc:${id}:audioenc`);
 
     this.logger.line(`svc:${id}`, `setService: locked=${locked} uriChanged=${uriChanged} (${existing.input.uri} => ${normalized.input.uri}) needRestart=${needRestart}`, 'DEBUG');
 
@@ -601,7 +605,7 @@ export class AppState {
           encoderBufferMs: s.input?.encoderBufferMs, pty: s.identity?.pty, languageHex: s.identity?.languageHex });
         const cur = pick(normalized);
         if (!rt.appliedConfig) rt.appliedConfig = pick(existing);
-        if (needRestart && this.pm.isRunning(`svc:${id}:audioenc`)) {
+        if ((needRestart || gainRestart) && this.pm.isRunning(`svc:${id}:audioenc`)) {
           // encoder restarts below with the new config → encoder-level fields get applied
           Object.assign(rt.appliedConfig, { gainDb: cur.gainDb, channels: cur.channels, encoderBufferMs: cur.encoderBufferMs });
         }
@@ -615,6 +619,11 @@ export class AppState {
     if (needRestart && this.pm.isRunning(`svc:${id}:audioenc`)) {
       this.logger.line(`svc:${id}`, `input changed while ON AIR — restarting encoder`);
       this._switchServiceUri(normalized, normalized.input.uri);
+    }
+    if (gainRestart) {
+      const rt = this.serviceRuntime.get(normalized.id);
+      this.logger.line(`svc:${id}`, `audio gain changed while ON AIR (${existing.audio?.gainDb ?? 0} → ${normalized.audio?.gainDb ?? 0} dB) — restarting encoder only`);
+      this._switchServiceUri(normalized, rt?.activeUri || normalized.input.uri).catch(() => { /* logged by _switchServiceUri */ });
     }
 
     // Download slide if slsUrl changed

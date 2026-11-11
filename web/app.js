@@ -81,7 +81,9 @@ function maybeFetchMuxStats() {
       inp.recentGlitch = Date.now() - (_bufLastGlitchAt.get(id) || 0) < BUF_GLITCH_WINDOW_MS;
     }
     MUX_STATS = st;
+    recordLevels(st);
     render();
+    if (dlgLevels?.open) renderLevels();
   }).catch(() => { /* stats are best-effort */ });
 }
 // v1.4 table view prefs (display only — never written to ui.order)
@@ -288,6 +290,54 @@ function muxPeakLevels(inp) {
   return { left: l.n, right: r.n, clipLeft: l.clip, clipRight: r.clip };
 }
 
+// Audio levels assistant: odr-dabmux input peaks sampled every 5 s (maybeFetchMuxStats) while this
+// page is open, over a sliding window. Display + suggestion only — a gain is saved on an explicit click.
+const LEVEL_WINDOW_MS = 5 * 60 * 1000;
+const LEVEL_MIN_SAMPLES = 12;     // ≈ 1 min of audio before suggesting a gain
+const LEVEL_SILENCE_DB = -40;     // quiet passages / silence are not counted
+const _levelSamples = new Map();  // svc id -> { key, list: [{ t, db }] }
+// a measurement is valid for one gain and one source (new measurement after a gain change or a main/backup switch)
+const levelKey = (svc) => `${svc.audio?.gainDb ?? 0}|${svc.runtime?.activeUri ?? ''}`;
+function recordLevels(st) {
+  if (!STATE?.preset || muxStartingUp()) return;
+  const now = Date.now();
+  for (const [id, inp] of Object.entries(st.inputs || {})) {
+    const svc = STATE.preset.services.find((s) => s.id === id);
+    if (!svc) continue;
+    // saved gain not applied yet: the audio still has the old gain → do not mix the two
+    if (svc.runtime?.pendingRestart?.includes('gainDb')) { _levelSamples.delete(id); continue; }
+    const key = levelKey(svc);
+    let rec = _levelSamples.get(id);
+    if (!rec || rec.key !== key) { rec = { key, list: [] }; _levelSamples.set(id, rec); }
+    const db = Math.max(Number(inp.peakLeft), Number(inp.peakRight));
+    // slow peak = dabmux maximum over a longer window: the 5 s samples alone miss the real peaks
+    const slow = Math.max(Number(inp.peakLeftSlow), Number(inp.peakRightSlow));
+    if (Number.isFinite(db) && db > LEVEL_SILENCE_DB) rec.list.push({ t: now, db, slow: Number.isFinite(slow) ? slow : db });
+    while (rec.list.length && now - rec.list[0].t > LEVEL_WINDOW_MS) rec.list.shift();
+  }
+}
+function levelStats(svc) {
+  const rec = _levelSamples.get(svc.id);
+  const list = rec && rec.key === levelKey(svc) ? rec.list : [];
+  if (!list.length) return { n: 0 };
+  const v = list.map((x) => x.db).sort((a, b) => a - b);
+  const pct = (q) => v[Math.min(v.length - 1, Math.floor(q * v.length))];
+  const max = Math.max(v[v.length - 1], ...list.map((x) => x.slow));
+  return { n: v.length, median: pct(0.5), p95: pct(0.95), max, minutes: (list[list.length - 1].t - list[0].t) / 60000 };
+}
+// New gain (dB) that brings the typical peak to the target. The highest peak measured (slow peak
+// included) must stay at or below -1 dBFS: a clipping service always gets a reduction.
+// A boost is limited to +6 dB per step (measure again after applying).
+const LEVEL_MAX_BOOST_DB = 6;
+function suggestGain(curGain, st, target) {
+  let delta = Math.min(target - st.median, -1 - st.max, LEVEL_MAX_BOOST_DB);
+  // clipping (peaks flattened at 0 dBFS): the real level is unknown → remove the whole added boost
+  if (st.max > -1 && curGain > 0) delta = Math.min(delta, -curGain);
+  if (Math.abs(delta) < 1) return null;   // close enough
+  const g = Math.round((curGain + delta) * 2) / 2;
+  return Math.max(-20, Math.min(20, g));
+}
+
 function vuMeter(audioLevels) {
   const l = audioLevels?.left ?? 0;
   const r = audioLevels?.right ?? 0;
@@ -411,8 +461,8 @@ function renderStats(cap) {
   const bufBad = bufStarting ? 0 : bufInputs.filter((i) => i.state === 'NoData' || i.state === 'Silence').length;
   const bufUnstable = bufStarting ? 0 : bufInputs.filter((i) => i.state === 'Unstable' && i.recentGlitch).length;
   const alarms = warn + err + bufBad;
-  const card = (title, val, sub, valCls = '', tip = '') =>
-    `<div class="stat-card"${tip ? ` title="${esc(tip)}"` : ''}><div class="stat-title">${title}</div><div class="stat-val ${valCls}">${val}</div><div class="stat-sub">${sub}</div></div>`;
+  const card = (title, val, sub, valCls = '', tip = '', attrs = '') =>
+    `<div class="stat-card"${tip ? ` title="${esc(tip)}"` : ''}${attrs}><div class="stat-title">${title}</div><div class="stat-val ${valCls}">${val}</div><div class="stat-sub">${sub}</div></div>`;
   const html = [
     card('Ensemble', esc(ens.label || '—'), `${esc(ens.idHex || '')} · ${muxSub}`, 'stat-val-sm'),
     card('Capacity', `${cap.totalCu} / ${cap.maxCu} CU`,
@@ -421,7 +471,8 @@ function renderStats(cap) {
     card('Encoders', STATE.muxRunning ? `${running}` : '—', STATE.muxRunning ? `running / ${enabled.length}` : 'off air', STATE.muxRunning && running === enabled.length ? 'cap-ok' : ''),
     card('Mux inputs', bufInputs.length ? `${bufOk} / ${bufInputs.length}` : '—',
       bufInputs.length ? (bufStarting ? 'starting · buffers filling' : `healthy · ${bufUnstable} glitching · ${bufBad} no audio`) : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
-      bufInputs.length ? (bufStarting ? '' : bufBad ? 'cap-bad' : bufUnstable ? 'cap-warn' : 'cap-ok') : ''),
+      bufInputs.length ? (bufStarting ? '' : bufBad ? 'cap-bad' : bufUnstable ? 'cap-warn' : 'cap-ok') : '',
+      'Click: audio levels and gain suggestions', ' data-act="levels" role="button" tabindex="0"'),
     card('Metadata', STATE.muxRunning ? `${dls} / ${dlsBase.length}` : '—',
       STATE.muxRunning ? `DLS text · ${sls} cover art` : 'off air', STATE.muxRunning && dls === dlsBase.length ? 'cap-ok' : '',
       'DLS: enabled services currently sending a text (now playing or default text); ZMQ/EDI direct services send their own DLS and are not counted. Cover art: services currently sending a dynamic image (album cover from JSON/XML or SLS URL) — static logos are not counted.'),
@@ -432,6 +483,7 @@ function renderStats(cap) {
 
 function render() {
   if (!STATE) return;
+  if (dlgPlayer?.open) renderPlayer();
 
   // Password change banner + lock UI
   const pwdBanner = $('#pwdBanner');
@@ -440,7 +492,7 @@ function render() {
     pwdBanner.classList.toggle('hidden', !locked_pwd);
   }
 
-  const lockableButtons = ['btnStop','btnAdd','btnMux','btnLogs','btnTelegram',
+  const lockableButtons = ['btnStop','btnAdd','btnMux','btnLevels','btnPlayer','btnLogs','btnTelegram',
     'btnExportConfig','btnImportAll','btnExportService','btnImportService','btnExportAllServices','btnDablin'];
   for (const id of lockableButtons) {
     const el = document.getElementById(id);
@@ -1405,6 +1457,280 @@ async function saveMuxSettings() {
   if (saveErr) throw new Error(`Changes not saved, multiplex restarted with the previous settings: ${saveErr.message || saveErr}`);
 }
 
+// ── Web player: one service of the mux, decoded server-side (dablin → ffmpeg MP3) ──
+// Metadata shown = what DABcast sends (runtime state); ZMQ/EDI direct inputs carry their own.
+const dlgPlayer = $('#dlgPlayer');
+const PL_DB_FLOOR = -60;
+const PL = { svcId: null, bufTimer: 0, audio: null, ctx: null, gain: null, an: [], buf: null, raf: 0, playing: false, peaks: [{ v: -99, hold: -99, at: 0 }, { v: -99, hold: -99, at: 0 }] };
+const plDirect = (svc) => ['ZMQ', 'EDI'].includes(String(svc?.input?.mode || '').toUpperCase());
+function plStatus(msg, err = false) {
+  const el = $('#plStatus');
+  if (el) { el.textContent = msg; el.classList.toggle('err', err); }
+}
+function plServices() {
+  return [...(STATE?.preset?.services || [])].filter((s) => s.enabled !== false)
+    .sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
+}
+function renderPlayer() {
+  if (!dlgPlayer?.open || !STATE) return;
+  const list = plServices();
+  if (!list.some((s) => s.id === PL.svcId)) PL.svcId = list[0]?.id || null;
+  const listHtml = list.map((s) => `<button type="button" data-pl="${esc(s.id)}" class="${s.id === PL.svcId ? 'active' : ''}">${esc(s.identity?.ps8 || s.id)}${s.id === PL.svcId && PL.playing ? '<span class="pl-live">▶</span>' : ''}</button>`).join('')
+    || '<span class="lv-note">No service on air</span>';
+  const box = $('#plList');
+  if (box._last !== listHtml) { box.innerHTML = listHtml; box._last = listHtml; }
+  const ens = STATE.settings?.ensemble || {};
+  $('#plSub').textContent = STATE.muxRunning ? `${ens.label || 'Ensemble'} · decoded from the multiplex output` : 'Multiplex off air';
+  const svc = list.find((s) => s.id === PL.svcId);
+  if (!svc) { $('#plName').textContent = '—'; return; }
+  $('#plName').textContent = svc.identity?.ps16 || svc.identity?.ps8 || svc.id;
+  const ptyOpt = $(`#f_pty option[value="${svc.identity?.pty}"]`);
+  $('#plInfo').textContent = [`PI ${String(svc.identity?.pi || svc.id).replace(/^0x/i, '').toUpperCase()}`,
+    `${svc.dab?.bitrateKbps ?? '?'} kbps`, plDirect(svc) ? `${svc.input.mode} input` : (svc.audio?.codec || 'HE-AAC v1'),
+    ptyOpt ? ptyOpt.textContent : ''].filter(Boolean).join(' · ');
+  // DLS / DL+ (same text as the services table)
+  const dls = plDirect(svc) ? '' : (svc.runtime?.currentDls || (svc.metadata?.defaultDlsAllowed !== false ? (svc.metadata?.defaultDls || '') : ''));
+  let dlp = '';
+  if (svc.runtime?.dlplusActive && dls.includes(' - ')) {
+    const i = dls.indexOf(' - ');
+    dlp = `<span class="pl-tag">DL+</span><b>${esc(dls.slice(i + 3))}</b> — ${esc(dls.slice(0, i))}`;
+  }
+  const dlpEl = $('#plDlplus');
+  if (dlpEl._last !== dlp) { dlpEl.innerHTML = dlp; dlpEl._last = dlp; }
+  $('#plDls').textContent = plDirect(svc) ? 'DLS, DL+ and slides are sent by the remote encoder (not shown here).' : (dls ? `DLS: ${dls}` : 'No DLS text');
+  // Slide: the one shown in the services table (rotation + covers), else the logo
+  const thumb = svcTableBody.querySelector(`tr[data-service-id="${CSS.escape(svc.id)}"] img.sls-thumb`);
+  const src = thumb && thumb.style.display !== 'none' && thumb.src ? thumb.src : '';
+  const art = $('#plArt');
+  if (src) { if (art.getAttribute('src') !== src) art.src = src; art.style.display = ''; $('#plArtTxt').textContent = ''; }
+  else { art.style.display = 'none'; $('#plArtTxt').textContent = svc.identity?.ps8 || ''; }
+  $('#plPlay').textContent = PL.playing ? '■ Stop' : '▶ Play';
+  $('#plPlay').disabled = !STATE.muxRunning && !PL.playing;
+}
+function plEnsureAudio() {
+  if (PL.audio) return;
+  PL.audio = new Audio();
+  PL.audio.preload = 'auto';
+  PL.audio.addEventListener('playing', () => plStatus('Playing'));
+  // buffer ran dry: refill a full cushion instead of restarting on a few ms (repeated micro-cuts)
+  PL.audio.addEventListener('waiting', () => { if (PL.playing && !PL.bufTimer) plPrebuffer(); });
+  PL.audio.addEventListener('ended', () => { if (PL.playing) { plStop(); plStatus('Stream ended (multiplex stopped or restarted)', true); } });
+  PL.audio.addEventListener('error', async () => {
+    if (!PL.playing) return;
+    plStop();
+    let why = 'Stream unavailable';
+    try {
+      const info = await api('/api/player/info');
+      if (info.missing?.length) why = `Not installed on the server: ${info.missing.join(', ')} (sudo apt install ${info.missing.join(' ')})`;
+      else if (!info.supported) why = `Player not available in ${info.txMode} mode`;
+      else if (!STATE?.muxRunning) why = 'Multiplex off air';
+      else if (info.listeners >= info.maxListeners) why = `Player busy (max ${info.maxListeners} listeners)`;
+    } catch { /* keep generic message */ }
+    plStatus(why, true);
+  });
+  try {
+    PL.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const src = PL.ctx.createMediaElementSource(PL.audio);
+    const split = PL.ctx.createChannelSplitter(2);
+    PL.an = [PL.ctx.createAnalyser(), PL.ctx.createAnalyser()];
+    PL.an.forEach((a, i) => { a.fftSize = 2048; split.connect(a, i); });
+    PL.buf = new Float32Array(2048);
+    PL.gain = PL.ctx.createGain();
+    src.connect(split);
+    src.connect(PL.gain).connect(PL.ctx.destination);   // meters read the signal before the volume
+  } catch { PL.ctx = null; }   // no Web Audio: sound still plays, without meters
+  plSetVolume();
+}
+// The stream arrives exactly in real time, so the browser's cushion never grows by itself:
+// start (or resume) only once PL_PREBUFFER_S seconds are buffered ahead, to absorb network jitter.
+const PL_PREBUFFER_S = 2;   // Chrome stops downloading a paused stream at ~2.3 s ahead
+function plAhead() {
+  const b = PL.audio.buffered;
+  return b.length ? b.end(b.length - 1) - PL.audio.currentTime : 0;
+}
+function plPrebuffer() {
+  clearInterval(PL.bufTimer);
+  const started = Date.now();
+  PL.audio.pause();
+  PL.bufTimer = setInterval(() => {
+    if (!PL.playing) { clearInterval(PL.bufTimer); PL.bufTimer = 0; return; }
+    const ahead = plAhead();
+    if (ahead >= PL_PREBUFFER_S || (Date.now() - started > 8000 && ahead > 0.5)) {
+      clearInterval(PL.bufTimer); PL.bufTimer = 0;
+      PL.audio.play().catch((err) => { if (PL.playing && err?.name === 'NotAllowedError') plStatus('Press Play to start', true); });
+    } else {
+      plStatus(ahead > 0.05 ? `Buffering… ${ahead.toFixed(1)} / ${PL_PREBUFFER_S} s` : 'Connecting… (the decoder needs a few seconds)');
+    }
+  }, 250);
+}
+function plSetVolume() {
+  const v = Number($('#plVol')?.value ?? 0.8);
+  if (PL.gain) PL.gain.gain.value = v; else if (PL.audio) PL.audio.volume = v;
+}
+function plMeterLoop() {
+  PL.raf = 0;
+  if (!PL.playing || !dlgPlayer.open) return;
+  const now = performance.now();
+  PL.an.forEach((a, i) => {
+    a.getFloatTimeDomainData(PL.buf);
+    let m = 0;
+    for (let k = 0; k < PL.buf.length; k++) { const x = Math.abs(PL.buf[k]); if (x > m) m = x; }
+    const db = m > 0 ? Math.max(PL_DB_FLOOR - 1, 20 * Math.log10(m)) : PL_DB_FLOOR - 1;
+    const p = PL.peaks[i];
+    p.v = db > p.v ? db : Math.max(db, p.v - 0.4);            // fast attack, ~24 dB/s release
+    if (db >= p.hold || now - p.at > 1500) { p.hold = db; p.at = now; }   // 1.5 s peak hold
+    const pct = (x) => Math.min(100, Math.max(0, (x - PL_DB_FLOOR) / -PL_DB_FLOOR * 100));
+    const ch = i ? 'R' : 'L';
+    $(`#plVuMask${ch}`).style.width = `${100 - pct(p.v)}%`;
+    const pk = $(`#plVuPeak${ch}`);
+    pk.style.left = `calc(${pct(p.hold)}% - 2px)`;
+    pk.style.opacity = p.hold > PL_DB_FLOOR ? '1' : '0';
+    pk.style.background = p.hold >= -1 ? 'var(--red)' : '#fff';
+    $(`#plVuDb${ch}`).textContent = p.hold > PL_DB_FLOOR ? `${p.hold.toFixed(1)}` : '—';
+  });
+  PL.raf = requestAnimationFrame(plMeterLoop);
+}
+function plResetMeters() {
+  for (const ch of ['L', 'R']) {
+    $(`#plVuMask${ch}`).style.width = '100%';
+    $(`#plVuPeak${ch}`).style.opacity = '0';
+    $(`#plVuDb${ch}`).textContent = '—';
+  }
+  PL.peaks.forEach((p) => { p.v = -99; p.hold = -99; p.at = 0; });
+}
+function plPlay(id) {
+  plEnsureAudio();
+  PL.svcId = id || PL.svcId;
+  if (!PL.svcId) return;
+  PL.ctx?.resume?.();
+  PL.playing = true;
+  plResetMeters();
+  plStatus('Connecting… (the decoder needs a few seconds)');
+  PL.audio.src = `/api/player/stream?id=${encodeURIComponent(PL.svcId)}&t=${Date.now()}`;
+  PL.audio.load();
+  plPrebuffer();
+  if (!PL.raf && PL.ctx) PL.raf = requestAnimationFrame(plMeterLoop);
+  renderPlayer();
+}
+function plStop() {
+  PL.playing = false;
+  clearInterval(PL.bufTimer); PL.bufTimer = 0;
+  if (PL.audio) { PL.audio.pause(); PL.audio.removeAttribute('src'); PL.audio.load(); }   // closes the stream → server stops dablin/ffmpeg
+  if (PL.raf) { cancelAnimationFrame(PL.raf); PL.raf = 0; }
+  plResetMeters();
+  plStatus('');
+  renderPlayer();
+}
+$('#btnPlayer')?.addEventListener('click', async () => {
+  PL.svcId = PL.svcId || null;
+  dlgPlayer.showModal();
+  plStatus('');
+  renderPlayer();
+  try {
+    const info = await api('/api/player/info');
+    if (info.missing?.length) plStatus(`Not installed on the server: ${info.missing.join(', ')} (sudo apt install ${info.missing.join(' ')})`, true);
+    else if (!info.supported) plStatus(`Player not available in ${info.txMode} mode`, true);
+    else if (!STATE?.muxRunning) plStatus('Multiplex off air — press Start first');
+  } catch { /* ignore */ }
+});
+$('#plList')?.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-pl]');
+  if (!b) return;
+  if (PL.playing) plPlay(b.dataset.pl); else { PL.svcId = b.dataset.pl; renderPlayer(); }
+});
+$('#plPlay')?.addEventListener('click', () => { if (PL.playing) plStop(); else plPlay(); });
+$('#plVol')?.addEventListener('input', plSetVolume);
+dlgPlayer?.addEventListener('close', () => { if (PL.playing) plStop(); });
+
+// ── Audio levels dialog (opened from the "Mux inputs" card) ──
+const dlgLevels = $('#dlgLevels');
+let LEVEL_TARGET = -6;
+try { LEVEL_TARGET = Number(localStorage.getItem('dabcast.levelTarget')) || -6; } catch { /* ignore */ }
+let _levelSuggestions = [];   // [{ id, name, from, to }] from the last renderLevels()
+const fmtDb = (x) => (Number.isFinite(x) ? x.toFixed(1) : '—');
+function renderLevels() {
+  const box = $('#lvTable');
+  if (!box || !STATE) return;
+  _levelSuggestions = [];
+  if (!STATE.muxRunning) {
+    box.innerHTML = '<div class="mux-stats-off">Off air — start the multiplex to measure audio levels.</div>';
+    $('#lvApplyAll').disabled = true;
+    return;
+  }
+  const svcs = viewSort(STATE.preset.services.filter((s) => s.enabled !== false));
+  const rows = svcs.map((svc) => {
+    const name = esc(svc.identity?.ps8 || svc.id);
+    const gain = svc.audio?.gainDb ?? 0;
+    const direct = ['ZMQ', 'EDI'].includes(String(svc.input?.mode || '').toUpperCase());
+    const pending = svc.runtime?.pendingRestart?.includes('gainDb');
+    const st = pending ? { n: 0 } : levelStats(svc);
+    let sug, act = '';
+    if (direct) sug = '<span class="lv-note">remote encoder — adjust at the source</span>';
+    else if (pending) sug = `<span class="buf-tag pend">PENDING</span> <span class="lv-note">encoder not running — ${gain} dB applies at the next mux Start</span>`;
+    else if (st.n < LEVEL_MIN_SAMPLES) sug = `<span class="lv-note">measuring… ${st.n}/${LEVEL_MIN_SAMPLES}</span>`;
+    else {
+      const g = suggestGain(gain, st, LEVEL_TARGET);
+      if (g === null) {
+        sug = LEVEL_TARGET - st.median >= 1
+          ? '<span class="buf-tag ok">OK</span> <span class="lv-note">below target, but peaks already near -1 dBFS</span>'
+          : '<span class="buf-tag ok">OK</span>';
+      }
+      else {
+        _levelSuggestions.push({ id: svc.id, name: svc.identity?.ps8 || svc.id, from: gain, to: g });
+        sug = `<b>${g} dB</b> <span class="lv-note">(${g > gain ? '+' : '−'}${Math.abs(g - gain)})</span>`;
+        act = `<button type="button" class="btn btn-sm" data-act="lv-apply" data-id="${esc(svc.id)}" data-gain="${g}">Apply</button>`;
+      }
+    }
+    const meas = st.n ? `${fmtDb(st.median)}` : '—';
+    const tip = st.n ? `${st.n} samples over ${st.minutes.toFixed(1)} min · 95% of peaks below ${fmtDb(st.p95)} dBFS · highest peak ${fmtDb(st.max)} dBFS` : 'no audio measured yet';
+    return `<tr><td>${name}</td><td class="num" title="${esc(tip)}">${meas}</td><td class="num${st.n && st.max > -1 ? ' lv-clip' : ''}">${st.n ? fmtDb(st.max) : '—'}</td>`
+      + `<td class="num">${direct ? '—' : `${gain} dB`}</td><td>${sug}</td><td class="lv-act">${act}</td></tr>`;
+  }).join('');
+  box.innerHTML = `<table class="lv-table"><thead><tr><th>Service</th><th class="num">Typical peak</th><th class="num">Max</th><th class="num">Gain</th><th>Suggestion</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  $('#lvApplyAll').disabled = !_levelSuggestions.length;
+}
+function openLevels() {
+  if (!dlgLevels) return;
+  $('#lvTarget').value = String(LEVEL_TARGET);
+  renderLevels();
+  dlgLevels.showModal();
+}
+$('#statsRow')?.addEventListener('click', (e) => { if (e.target.closest('[data-act="levels"]')) openLevels(); });
+$('#statsRow')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.closest('[data-act="levels"]')) openLevels(); });
+$('#lvTarget')?.addEventListener('change', (e) => {
+  LEVEL_TARGET = Number(e.target.value) || -6;
+  try { localStorage.setItem('dabcast.levelTarget', String(LEVEL_TARGET)); } catch { /* ignore */ }
+  renderLevels();
+});
+$('#btnLevels')?.addEventListener('click', openLevels);
+$('#lvReset')?.addEventListener('click', () => { _levelSamples.clear(); renderLevels(); });
+const saveGain = (id, gainDb) => api(`/api/services/${id}`, { method: 'PATCH', body: JSON.stringify({ audio: { gainDb } }) });
+$('#lvTable')?.addEventListener('click', async (e) => {
+  const btn = e.target.closest('button[data-act="lv-apply"]');
+  if (!btn) return;
+  btn.disabled = true;
+  try {
+    await saveGain(btn.dataset.id, Number(btn.dataset.gain));
+    await refresh();
+  } catch (err) {
+    showToast(err.message || String(err));
+  }
+  renderLevels();
+});
+$('#lvApplyAll')?.addEventListener('click', async (e) => {
+  const list = [..._levelSuggestions];
+  if (!list.length) return;
+  if (!confirm(`Apply ${list.length} suggested gain(s)?\n\n${list.map((x) => `${x.name}: ${x.from} → ${x.to} dB`).join('\n')}\n\nEach encoder restarts (2–3 s gap on that service only).`)) return;
+  e.target.disabled = true;
+  const failed = [];
+  for (const x of list) {
+    try { await saveGain(x.id, x.to); } catch (err) { failed.push(`${x.name}: ${err.message || err}`); }
+  }
+  if (failed.length) showToast(`Not saved — ${failed.join(' · ')}`);
+  await refresh();
+  renderLevels();
+});
+
 // ── About dialog ──
 const dlgAbout = $('#dlgAbout');
 let aboutTimer = null;
@@ -1809,6 +2135,11 @@ $('#btnTelegramTest')?.addEventListener('click', async () => {
 
 // events
 $('#btnAbout').addEventListener('click', showAbout);
+$('#btnLegal')?.addEventListener('click', () => {
+  const ver = $('#legalVersion');
+  if (ver && STATE?.appVersion) ver.textContent = `v${STATE.appVersion}`;
+  $('#dlgLegal').showModal();
+});
 
 // ── Update dialog ──────────────────────────────────────────────────────────
 const dlgUpdate = $('#dlgUpdate');

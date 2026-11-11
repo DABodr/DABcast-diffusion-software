@@ -367,11 +367,75 @@ input:disabled, select:disabled {
 
 .btn-about { width: 32px; height: 32px; padding: 0; font-size: 15px; font-weight: 700; border-radius: 50%; text-align: center; line-height: 32px; }
 .modal-about { width: min(420px, calc(100vw - 20px)); }
+.modal-levels { width: min(760px, calc(100vw - 20px)); }
+.lv-bar { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin: 14px 0 10px; font-size: 13px; }
+.lv-bar label { display: flex; flex-direction: column; gap: 4px; }
+.lv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.lv-table td { color: var(--text); }
+.lv-table th, .lv-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+.lv-table th { font-size: 11px; color: var(--muted); font-weight: 600; }
+.lv-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.lv-note { color: var(--muted); font-size: 12px; white-space: normal; }
+.lv-table td.lv-clip { color: var(--red); font-weight: 700; }
+.lv-table td.lv-act { text-align: right; width: 1%; }
+.lv-bar .spacer { flex: 1; }
+@media (max-width: 600px) { .lv-table th, .lv-table td { padding: 6px 4px; } }
+#lvTable { overflow-x: auto; }
+.stat-card[data-act="levels"] { cursor: pointer; }
+.stat-card[data-act="levels"]:hover { border-color: var(--blue); }
 .modal-about .modal-sub { color: var(--blue); font-weight: 600; margin-top: 6px; font-size: 13px; }
 .about-grid { display: grid; grid-template-columns: 1fr auto; gap: 8px 16px; margin-top: 18px; font-size: 13px; }
 .about-grid .about-label { color: var(--muted); }
 .about-grid .about-value { font-weight: 600; text-align: right; font-variant-numeric: tabular-nums; color: #fff; }
 .about-sep { grid-column: 1 / -1; border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+.modal-legal { width: min(520px, calc(100vw - 20px)); }
+.modal-player { width: min(860px, calc(100vw - 20px)); }
+.pl-layout { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 16px; margin-top: 14px; }
+.pl-list { display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow-y: auto; }
+.pl-list button { text-align: left; background: var(--surface2); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 10px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-list button:hover { border-color: var(--blue); }
+.pl-list button.active { background: var(--blue); border-color: var(--blue); color: #fff; font-weight: 600; }
+.pl-list button .pl-live { float: right; font-size: 10px; }
+.pl-now { display: flex; gap: 16px; align-items: flex-start; }
+.pl-art { width: 160px; height: 120px; flex: 0 0 160px; border-radius: 8px; background: var(--surface3); overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.pl-art img { width: 100%; height: 100%; object-fit: contain; }
+.pl-art span { font-size: 22px; font-weight: 700; color: var(--muted); }
+.pl-meta { min-width: 0; flex: 1; }
+.pl-name { font-size: 20px; font-weight: 700; color: #fff; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pl-info { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.pl-dlplus { margin-top: 10px; font-size: 14px; color: var(--text); }
+.pl-dlplus b { color: #fff; }
+.pl-dlplus .pl-tag { display: inline-block; font-size: 10px; font-weight: 700; color: var(--green); border: 1px solid var(--green); border-radius: 4px; padding: 0 4px; margin-right: 6px; vertical-align: 1px; }
+.pl-dls { margin-top: 6px; font-size: 13px; color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
+.pl-vu { margin-top: 18px; }
+.pl-vu-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.pl-vu-ch { width: 12px; font-size: 11px; font-weight: 700; color: var(--muted); }
+.pl-vu-db { width: 48px; text-align: right; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pl-vu-bar { position: relative; flex: 1; height: 12px; border-radius: 3px; overflow: hidden;
+  background: linear-gradient(to right, var(--green) 0%, var(--green) 70%, var(--yellow) 83%, var(--red) 95%); }
+.pl-vu-mask { position: absolute; top: 0; right: 0; bottom: 0; width: 100%; background: var(--surface3); }
+.pl-vu-peak { position: absolute; top: 0; bottom: 0; width: 2px; left: 0; background: #fff; opacity: 0; }
+.pl-vu-scale { position: relative; height: 12px; margin: 0 56px 0 20px; font-size: 10px; color: var(--muted); }
+.pl-vu-scale span { position: absolute; transform: translateX(-50%); }
+.pl-controls { display: flex; align-items: center; gap: 14px; margin-top: 18px; flex-wrap: wrap; }
+.pl-vol { display: flex; flex-direction: row; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+.pl-vol input { width: 120px; padding: 0; }
+.pl-status { font-size: 12px; color: var(--muted); }
+.pl-status.err { color: var(--red); }
+.pl-hint { margin-top: 16px; }
+@media (max-width: 640px) {
+  .pl-layout { grid-template-columns: minmax(0, 1fr); }
+  .pl-list { flex-direction: row; flex-wrap: wrap; max-height: none; }
+  .pl-list button { flex: 1 1 calc(33% - 4px); }
+  .pl-art { width: 96px; height: 72px; flex-basis: 96px; }
+  .pl-name { font-size: 17px; }
+}
+.modal-legal .modal-sub { margin-top: 4px; }
+.legal-ver { font-size: 13px; color: var(--blue); font-weight: 600; margin-left: 4px; }
+.legal-grid a, .legal-text a { color: var(--blue); }
+.legal-sep { margin: 16px 0 10px; }
+.legal-title { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; margin: 12px 0 4px; }
+.legal-text { font-size: 13px; line-height: 1.5; margin: 0; color: var(--text); }
 .mux-stats-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 10px; }
 .mux-stats-off { font-size: 12px; color: var(--muted); }
 .mux-stats-grid { display: grid; grid-template-columns: auto 1fr auto; gap: 6px 10px; align-items: center; font-size: 12px; }
@@ -453,6 +517,8 @@ input:disabled, select:disabled {
   #btnStart { order: 2; }
   #btnLogs { order: 3; }
   #btnMux { order: 3; }
+  #btnLevels { order: 3; }
+  #btnPlayer { order: 3; }
   .onair-group { order: 4; gap: 6px; }
   .onair { padding: 7px 10px; font-size: 12px; white-space: nowrap; }
   .onair-duration { font-size: 12px; }
