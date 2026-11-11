@@ -14,7 +14,7 @@ import { TelegramLogNotifier } from './telegramNotifier.js';
 import { OdrProcessManager } from './odr/processManager.js';
 import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
-import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, PLAYER_MAX_LISTENERS } from './player.js';
+import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
   REMEMBERED_SESSION_MAX_AGE_MS,
@@ -962,6 +962,7 @@ app.get('/api/player/info', (req, res) => {
     txMode,
     listeners: playerListeners(),
     maxListeners: PLAYER_MAX_LISTENERS,
+    lastError: req.query.k ? playerLastError(req.query.k) : null,   // why the stream of this listener failed
   });
 });
 app.get('/api/player/stream', (req, res) => {

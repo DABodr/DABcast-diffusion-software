@@ -1542,20 +1542,24 @@ function plEnsureAudio() {
   PL.audio.addEventListener('playing', () => plStatus('Playing'));
   // buffer ran dry: refill a full cushion instead of restarting on a few ms (repeated micro-cuts)
   PL.audio.addEventListener('waiting', () => { if (PL.playing && !PL.bufTimer) plPrebuffer(); });
-  PL.audio.addEventListener('ended', () => { if (PL.playing) { plStop(); plStatus('Stream ended (multiplex stopped or restarted)', true); } });
-  PL.audio.addEventListener('error', async () => {
+  // stream failed or ended: show the reason recorded by the server for this listener (also in the logs)
+  const onFail = async (fallback) => {
     if (!PL.playing) return;
+    const key = PL.key;
     plStop();
-    let why = 'Stream unavailable';
+    let why = fallback;
     try {
-      const info = await api('/api/player/info');
+      const info = await api(`/api/player/info?k=${encodeURIComponent(key)}`);
       if (info.missing?.length) why = `Not installed on the server: ${info.missing.join(', ')} (sudo apt install ${info.missing.join(' ')})`;
       else if (!info.supported) why = `Player not available in ${info.txMode} mode`;
       else if (!STATE?.muxRunning) why = 'Multiplex off air';
+      else if (info.lastError) why = `Stream failed: ${info.lastError} (details in Logs)`;
       else if (info.listeners >= info.maxListeners) why = `Player busy (max ${info.maxListeners} listeners)`;
-    } catch { /* keep generic message */ }
+    } catch { /* keep the fallback message */ }
     plStatus(why, true);
-  });
+  };
+  PL.audio.addEventListener('ended', () => onFail('Stream ended (multiplex stopped or restarted)'));
+  PL.audio.addEventListener('error', () => onFail('Stream unavailable'));
   try {
     PL.ctx = new (window.AudioContext || window.webkitAudioContext)();
     const src = PL.ctx.createMediaElementSource(PL.audio);
