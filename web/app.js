@@ -43,7 +43,7 @@ const BUF_GLITCH_WINDOW_MS = 30000;
 const BUF_STARTUP_MS = 60000;
 const muxStartingUp = () => Boolean(STATE?.muxRunning && STATE.muxSinceMs && Date.now() - STATE.muxSinceMs < BUF_STARTUP_MS);
 const BUF_STATES = {
-  Streaming: ['ok', 'BUF OK'], Unstable: ['warn', 'UNSTABLE'], Silence: ['warn', 'SILENCE'], NoData: ['err', 'NO DATA'],
+  Streaming: ['ok', 'BUFFER OK'], Unstable: ['warn', 'UNSTABLE'], Silence: ['warn', 'SILENCE'], NoData: ['err', 'NO DATA'],
 };
 function bufTag(inp, always = false) {
   if (!inp) return '';
@@ -53,7 +53,7 @@ function bufTag(inp, always = false) {
   }
   let [cls, label] = BUF_STATES[inp.state] || ['', String(inp.state || '?').toUpperCase()];
   // dabmux keeps "Unstable" for minutes after old glitches (e.g. start-up prebuffering):
-  // with no new underrun in BUF_GLITCH_WINDOW_MS the input is healthy → show it as BUF OK
+  // with no new underrun in BUF_GLITCH_WINDOW_MS the input is healthy → show it as BUFFER OK
   if (inp.state === 'Unstable' && !inp.recentGlitch) [cls, label] = BUF_STATES.Streaming;
   if (!always && !label) return '';
   const d = inp.underrunsDelta > 0 ? ` (+${inp.underrunsDelta})` : '';
@@ -68,6 +68,14 @@ function pendingTag(rt) {
   if (!keys?.length) return '';
   const tip = `Saved, not applied yet: ${keys.map((k) => PENDING_LABELS[k] || k).join(', ')} — takes effect at the next mux Start (or when this encoder restarts)`;
   return `<span class="buf-tag pend" title="${esc(tip)}">PENDING</span>`;
+}
+// Server load for the "System" card (/api/system/load: /proc only, cheap), at most every 5 s
+let SYS_LOAD = null;
+let _sysLoadAt = 0;
+function maybeFetchSysLoad() {
+  if (Date.now() - _sysLoadAt < 5000) return;
+  _sysLoadAt = Date.now();
+  api('/api/system/load').then((d) => { SYS_LOAD = d; render(); }).catch(() => { /* best-effort */ });
 }
 function maybeFetchMuxStats() {
   if (!STATE?.muxRunning) { MUX_STATS = null; return; }
@@ -432,6 +440,23 @@ function updateDuration() {
 }
 
 // v1.4 stats cards — derived only from existing /api/state fields
+function sysCard(card) {
+  const L = SYS_LOAD;
+  if (!L) return card('System', '—', 'loading…', '');
+  const cpu = Number.isFinite(L.cpuPct) ? L.cpuPct : null;
+  const cls = cpu === null ? '' : cpu < 70 ? 'cap-ok' : cpu < 90 ? 'cap-warn' : 'cap-bad';
+  const gb = (mb) => (mb / 1024).toFixed(1);
+  const memUsed = L.memTotalMb && L.memAvailableMb != null ? L.memTotalMb - L.memAvailableMb : null;
+  const memTxt = memUsed !== null ? `RAM ${gb(memUsed)}/${gb(L.memTotalMb)} GB` : 'RAM —';
+  const dk = L.disk;
+  const diskCls = !dk ? '' : (dk.usedPct >= 95 || dk.freeGb < 2) ? 'sys-bad' : dk.usedPct >= 90 ? 'sys-warn' : '';
+  const diskTxt = dk ? `<span class="${diskCls}">Disk ${dk.freeGb} GB free</span>` : 'Disk —';
+  const tip = `CPU ${cpu ?? '—'} % (${L.cores} cores) · RAM used ${memUsed ?? '—'} / ${L.memTotalMb ?? '—'} MB · `
+    + (L.disk ? `Disk (data dir) ${L.disk.usedPct} % used, ${L.disk.freeGb} / ${L.disk.totalGb} GB free` : 'Disk —');
+  return card('System', cpu === null ? '—' : `${Math.round(cpu)} % <span class="stat-unit">CPU</span>`,
+    `<div class="stat-bar"><div class="stat-bar-fill ${cls}" style="width:${Math.min(cpu ?? 0, 100)}%"></div></div>${memTxt}<br>${diskTxt}`,
+    cls, tip);
+}
 function renderStats(cap) {
   const el = $('#statsRow');
   if (!el) return;
@@ -467,7 +492,7 @@ function renderStats(cap) {
     card('Ensemble', esc(ens.label || '—'), `${esc(ens.idHex || '')} · ${muxSub}`, 'stat-val-sm'),
     card('Capacity', `${cap.totalCu} / ${cap.maxCu} CU`,
       `<div class="stat-bar"><div class="stat-bar-fill ${capCls}" style="width:${Math.min(ratio * 100, 100).toFixed(0)}%"></div></div>${Math.round(ratio * 100)} %`, capCls),
-    card('Services', `${enabled.length}`, `enabled / ${all.length}`),
+    card('Services', `${enabled.length}`, `enabled / ${all.length}`, ''),
     card('Encoders', STATE.muxRunning ? `${running}` : '—', STATE.muxRunning ? `running / ${enabled.length}` : 'off air', STATE.muxRunning && running === enabled.length ? 'cap-ok' : ''),
     card('Mux inputs', bufInputs.length ? `${bufOk} / ${bufInputs.length}` : '—',
       bufInputs.length ? (bufStarting ? 'starting · buffers filling' : `healthy · ${bufUnstable} glitching · ${bufBad} no audio`) : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
@@ -476,6 +501,7 @@ function renderStats(cap) {
     card('Metadata', STATE.muxRunning ? `${dls} / ${dlsBase.length}` : '—',
       STATE.muxRunning ? `DLS text · ${sls} cover art` : 'off air', STATE.muxRunning && dls === dlsBase.length ? 'cap-ok' : '',
       'DLS: enabled services currently sending a text (now playing or default text); ZMQ/EDI direct services send their own DLS and are not counted. Cover art: services currently sending a dynamic image (album cover from JSON/XML or SLS URL) — static logos are not counted.'),
+    sysCard(card),
     card('Alarms', `${alarms}`, alarms ? `${warn} warning · ${err} error · ${bufBad} mux input` : 'none', alarms ? (err ? 'cap-bad' : 'cap-warn') : 'cap-ok'),
   ].join('');
   if (el._last !== html) { el.innerHTML = html; el._last = html; }
@@ -1061,6 +1087,7 @@ async function refresh() {
     STATE = await api('/api/state', { signal: refreshAbort.signal });
     render();
     maybeFetchMuxStats();
+    maybeFetchSysLoad();
     if (STATE.mustChangePassword && !pwdDialogShown) {
       pwdDialogShown = true;
       showAuth();
@@ -1461,7 +1488,7 @@ async function saveMuxSettings() {
 // Metadata shown = what DABcast sends (runtime state); ZMQ/EDI direct inputs carry their own.
 const dlgPlayer = $('#dlgPlayer');
 const PL_DB_FLOOR = -60;
-const PL = { svcId: null, bufTimer: 0, audio: null, ctx: null, gain: null, an: [], buf: null, raf: 0, playing: false, peaks: [{ v: -99, hold: -99, at: 0 }, { v: -99, hold: -99, at: 0 }] };
+const PL = { svcId: null, bufTimer: 0, key: '', useServer: false, lvTimer: 0, lv: [], lvSince: 0, lastDbs: null, flatSince: 0, audio: null, ctx: null, gain: null, an: [], buf: null, raf: 0, playing: false, peaks: [{ v: -99, hold: -99, at: 0 }, { v: -99, hold: -99, at: 0 }] };
 const plDirect = (svc) => ['ZMQ', 'EDI'].includes(String(svc?.input?.mode || '').toUpperCase());
 function plStatus(msg, err = false) {
   const el = $('#plStatus');
@@ -1504,6 +1531,7 @@ function renderPlayer() {
   const art = $('#plArt');
   if (src) { if (art.getAttribute('src') !== src) art.src = src; art.style.display = ''; $('#plArtTxt').textContent = ''; }
   else { art.style.display = 'none'; $('#plArtTxt').textContent = svc.identity?.ps8 || ''; }
+  art.parentElement.classList.toggle('empty', !src);   // frame = slide size; fixed 4:3 placeholder without slide
   $('#plPlay').textContent = PL.playing ? '■ Stop' : '▶ Play';
   $('#plPlay').disabled = !STATE.muxRunning && !PL.playing;
 }
@@ -1567,15 +1595,61 @@ function plSetVolume() {
   const v = Number($('#plVol')?.value ?? 0.8);
   if (PL.gain) PL.gain.gain.value = v; else if (PL.audio) PL.audio.volume = v;
 }
+// Meter source: the browser's own analyser (Web Audio) when it works, else the levels measured by
+// the server on the same stream (iOS Safari does not route a live stream through Web Audio: the
+// analyser only sees zeros). Server levels are stamped on the stream timeline → shown in sync with
+// audio.currentTime, despite the buffering delay.
+function plUseServerMeter() {
+  if (PL.useServer && PL.lvTimer) return;
+  PL.useServer = true;
+  clearInterval(PL.lvTimer);
+  PL.lvTimer = setInterval(async () => {
+    if (!PL.playing || !PL.key) return;
+    try {
+      const { levels } = await api(`/api/player/levels?k=${PL.key}&since=${PL.lvSince}`);
+      if (!levels?.length) return;
+      PL.lvSince = levels[levels.length - 1][0];
+      PL.lv.push(...levels);
+      const t = PL.audio?.currentTime || 0;
+      while (PL.lv.length && PL.lv[0][0] < t - 1) PL.lv.shift();
+    } catch { /* stream not started yet or gone */ }
+  }, 400);
+}
+function plLocalDbs() {
+  return PL.an.map((a) => {
+    a.getFloatTimeDomainData(PL.buf);
+    let m = 0;
+    for (let k = 0; k < PL.buf.length; k++) { const x = Math.abs(PL.buf[k]); if (x > m) m = x; }
+    return m > 0 ? Math.max(PL_DB_FLOOR - 1, 20 * Math.log10(m)) : PL_DB_FLOOR - 1;
+  });
+}
+function plServerDbs() {
+  const t = PL.audio.currentTime;
+  let l = -99, r = -99, found = false;
+  while (PL.lv.length && PL.lv[0][0] <= t + 0.02) {
+    const [, a, b] = PL.lv.shift();
+    l = Math.max(l, a); r = Math.max(r, b); found = true;
+  }
+  return found ? [Math.max(PL_DB_FLOOR - 1, l), Math.max(PL_DB_FLOOR - 1, r)] : null;
+}
 function plMeterLoop() {
   PL.raf = 0;
   if (!PL.playing || !dlgPlayer.open) return;
   const now = performance.now();
-  PL.an.forEach((a, i) => {
-    a.getFloatTimeDomainData(PL.buf);
-    let m = 0;
-    for (let k = 0; k < PL.buf.length; k++) { const x = Math.abs(PL.buf[k]); if (x > m) m = x; }
-    const db = m > 0 ? Math.max(PL_DB_FLOOR - 1, 20 * Math.log10(m)) : PL_DB_FLOOR - 1;
+  const audible = !PL.audio.paused && PL.audio.currentTime > 0;
+  let dbs = null;
+  if (!PL.useServer && PL.ctx) {
+    dbs = plLocalDbs();
+    // sound plays but the analyser stays flat for 1.5 s → it cannot see this stream: use server levels
+    if (audible && dbs.every((d) => d < PL_DB_FLOOR)) {
+      if (!PL.flatSince) PL.flatSince = now;
+      else if (now - PL.flatSince > 1500) plUseServerMeter();
+    } else PL.flatSince = 0;
+  } else if (PL.useServer) {
+    dbs = audible ? plServerDbs() : null;
+  }
+  if (dbs) PL.lastDbs = dbs;
+  (PL.lastDbs || [PL_DB_FLOOR - 1, PL_DB_FLOOR - 1]).forEach((db, i) => {
     const p = PL.peaks[i];
     p.v = db > p.v ? db : Math.max(db, p.v - 0.4);            // fast attack, ~24 dB/s release
     if (db >= p.hold || now - p.at > 1500) { p.hold = db; p.at = now; }   // 1.5 s peak hold
@@ -1597,6 +1671,7 @@ function plResetMeters() {
     $(`#plVuDb${ch}`).textContent = '—';
   }
   PL.peaks.forEach((p) => { p.v = -99; p.hold = -99; p.at = 0; });
+  PL.lastDbs = null; PL.flatSince = 0; PL.lv = []; PL.lvSince = 0;
 }
 function plPlay(id) {
   plEnsureAudio();
@@ -1606,15 +1681,18 @@ function plPlay(id) {
   PL.playing = true;
   plResetMeters();
   plStatus('Connecting… (the decoder needs a few seconds)');
-  PL.audio.src = `/api/player/stream?id=${encodeURIComponent(PL.svcId)}&t=${Date.now()}`;
+  PL.key = Math.random().toString(36).slice(2, 12);
+  PL.audio.src = `/api/player/stream?id=${encodeURIComponent(PL.svcId)}&k=${PL.key}`;
   PL.audio.load();
   plPrebuffer();
-  if (!PL.raf && PL.ctx) PL.raf = requestAnimationFrame(plMeterLoop);
+  if (!PL.ctx || PL.useServer) plUseServerMeter();   // no Web Audio, or already known not to work here
+  if (!PL.raf) PL.raf = requestAnimationFrame(plMeterLoop);
   renderPlayer();
 }
 function plStop() {
   PL.playing = false;
   clearInterval(PL.bufTimer); PL.bufTimer = 0;
+  clearInterval(PL.lvTimer); PL.lvTimer = 0;
   if (PL.audio) { PL.audio.pause(); PL.audio.removeAttribute('src'); PL.audio.load(); }   // closes the stream → server stops dablin/ffmpeg
   if (PL.raf) { cancelAnimationFrame(PL.raf); PL.raf = 0; }
   plResetMeters();
