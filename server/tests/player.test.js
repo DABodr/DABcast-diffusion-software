@@ -6,11 +6,16 @@ import { parsePcmFormat, findBin, missingPlayerTools, acquireListenerSlot, playe
 describe('player — parsePcmFormat', () => {
   it('reads the PCM format printed by dablin', () => {
     const line = 'PCMOutput: format set; samplerate: 48000, channels: 2, output: 32bit float';
-    assert.deepEqual(parsePcmFormat(line), { rate: 48000, channels: 2 });
+    assert.deepEqual(parsePcmFormat(line), { rate: 48000, channels: 2, float: true, bytes: 4, ffmpegFormat: 'f32le' });
   });
 
   it('handles 32 kHz mono services', () => {
-    assert.deepEqual(parsePcmFormat('samplerate: 32000, channels: 1'), { rate: 32000, channels: 1 });
+    assert.deepEqual(parsePcmFormat('samplerate: 32000, channels: 1'), { rate: 32000, channels: 1, float: true, bytes: 4, ffmpegFormat: 'f32le' });
+  });
+
+  it('detects the 16-bit integer output of fdk-aac builds of dablin', () => {
+    const line = 'PCMOutput: format set; samplerate: 48000, channels: 2, output: 16bit integer';
+    assert.deepEqual(parsePcmFormat(line), { rate: 48000, channels: 2, float: false, bytes: 2, ffmpegFormat: 's16le' });
   });
 
   it('returns null until the format line arrives', () => {
@@ -106,5 +111,28 @@ describe('player — PCM kept aligned and valid for the MP3 encoder', () => {
     const out = floats(makePcmSanitizer(2, (n) => { reported = n; })(Buffer.from(f.buffer)));
     assert.deepEqual([...out], [0.5, 0, -0.5, 0, 0, 0.25]);
     assert.equal(reported, 3);
+  });
+});
+
+describe('player — 16-bit integer PCM (fdk-aac builds of dablin)', () => {
+  const S16 = { float: false, bytes: 2 };
+  const s16 = (vals) => { const b = Buffer.alloc(vals.length * 2); vals.forEach((v, i) => b.writeInt16LE(v, i * 2)); return b; };
+
+  it('meter reads s16 samples (16384 = -6 dBFS)', () => {
+    const out = [];
+    const frames = [];
+    for (let i = 0; i < 2400; i++) frames.push(16384, -3277);   // L 0.5, R ~0.1
+    makeMeter(48000, 2, out, S16)(s16(frames));
+    assert.equal(out.length, 1);
+    assert.equal(out[0][1], -6);
+    assert.equal(out[0][2], -20);
+  });
+
+  it('sanitizer keeps s16 frames whole (4 bytes in stereo) and leaves values untouched', () => {
+    const src = s16([1, -2, 3, -4, 5, -6]);
+    const sanitize = makePcmSanitizer(2, () => { throw new Error('no invalid sample in s16'); }, S16);
+    const parts = [src.subarray(0, 5), src.subarray(5)].map(sanitize);
+    assert.deepEqual(parts.map((p) => p.length), [4, 8]);
+    assert.deepEqual(Buffer.concat(parts), src);
   });
 });
