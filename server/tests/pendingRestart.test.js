@@ -179,3 +179,42 @@ describe('upsertService (import) — ON AIR', () => {
     assert.equal(state.upsertService(src).enabled, true);
   });
 });
+
+describe('service input port', () => {
+  let dir, state;
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-port-'));
+    fs.mkdirSync(path.join(dir, 'presets'), { recursive: true });
+    fs.copyFileSync(demoPreset, path.join(dir, 'presets', 'demo.json'));
+    state = new AppState({
+      settings: structuredClone(DEFAULT_SETTINGS),
+      dataDir: dir,
+      logger: { line() {} },
+      processManager: { isRunning: () => false },
+    });
+    state.muxRunning = false;
+  });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('changes the port of a service when the mux is stopped', () => {
+    const id = state.preset.services[0].id;
+    const svc = state.setService(id, { network: { ediOutputTcp: { port: 9777 } } });
+    assert.equal(svc.network.ediOutputTcp.port, 9777);
+  });
+
+  it('refuses a port already used by another service', () => {
+    const [a, b] = state.preset.services;
+    assert.throws(() => state.setService(b.id, { network: { ediOutputTcp: { port: a.network.ediOutputTcp.port } } }), /already used/);
+  });
+
+  it('refuses an out-of-range port', () => {
+    const id = state.preset.services[0].id;
+    assert.throws(() => state.setService(id, { network: { ediOutputTcp: { port: 80 } } }), /Invalid input port/);
+  });
+
+  it('addService uses a given port and refuses duplicates', () => {
+    const svc = state.addService({ identity: { pi: 'FAF1', ps8: 'PORTA' }, input: { mode: 'EDI' }, network: { ediOutputTcp: { port: 9888 } } });
+    assert.equal(svc.network.ediOutputTcp.port, 9888);
+    assert.throws(() => state.addService({ identity: { pi: 'FAF2', ps8: 'PORTB' }, network: { ediOutputTcp: { port: 9888 } } }), /already used/);
+  });
+});

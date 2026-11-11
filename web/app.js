@@ -16,7 +16,7 @@ let activeLogTab = 'all';
 let STATE = null;
 let editingId = null;
 // Fields the server only accepts while the mux is stopped. Editing them ON AIR = Stop → save → Start.
-const MUX_RESTART_FIELDS = ['f_pi','f_ps8','f_ps16','f_bitrate','f_prot','f_sr','f_zbuf','f_zpre','f_codec','f_lang','f_pty','f_ch','f_padsize'];
+const MUX_RESTART_FIELDS = ['f_pi','f_ps8','f_ps16','f_bitrate','f_prot','f_sr','f_zbuf','f_zpre','f_codec','f_lang','f_pty','f_ch','f_padsize','f_direct_port'];
 let restartSnapshot = null;   // field values when the edit dialog opened ON AIR (null otherwise)
 const restartFieldValues = () => MUX_RESTART_FIELDS.map((id) => document.getElementById(id)?.value ?? '');
 const restartFieldsChanged = () => Boolean(restartSnapshot && STATE?.muxRunning
@@ -2400,6 +2400,24 @@ $('#svcForm').addEventListener('submit', async (e) => {
       enabled: $('#f_dlplus_enabled').value !== 'no'
     }
   };
+
+  // ZMQ/EDI direct: input port chosen by the user (empty on a new service = automatic)
+  if (['ZMQ', 'EDI'].includes($('#f_src').value)) {
+    const rawPort = String($('#f_direct_port').value || '').trim();
+    if (rawPort) {
+      const port = Number(rawPort);
+      if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+        showServiceError('Input port must be a number between 1024 and 65535.');
+        return;
+      }
+      const other = STATE.preset.services.find((s) => s.id !== editingId && s.network?.ediOutputTcp?.port === port);
+      if (other) {
+        showServiceError(`Port ${port} is already used by ${other.identity?.ps8 || other.id}.`);
+        return;
+      }
+      payload.network = { ediOutputTcp: { port } };
+    }
+  }
 
   const needMuxRestart = Boolean(editingId && restartFieldsChanged());
   if (needMuxRestart) {
