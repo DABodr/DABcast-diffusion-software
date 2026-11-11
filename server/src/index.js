@@ -395,7 +395,9 @@ app.patch('/api/auth', (req, res) => {
 });
 
 app.get('/api/export/full', (req, res) => {
-  const result = { settings, preset: state.preset };
+  // Never export credentials (username + password hash); /api/import/full ignores them anyway
+  const { auth: _auth, ...exportedSettings } = settings;
+  const result = { settings: exportedSettings, preset: state.preset };
 
   // Include all service logos as base64
   const logos = {};
