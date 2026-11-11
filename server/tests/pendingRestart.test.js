@@ -57,6 +57,25 @@ describe('setService — pendingRestart hint', () => {
     running = false;
   });
 
+  it('gain change ON AIR restarts only the encoder, on its active stream', () => {
+    state._initRuntime();
+    state.muxRunning = true;
+    running = true;
+    const calls = [];
+    const prev = state._switchServiceUri;
+    state._switchServiceUri = async (svc, uri) => { calls.push(uri); };
+    state.serviceRuntime.get(svcId).activeUri = 'http://example.invalid/backup';
+    const svc = state.preset.services[0];
+    state.setService(svcId, { audio: { gainDb: svc.audio.gainDb + 1 } });
+    assert.deepEqual(calls, ['http://example.invalid/backup']);
+    assert.deepEqual(state.serviceRuntime.get(svcId).pendingRestart, []);
+    state.setService(svcId, { identity: { pty: 5 } });   // no gain change → no encoder restart
+    assert.equal(calls.length, 1);
+    state._switchServiceUri = prev;
+    running = false;
+    state._initRuntime();   // clear the pty hint for the next test
+  });
+
   it('is cleared by _initRuntime (mux Start)', () => {
     state.muxRunning = true;
     state.setService(svcId, { input: { encoderBufferMs: 555 } });
