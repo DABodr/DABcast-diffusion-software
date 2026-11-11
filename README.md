@@ -268,12 +268,17 @@ The `dabcast.service` file at the root contains commented `Environment=` lines f
   - Correct parsing of odr-audioenc mono format
 - ✅ **Status dots**: visual indicator of active stream (green/red)
 - ✅ **Watchdog**: process health monitoring and audio stream surveillance
+- ✅ **Mux input buffer monitoring** (read-only): DABcast queries the odr-dabmux management port (ZMQ, `managementport`) every 5 s while ON AIR
+  - Per-service tag in the Status column: `BUF OK`, `UNSTABLE`, `SILENCE`, `NO DATA` (hover for fill, underruns, overruns, peaks)
+  - `UNSTABLE ▲` in yellow = underruns increased in the last minute (listeners may hear dropouts); grey = only past glitches (e.g. start-up prebuffering)
+  - "Mux inputs" card in the summary row; `SILENCE` / `NO DATA` inputs count as alarms; full table in the About (?) dialog
+  - Detects dropouts the process watchdog cannot see (encoder alive but not delivering audio); no automatic action is taken
 - ✅ **Detailed logs**:
   - `data/logs/dabweb.log` (append-only, with timestamps)
   - `/api/logs/metadata` endpoint with filtering
   - JSON metadata logs (fetch, parse, download, resize)
 - ✅ **ODR command display**: inspection of odr-audioenc/padenc arguments
-- ✅ **About dialog**: real-time system information (CPU, RAM, uptime, ODR versions)
+- ✅ **About dialog**: real-time system information (CPU, RAM, uptime, ODR versions) and mux input buffer stats
 
 ### Import/Export
 
@@ -420,12 +425,13 @@ DABcast/
 │   │   ├── odr/
 │   │   │   ├── processManager.js   # ODR process management
 │   │   │   ├── muxBuilder.js       # .mux file generation
+│   │   │   ├── dabmuxStats.js      # dabmux management port client (ZMQ, read-only)
 │   │   │   └── commandBuilder.js   # ODR command building
 │   │   └── utils/
 │   │       ├── validate.js   # ETSI validation
 │   │       ├── dlplus.js     # DL+ parsing and tag generation
 │   │       └── logger.js     # Timestamped logs
-│   ├── tests/                # Unit tests (205 tests)
+│   ├── tests/                # Unit tests (178 tests)
 │   └── package.json
 ├── web/                      # Vanilla JS frontend
 │   ├── index.html
@@ -454,7 +460,7 @@ DABcast/
 ```bash
 cd server
 npm test
-# → 205 tests
+# → 178 tests
 ```
 
 Covering: ETSI validation, CU calculation (EEP-A/B), .mux generation,
@@ -468,6 +474,7 @@ ODR command building, import/export, DL+ parsing, metadata log filtering.
 - **Append-only logs**: Logs in `data/logs/dabweb.log` are append-only (never truncated).
 - **Crash recovery**: The `data/runtime/pids.json` file allows cleaning up orphan processes after a crash.
 - **Watchdog**: Automatic process monitoring and failover to backup sources.
+- **dabmux management port**: `managementport` (default 12720) speaks ZMQ, not HTTP. DABcast only sends the read-only `values` command (1 s timeout, cached 2 s). Setting the port to 0 disables the stats.
 - **Mono/Stereo**: Mono mode is supported with correct VU meter parsing (single bar). Tested up to 88 kbps in HE-AAC mono.
 - **DL+**: DL+ tags (ITEM.ARTIST, ITEM.TITLE) are only transmitted if the DLS follows the "Artist - Title" format. Otherwise, plain text DLS without tags.
 - **JSON metadata**: Full support with dot-path, fallbacks, automatic cover download, obsolete file cleanup.
