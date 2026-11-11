@@ -567,6 +567,7 @@ function render() {
     const trackKey = dlsPreview || '';
     const svcKey = encodeURIComponent(svc.pad?.fifoName || svc.id);
     const backupUri = svc.input?.backupUri || '';
+    const isDirectInput = ['ZMQ', 'EDI'].includes(String(svc.input?.mode || '').toUpperCase());
     const activeUri = svc.runtime?.activeUri || '';
     const isHealthy = status === 'RUNNING';
     const isWarning = status === 'WARNING';
@@ -593,8 +594,9 @@ function render() {
       ['col-ch', (svc.audio?.channels ?? 2) === 1 ? 'Mono' : 'Stereo'],
       ['col-sr', `${esc(String((svc.audio?.sampleRateHz ?? 48000) / 1000))} kHz`],
       ['col-port', `${svc.network.ediOutputTcp.port}`],
-      ['col-main', streamDot(activeIsMain, Boolean(svc.input?.uri), on && svc.enabled !== false, isWarning && activeIsMain)],
-      ['col-bkp', streamDot(activeIsBackup, Boolean(backupUri), false, isWarning && activeIsBackup)],
+      // ZMQ/EDI direct (external encoder): no main/backup stream, even if old URLs are still stored
+      ['col-main', streamDot(activeIsMain, !isDirectInput && Boolean(svc.input?.uri), on && svc.enabled !== false, isWarning && activeIsMain)],
+      ['col-bkp', streamDot(activeIsBackup, !isDirectInput && Boolean(backupUri), false, isWarning && activeIsBackup)],
       ['', vuMeter(!STATE.muxRunning ? null
         : ['ZMQ', 'EDI'].includes(String(svc.input?.mode || '').toUpperCase()) ? muxPeakLevels(MUX_STATS?.inputs?.[svc.id])
         : svc.runtime?.audioLevels)],
