@@ -298,13 +298,16 @@ app.patch('/api/settings', (req, res) => {
       settings.ensemble = { ...settings.ensemble, ...patch.ensemble };
     }
     if (patch.dabmux) {
-      // shallow merge + merge nested easyDabOutput
+      // shallow merge + merge nested easyDabOutput / hackrf with their PREVIOUS values
+      // (the shallow merge already replaced them: merging with settings.dabmux.* lost e.g. easyDabOutput.netPort)
+      const prevEasyDab = settings.dabmux.easyDabOutput;
+      const prevHackrf = settings.dabmux.hackrf;
       settings.dabmux = { ...settings.dabmux, ...patch.dabmux };
       if (patch.dabmux.easyDabOutput) {
-        settings.dabmux.easyDabOutput = { ...settings.dabmux.easyDabOutput, ...patch.dabmux.easyDabOutput };
+        settings.dabmux.easyDabOutput = { ...(prevEasyDab || {}), ...patch.dabmux.easyDabOutput };
       }
       if (patch.dabmux.hackrf) {
-        settings.dabmux.hackrf = { ...(settings.dabmux.hackrf || {}), ...patch.dabmux.hackrf };
+        settings.dabmux.hackrf = { ...(prevHackrf || {}), ...patch.dabmux.hackrf };
       }
     }
 
