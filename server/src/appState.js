@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { nanoid } from 'nanoid';
 import { ensureDir, readJson, writeJson, safeExists } from './fsutil.js';
 import { buildMuxConfig } from './odr/muxBuilder.js';
+import { convertToSlide as convertSlideImage } from './slideImage.js';
 import { buildAudioEncCommand, buildDabMuxCommand, buildPadEncCommand, buildDabModConfig, buildHackrfTransferCommand, buildProbeCommand } from './odr/commandBuilder.js';
 import { validateService } from './odr/validate.js';
 import { ALLOWED_BITRATES_KBPS, DEFAULT_BITRATE_KBPS, DEFAULT_ZMQ_BUFFER, DEFAULT_ZMQ_PREBUFFER, DEFAULT_DEMO_PRESET_ID, DAB_FREQ_TABLE } from './defaults.js';
@@ -1038,15 +1039,8 @@ export class AppState {
       this._imgBinLogged = true;
     }
     try {
-      execFileSync('convert', [
-        srcPath,
-        '-resize', '320x240',
-        '-background', 'black',
-        '-gravity', 'center',
-        '-extent', '320x240',
-        '-quality', '85',
-        destPath
-      ], { timeout: 10000 });
+      // 320x240 JPEG, side bands in the picture's own edge colours (slideImage.js)
+      convertSlideImage(srcPath, destPath);
       return true;
     } catch (err) {
       this.logger.line('sls', `convert error: ${err.message}`, 'ERROR');
