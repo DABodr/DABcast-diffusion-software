@@ -15,6 +15,15 @@ let activeLogTab = 'all';
 
 let STATE = null;
 let editingId = null;
+// Fields the server only accepts while the mux is stopped. Editing them ON AIR = Stop → save → Start.
+const MUX_RESTART_FIELDS = ['f_pi','f_ps8','f_ps16','f_bitrate','f_prot','f_sr','f_zbuf','f_zpre','f_codec','f_lang','f_pty','f_ch','f_padsize'];
+let restartSnapshot = null;   // field values when the edit dialog opened ON AIR (null otherwise)
+const restartFieldValues = () => MUX_RESTART_FIELDS.map((id) => document.getElementById(id)?.value ?? '');
+const restartFieldsChanged = () => Boolean(restartSnapshot && STATE?.muxRunning
+  && restartFieldValues().some((v, i) => v !== restartSnapshot[i]));
+function updateRestartWarn() {
+  document.getElementById('dlgRestartWarn')?.classList.toggle('hidden', !restartFieldsChanged());
+}
 let selectedServiceId = null;  // Track selected service for export
 let logoManagingServiceId = null;  // Track service for logo management
 let LOGS_TEXT = '';
@@ -369,7 +378,8 @@ function renderStats(cap) {
     ? `${esc(block)} · ${((DAB_FREQ_TABLE[block] || 0) / 1e6).toFixed(3)} MHz`
     : `TX: ${esc(tx)}`;
   const bufInputs = STATE.muxRunning && MUX_STATS?.inputs ? Object.values(MUX_STATS.inputs) : [];
-  const bufOk = bufInputs.filter((i) => i.state === 'Streaming').length;
+  // healthy = Streaming, or Unstable with no new underrun in the last minute (dabmux keeps "Unstable" long after start-up)
+  const bufOk = bufInputs.filter((i) => i.state === 'Streaming' || (i.state === 'Unstable' && !i.recentGlitch)).length;
   const bufBad = bufInputs.filter((i) => i.state === 'NoData' || i.state === 'Silence').length;
   const bufUnstable = bufInputs.filter((i) => i.state === 'Unstable' && i.recentGlitch).length;
   const alarms = warn + err + bufBad;
@@ -902,11 +912,13 @@ function openDialogFor(service) {
     }
   }
 
-  // lock fields when ON AIR (identity + dab + audio encoding params)
-  ['f_pi','f_ps8','f_ps16','f_bitrate','f_prot','f_sr','f_zbuf','f_zpre','f_codec','f_lang','f_pty','f_ch','f_padsize'].forEach((id) => {
+  // ON AIR: these fields stay editable for an existing service; saving a change restarts the mux
+  MUX_RESTART_FIELDS.forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.disabled = locked;
+    if (el) el.disabled = (locked && !editingId) || (id === 'f_ch' && $('#f_codec').value === 'HE-AAC v2 (PS)');
   });
+  restartSnapshot = locked && editingId ? restartFieldValues() : null;
+  updateRestartWarn();
 
   // reset tabs
   setActiveTab('general');
@@ -1919,6 +1931,10 @@ $('#btnClearLogs')?.addEventListener('click', async () => {
 $('#f_src')?.addEventListener('change', updateSourceVisibility);
 
 // Sync direct-mode bitrate/prot selects → canonical selects (submit always reads f_bitrate/f_prot)
+// Live "mux restart required" banner (bubbling: runs after field-specific handlers such as direct→f_bitrate sync)
+$('#svcForm')?.addEventListener('input', updateRestartWarn);
+$('#svcForm')?.addEventListener('change', updateRestartWarn);
+
 $('#f_direct_bitrate')?.addEventListener('change', () => {
   const el = $('#f_bitrate');
   if (el) el.value = $('#f_direct_bitrate').value;
@@ -2274,8 +2290,38 @@ $('#svcForm').addEventListener('submit', async (e) => {
     }
   };
 
+  const needMuxRestart = Boolean(editingId && restartFieldsChanged());
+  if (needMuxRestart) {
+    // Refuse before stopping anything if the new bitrate/protection would not fit (Start would fail)
+    const cur = STATE.preset.services.find((s) => s.id === editingId);
+    const cap = STATE.preset.capacity || { totalCu: 0, maxCu: 864 };
+    const newTotal = cap.totalCu + (cur?.enabled ? estimateCu(payload.dab.bitrateKbps, payload.dab.protectionLevel, payload.dab.eepMode) - (cur.cu ?? 0) : 0);
+    if (newTotal > cap.maxCu) {
+      showServiceError(`Capacity exceeded: ${newTotal}/${cap.maxCu} CU — the multiplex could not restart.`);
+      return;
+    }
+    if (!confirm('These changes require restarting the multiplex.\nALL services go off air for a few seconds.\n\nApply and restart now?')) return;
+  }
+
   try {
-    if (editingId) {
+    if (needMuxRestart) {
+      await api('/api/mux/stop', { method: 'POST', body: '{}' });
+      let saveErr = null;
+      try {
+        await api(`/api/services/${editingId}`, { method: 'PATCH', body: JSON.stringify(payload) });
+      } catch (err) { saveErr = err; }
+      if (!saveErr) dlg.close();
+      try {
+        await api('/api/mux/start', { method: 'POST', body: '{}' });
+      } catch (err) {
+        await refresh();
+        throw new Error(`Multiplex restart FAILED — press Start: ${err.message || err}${saveErr ? ` (changes not saved: ${saveErr.message})` : ''}`);
+      }
+      if (saveErr) {
+        await refresh();
+        throw new Error(`Changes not saved, multiplex restarted with the previous settings: ${saveErr.message || saveErr}`);
+      }
+    } else if (editingId) {
       await api(`/api/services/${editingId}`, { method: 'PATCH', body: JSON.stringify(payload) });
     } else {
       await api('/api/services', { method: 'POST', body: JSON.stringify(payload) });
