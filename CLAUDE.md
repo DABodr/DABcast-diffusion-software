@@ -555,6 +555,7 @@ These are non-obvious behaviors that have caused bugs in the past:
 | **DLS file write** | Use `writeTextFileAtomicIfChanged()` (in dlplus.js) to avoid unnecessary writes to the runtime dir. |
 | **dablin -s flag** | Do NOT pass `-s <serviceId>` to dablin — causes immediate exit if SId format doesn't match. Let dablin auto-select first service. |
 | **WARNING status** | Set when `!activeIsMain && consecutiveCrashes > 0` (backup unstable). Cleared when `effectiveActiveOk && !backupUnstable`. |
+| **SLS slides = JPEG 320x240** | odr-padenc sends every file of `mot/<PI>/slide/`. Anything written there must go through the ImageMagick conversion (`_convertToSlide` in appState, `convertToSlideFile`/`writeSlideImage` in index.js): an unconverted 300x300 PNG weighs 50-110 kB = 30-80 s to send with a 58-byte PAD (5-15 kB once converted). `repairSlides()` converts non-conforming `*.jpg` at start-up (before autoStart), originals kept in `mot/<PI>/original/`. Temp files go in `mot/<PI>/`, never in `slide/`. |
 | **MOT logo seed** | On startup, logos are copied from `defaults/mot/` to `data/mot/` only if no `logo.jpg` exists. Uses `force: true` + try/catch. |
 | **build.sh MOT copy** | Uses `find -type f` (not `cp -r`) to exclude runtime FIFOs created by odr-padenc from the .deb package. |
 | **Data preservation on upgrade** | `/var/lib/dabcast/` is never modified by dpkg. demo.json only copied if absent. Logos only seeded if no logo.jpg found. |

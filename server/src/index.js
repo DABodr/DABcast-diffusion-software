@@ -243,6 +243,69 @@ if (fs.existsSync(shippedMot)) {
   }
 }
 
+// ── SLS slides: every image odr-padenc reads must be a JPEG 320x240 ──
+// Same conversion as AppState._convertToSlide (ImageMagick, black side bars, quality 85).
+// An unconverted logo (e.g. a 300x300 RGBA PNG named logo.jpg, written by an import) can weigh
+// 50-110 kB: 30-80 s to transmit with a 58-byte PAD, versus 5-15 kB once converted.
+function convertToSlideFile(src, dest) {
+  try {
+    execFileSync('convert', [src, '-resize', '320x240', '-background', 'black', '-gravity', 'center',
+      '-extent', '320x240', '-quality', '85', dest], { timeout: 10000 });
+    return true;
+  } catch (e) {
+    logger.line('sls', `convert error: ${e.message}`, 'WARN');
+    return false;
+  }
+}
+// Write an imported image into a slide dir, converted. Temp files live outside the slide dir
+// (odr-padenc reads every file there) and the result is moved in atomically.
+// If ImageMagick fails, the image is written as received (previous behaviour).
+function writeSlideImage(slideDir, filename, buf) {
+  const motDir = path.dirname(slideDir);
+  const stamp = `${process.pid}_${Date.now()}`;
+  const raw = path.join(motDir, `.import_${stamp}.tmp`);
+  const conv = path.join(motDir, `.import_${stamp}.jpg`);
+  try {
+    fs.writeFileSync(raw, buf);
+    if (convertToSlideFile(raw, conv)) fs.renameSync(conv, path.join(slideDir, filename));
+    else fs.renameSync(raw, path.join(slideDir, filename));
+  } finally {
+    for (const f of [raw, conv]) { try { fs.unlinkSync(f); } catch { /* already moved */ } }
+  }
+}
+// One-time repair at start-up (before autoStart): convert *.jpg slides that are not a real
+// 320x240 JPEG. The original is kept in data/mot/<PI>/original/ (outside the slide dir).
+function repairSlides() {
+  if (!fs.existsSync(dataMot)) return;
+  for (const pi of fs.readdirSync(dataMot)) {
+    const slideDir = path.join(dataMot, pi, 'slide');
+    let files = [];
+    try { files = fs.readdirSync(slideDir).filter((f) => /\.jpe?g$/i.test(f)); } catch { continue; }
+    for (const f of files) {
+      const file = path.join(slideDir, f);
+      let info = '';
+      try { info = execFileSync('identify', ['-format', '%m %w %h|', file], { encoding: 'utf8', timeout: 5000 }).split('|')[0]; } catch { continue; }
+      if (info === 'JPEG 320 240') continue;
+      const origDir = path.join(dataMot, pi, 'original');
+      try {
+        ensureDir(origDir);
+        let backup = path.join(origDir, f);
+        if (fs.existsSync(backup)) backup = path.join(origDir, `${Date.now()}_${f}`);
+        fs.copyFileSync(file, backup);
+        const before = fs.statSync(file).size;
+        const conv = path.join(dataMot, pi, `.repair_${process.pid}.jpg`);
+        if (convertToSlideFile(file, conv)) {
+          fs.renameSync(conv, file);
+          logger.line('sls', `${pi}/${f}: converted to JPEG 320x240 (was ${info}, ${before} B → ${fs.statSync(file).size} B; original kept in mot/${pi}/original/)`);
+        }
+      } catch (e) {
+        logger.line('sls', `${pi}/${f}: repair failed: ${e.message}`, 'WARN');
+      }
+    }
+  }
+}
+repairSlides();
+
 const state = new AppState({ settings, dataDir, logger, processManager: pm });
 
 // static web
@@ -461,11 +524,10 @@ app.post('/api/import/full', (req, res) => {
           // Create directories recursively
           fs.mkdirSync(slideDir, { recursive: true });
 
-          // Decode base64 and write logo.jpg
+          // Decode base64 and write logo.jpg (converted to a 320x240 JPEG slide)
           const base64Data = logoBase64.replace(/^data:image\/\w+;base64,/, '');
           const logoBuffer = Buffer.from(base64Data, 'base64');
-          const logoPath = path.join(slideDir, 'logo.jpg');
-          fs.writeFileSync(logoPath, logoBuffer);
+          writeSlideImage(slideDir, 'logo.jpg', logoBuffer);
 
           logger.line('export', `Logo imported for service ${svcId}`, 'INFO');
         } catch (err) {
@@ -578,11 +640,10 @@ app.post('/api/import/service', (req, res) => {
         // Create directories recursively
         fs.mkdirSync(slideDir, { recursive: true });
 
-        // Decode base64 and write logo.jpg
+        // Decode base64 and write logo.jpg (converted to a 320x240 JPEG slide)
         const base64Data = payload.logo.replace(/^data:image\/\w+;base64,/, '');
         const logoBuffer = Buffer.from(base64Data, 'base64');
-        const logoPath = path.join(slideDir, 'logo.jpg');
-        fs.writeFileSync(logoPath, logoBuffer);
+        writeSlideImage(slideDir, 'logo.jpg', logoBuffer);
 
         logger.line('export', `Logo imported for service ${svc.id}`, 'INFO');
       } catch (err) {
@@ -1199,8 +1260,16 @@ app.post('/api/mot/:svcId/logo', (req, res) => {
 
     const dir = path.resolve(dataDir, 'mot', svcId, 'slide');
     ensureDir(dir);
-    const out = path.resolve(dir, `logo.${ext}`);
-    fs.writeFileSync(out, buf);
+    // converted to a 320x240 JPEG slide; written as received (logo.<ext>) only if conversion fails
+    const conv = path.resolve(dataDir, 'mot', svcId, `.upload_${process.pid}.jpg`);
+    const raw = path.resolve(dataDir, 'mot', svcId, `.upload_${process.pid}.${ext}`);
+    try {
+      fs.writeFileSync(raw, buf);
+      if (convertToSlideFile(raw, conv)) fs.renameSync(conv, path.resolve(dir, 'logo.jpg'));
+      else fs.renameSync(raw, path.resolve(dir, `logo.${ext}`));
+    } finally {
+      for (const f of [raw, conv]) { try { fs.unlinkSync(f); } catch { /* moved */ } }
+    }
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: String(e.message || e) });
