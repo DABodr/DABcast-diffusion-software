@@ -6,8 +6,10 @@ export function buildMuxConfig({ settings, preset }) {
   const e = settings.ensemble;
   const txMode = (settings.dabmux?.txMode || 'EASYDAB').toUpperCase();
 
-  // Sort services by ui.order for mux generation
-  const sortedServices = [...preset.services].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
+  // Sort services by ui.order for mux generation.
+  // Services explicitly disabled (enabled === false) are left out of the multiplex (off air, CU freed).
+  // Keep in sync with the sub_N mapping of /api/mux/stats in index.js.
+  const sortedServices = [...preset.services].filter((s) => s.enabled !== false).sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
 
   const lines = [];
   lines.push('general {');
