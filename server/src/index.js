@@ -818,6 +818,38 @@ setInterval(() => {
   _prevCpu = cur;
 }, 2000);
 
+// ── Light system load for the main page "System" card (polled every 5 s) ──
+// Reads /proc only; disk usage cached 30 s (statfs, or df on old Node). No ODR tool is spawned.
+let _diskCache = { at: 0, v: null };
+function diskUsage() {
+  if (_diskCache.at && Date.now() - _diskCache.at < 30000) return _diskCache.v;
+  let v = null;
+  try {
+    let totalB, usedB, availB;
+    if (typeof fs.statfsSync === 'function') {
+      const st = fs.statfsSync(dataDir);
+      totalB = st.blocks * st.bsize; usedB = (st.blocks - st.bfree) * st.bsize; availB = st.bavail * st.bsize;
+    } else {
+      const f = execSync(`df -Pk "${dataDir}"`, { encoding: 'utf8', timeout: 3000 }).trim().split('\n')[1].split(/\s+/);
+      totalB = Number(f[1]) * 1024; usedB = Number(f[2]) * 1024; availB = Number(f[3]) * 1024;
+    }
+    const gb = (b) => Math.round(b / 1e8) / 10;
+    v = { totalGb: gb(totalB), freeGb: gb(availB), usedPct: Math.ceil(usedB / (usedB + availB) * 100) };   // same % as df
+  } catch { /* unavailable */ }
+  _diskCache = { at: Date.now(), v };
+  return v;
+}
+app.get('/api/system/load', (req, res) => {
+  let memTotalMb = null, memAvailableMb = null;
+  try {
+    const mi = fs.readFileSync('/proc/meminfo', 'utf8');
+    const t = mi.match(/MemTotal:\s+(\d+)/), a = mi.match(/MemAvailable:\s+(\d+)/);
+    if (t) memTotalMb = Math.round(Number(t[1]) / 1024);
+    if (a) memAvailableMb = Math.round(Number(a[1]) / 1024);
+  } catch { /* ignore */ }
+  res.json({ cpuPct: _cpuPct, cores: os.cpus().length, memTotalMb, memAvailableMb, disk: diskUsage() });
+});
+
 // ── System info (About dialog) ──
 // ODR tool versions via `<bin> --version`. Only called while the mux is NOT running:
 // spawning a second odr-dabmux next to a live one could conflict with its ports.
