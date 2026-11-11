@@ -383,8 +383,11 @@ function renderStats(cap) {
   const running = enabled.filter((s) => st(s) === 'RUNNING').length;
   const warn = enabled.filter((s) => st(s) === 'WARNING').length;
   const err = STATE.muxRunning ? enabled.filter((s) => st(s) === 'ERROR' || st(s) === 'RESTARTING').length : 0;
-  const dls = STATE.muxRunning ? enabled.filter((s) => s.runtime?.currentDls).length : 0;
-  const sls = STATE.muxRunning ? enabled.filter((s) => s.runtime?.currentSlsUrl).length : 0;
+  // ZMQ/EDI direct services carry their own DLS (external encoder): not counted here
+  const isDirect = (s) => ['ZMQ', 'EDI'].includes(String(s.input?.mode || '').toUpperCase());
+  const dlsBase = enabled.filter((s) => !isDirect(s));
+  const dls = STATE.muxRunning ? dlsBase.filter((s) => s.runtime?.currentDls).length : 0;
+  const sls = STATE.muxRunning ? dlsBase.filter((s) => s.runtime?.currentSlsUrl).length : 0;
   const ratio = cap.maxCu ? cap.totalCu / cap.maxCu : 0;
   const capCls = ratio < 0.8 ? 'cap-ok' : ratio <= 1.0 ? 'cap-warn' : 'cap-bad';
   const ens = STATE.settings.ensemble || {};
@@ -410,9 +413,9 @@ function renderStats(cap) {
     card('Mux inputs', bufInputs.length ? `${bufOk} / ${bufInputs.length}` : '—',
       bufInputs.length ? `healthy · ${bufUnstable} glitching · ${bufBad} no audio` : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
       bufInputs.length ? (bufBad ? 'cap-bad' : bufUnstable ? 'cap-warn' : 'cap-ok') : ''),
-    card('Metadata', STATE.muxRunning ? `${dls} / ${enabled.length}` : '—',
-      STATE.muxRunning ? `DLS text · ${sls} cover art` : 'off air', STATE.muxRunning && dls === enabled.length ? 'cap-ok' : '',
-      'DLS: enabled services currently sending a text (now playing or default text). Cover art: services currently sending a dynamic image (album cover from JSON/XML or SLS URL) — static logos are not counted.'),
+    card('Metadata', STATE.muxRunning ? `${dls} / ${dlsBase.length}` : '—',
+      STATE.muxRunning ? `DLS text · ${sls} cover art` : 'off air', STATE.muxRunning && dls === dlsBase.length ? 'cap-ok' : '',
+      'DLS: enabled services currently sending a text (now playing or default text); ZMQ/EDI direct services send their own DLS and are not counted. Cover art: services currently sending a dynamic image (album cover from JSON/XML or SLS URL) — static logos are not counted.'),
     card('Alarms', `${alarms}`, alarms ? `${warn} warning · ${err} error · ${bufBad} mux input` : 'none', alarms ? (err ? 'cap-bad' : 'cap-warn') : 'cap-ok'),
   ].join('');
   if (el._last !== html) { el.innerHTML = html; el._last = html; }
@@ -600,8 +603,11 @@ function render() {
       ['', vuMeter(!STATE.muxRunning ? null
         : ['ZMQ', 'EDI'].includes(String(svc.input?.mode || '').toUpperCase()) ? muxPeakLevels(MUX_STATS?.inputs?.[svc.id])
         : svc.runtime?.audioLevels)],
-      ['muted', `<div class="dls-text" title="${esc(dlsPreview)}">${esc(dlsPreview)}</div>`],
-      ['col-dlplus', svc.runtime?.dlplusActive ? '<span class="dlplus-icon" title="DL+ active">DL+</span>' : ''],
+      // ZMQ/EDI direct: DLS / DL+ travel in the external encoder's PAD — DABcast's own DLS is not broadcast
+      ['muted', isDirectInput
+        ? '<div class="dls-text" title="DLS and DL+ are sent by the external encoder (PAD of the ZMQ/EDI input)">from encoder</div>'
+        : `<div class="dls-text" title="${esc(dlsPreview)}">${esc(dlsPreview)}</div>`],
+      ['col-dlplus', svc.runtime?.dlplusActive && !isDirectInput ? '<span class="dlplus-icon" title="DL+ active">DL+</span>' : ''],
       ['muted sls-cell', ''],  // placeholder — image handled separately
       ['row-actions col-actions', `<button class="btn btn-mini svc-toggle ${svc.enabled === false ? 'off' : 'on'}" data-act="toggle" data-id="${svc.id}" title="${svc.enabled === false ? 'Service OFF (not in the multiplex) — click to put it back on air' : 'Service ON — click to take it off the multiplex'}">${svc.enabled === false ? 'OFF' : 'ON'}</button><button class="btn btn-mini" data-act="edit" data-id="${svc.id}">Edit</button><button class="btn btn-mini" data-act="del" data-id="${svc.id}">Del</button>`],
     ];
