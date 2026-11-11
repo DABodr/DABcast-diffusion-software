@@ -86,6 +86,34 @@ export function playerLevels(key, since = 0) {
   return lv ? lv.filter((x) => x[0] > since) : null;
 }
 
+// Float32 PCM from dablin → whole frames only, NaN/Inf replaced by 0. LAME (ffmpeg libmp3lame)
+// aborts on such values ("psymodel.c: calc_energy: Assertion `el >= 0' failed"), and a stream cut
+// in the middle of a sample is read as garbage floats (NaN, huge values).
+// Returns (chunk) => Buffer of whole frames; the incomplete tail is kept for the next chunk.
+export function makePcmSanitizer(channels, onInvalid = () => {}) {
+  const frameBytes = 4 * channels;
+  let rest = Buffer.alloc(0);
+  return (chunk) => {
+    const b = rest.length ? Buffer.concat([rest, chunk]) : chunk;
+    const usable = b.length - (b.length % frameBytes);
+    rest = Buffer.from(b.subarray(usable));
+    const out = Buffer.from(b.subarray(0, usable));   // own copy: aligned for the Float32Array view
+    const f = new Float32Array(out.buffer, out.byteOffset, usable / 4);
+    let bad = 0;
+    for (let i = 0; i < f.length; i++) if (!Number.isFinite(f[i])) { f[i] = 0; bad++; }
+    if (bad) onInvalid(bad);
+    return out;
+  };
+}
+// Keep only the last maxBytes of the start-up PCM, cutting on an 8-byte boundary (a whole frame
+// for mono and stereo float32), so the stream stays sample-aligned.
+export function trimAligned(buf, maxBytes) {
+  if (buf.length <= maxBytes) return buf;
+  const cut = Math.ceil((buf.length - maxBytes) / 8) * 8;
+  return buf.subarray(cut);
+}
+const EARLY_MAX_BYTES = 48000 * 2 * 4;   // ~1 s of 48 kHz stereo float32
+
 // dablin prints "PCMOutput: format set; samplerate: 48000, channels: 2, output: 32bit float"
 export function parsePcmFormat(text) {
   const m = /samplerate:\s*(\d+),\s*channels:\s*(\d+)/.exec(text);
@@ -151,10 +179,10 @@ export function streamService({ port, subchId, dabPlus = true, key = '', req, re
 
   // Wait for the PCM format (sample rate depends on the service) before starting ffmpeg
   let stderrBuf = '';
-  const pending = [];
+  let earlyPcm = Buffer.alloc(0);
   formatTimer = setTimeout(() => cleanup(`sub-channel ${subchId} not found or no audio after ${FORMAT_TIMEOUT_MS / 1000} s`), FORMAT_TIMEOUT_MS);
   dablin.stdout.on('data', (b) => { bytes.pcm += b.length; });
-  const early = (b) => { pending.push(b); while (pending.length > 100) pending.shift(); };   // PCM before ffmpeg starts (~1 s kept)
+  const early = (b) => { earlyPcm = trimAligned(Buffer.concat([earlyPcm, b]), EARLY_MAX_BYTES); };   // PCM before ffmpeg starts (~1 s kept, sample-aligned)
   dablin.stdout.on('data', early);
   const onStderr = (chunk) => {
     stderrBuf = (stderrBuf + chunk.toString()).slice(-4000);
@@ -188,12 +216,26 @@ export function streamService({ port, subchId, dabPlus = true, key = '', req, re
     const levels = [];
     const meter = makeMeter(fmt.rate, fmt.channels, levels);
     if (key) meters.set(key, levels);
-    for (const b of pending) meter(b);
-    dablin.stdout.on('data', meter);
-    for (const b of pending.splice(0)) feed(ffmpeg.stdin, b);
-    // Downstream of the decoder, normal piping: a slow browser slows ffmpeg and dablin, and the
-    // excess is dropped at the decoder input (feed above) — never at the mux side.
-    dablin.stdout.pipe(ffmpeg.stdin);
+    let invalidLogged = false;
+    const sanitize = makePcmSanitizer(fmt.channels, (n) => {
+      if (invalidLogged) return;
+      invalidLogged = true;
+      log(`player: sub-channel ${subchId}: decoder produced ${n} invalid samples (NaN/Inf), replaced by silence`, 'WARN');
+    });
+    const toEncoder = (b) => {
+      const pcm = sanitize(b);
+      if (!pcm.length) return;
+      meter(pcm);
+      // Downstream of the decoder, back-pressure: a slow browser slows ffmpeg and dablin, and the
+      // excess is dropped at the decoder input (feed above) — never at the mux side.
+      if (!ffmpeg.stdin.write(pcm)) {
+        dablin.stdout.pause();
+        ffmpeg.stdin.once('drain', () => dablin.stdout.resume());
+      }
+    };
+    toEncoder(earlyPcm);
+    earlyPcm = Buffer.alloc(0);
+    dablin.stdout.on('data', toEncoder);
     ffmpeg.stdout.pipe(res, { end: false });   // only cleanup() ends the response, after logging why
     log(`player: playing sub-channel ${subchId} (${fmt.rate} Hz, ${fmt.channels} ch)`);
   };

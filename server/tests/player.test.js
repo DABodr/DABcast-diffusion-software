@@ -1,7 +1,7 @@
 // Tests for the web player helpers (no process is spawned here)
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { parsePcmFormat, findBin, missingPlayerTools, acquireListenerSlot, playerListeners, makeMeter, playerLevels } from '../src/player.js';
+import { parsePcmFormat, findBin, missingPlayerTools, acquireListenerSlot, playerListeners, makeMeter, playerLevels, makePcmSanitizer, trimAligned } from '../src/player.js';
 
 describe('player — parsePcmFormat', () => {
   it('reads the PCM format printed by dablin', () => {
@@ -67,5 +67,44 @@ describe('player — server-side meter', () => {
     makeMeter(48000, 1, out)(Buffer.alloc(2400 * 4));
     assert.deepEqual(out[0], [0.05, -99, -99]);
     assert.equal(playerLevels('no-such-key'), null);
+  });
+});
+
+describe('player — PCM kept aligned and valid for the MP3 encoder', () => {
+  // stereo float32 test signal: sample k = k / 1e6 (finite, easy to check)
+  const signal = (frames) => {
+    const f = new Float32Array(frames * 2);
+    for (let k = 0; k < f.length; k++) f[k] = k / 1e6;
+    return Buffer.from(f.buffer);
+  };
+  const floats = (buf) => new Float32Array(buf.buffer, buf.byteOffset, buf.length / 4);
+
+  it('slow start: trimming the start-up buffer never cuts inside a sample', () => {
+    const src = signal(48000 * 3);                       // 3 s produced before ffmpeg starts
+    let early = Buffer.alloc(0);
+    for (let off = 0, n = 1; off < src.length; off += n, n = (n * 7 + 13) % 5003 + 1) {   // odd chunk sizes
+      early = trimAligned(Buffer.concat([early, src.subarray(off, off + n)]), 384000);
+    }
+    assert.equal(early.length % 8, 0);
+    assert.ok(early.length <= 384000);
+    const out = floats(makePcmSanitizer(2)(early));
+    const first = Math.round(out[0] * 1e6);
+    for (let i = 0; i < out.length; i++) assert.equal(Math.round(out[i] * 1e6), first + i);   // contiguous, no garbage
+  });
+
+  it('chunks split mid-sample come out as whole frames, in order', () => {
+    const src = signal(1000);
+    const sanitize = makePcmSanitizer(2);
+    const parts = [src.subarray(0, 3), src.subarray(3, 4001), src.subarray(4001)].map(sanitize);
+    assert.deepEqual(parts.map((p) => p.length % 8), [0, 0, 0]);
+    assert.deepEqual(Buffer.concat(parts), src);
+  });
+
+  it('replaces NaN / Infinity by 0 and reports them', () => {
+    const f = new Float32Array([0.5, NaN, -0.5, Infinity, -Infinity, 0.25]);
+    let reported = 0;
+    const out = floats(makePcmSanitizer(2, (n) => { reported = n; })(Buffer.from(f.buffer)));
+    assert.deepEqual([...out], [0.5, 0, -0.5, 0, 0, 0.25]);
+    assert.equal(reported, 3);
   });
 });
