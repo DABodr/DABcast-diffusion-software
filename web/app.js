@@ -481,9 +481,11 @@ function render() {
   const startBtn = $('#btnStart');
   if (startBtn) {
     const exceeded = cap.totalCu > cap.maxCu;
-    startBtn.disabled = on || exceeded || locked_pwd;
+    const noneOn = !(STATE.preset.services || []).some((s) => s.enabled !== false);
+    startBtn.disabled = on || exceeded || locked_pwd || noneOn;
     if (locked_pwd) startBtn.title = 'Change password first';
     else if (exceeded) startBtn.title = 'CU capacity exceeded';
+    else if (noneOn) startBtn.title = 'All services are OFF';
     else startBtn.title = '';
   }
   // Show async errors (e.g. HackRF not connected)
@@ -543,6 +545,7 @@ function render() {
     tr.style.cursor = tr.draggable ? 'grab' : 'default';
     tr.style.display = viewMatch(svc) ? '' : 'none';
     tr.classList.toggle('selected', selectedServiceId === svc.id);
+    tr.classList.toggle('svc-off', svc.enabled === false);
 
     const status = svc.runtime?.status || 'UNKNOWN';
     const dlsPreview = svc.runtime?.currentDls || (svc.metadata?.defaultDlsAllowed !== false ? (svc.metadata?.defaultDls || '') : '');
@@ -575,13 +578,13 @@ function render() {
       ['col-ch', (svc.audio?.channels ?? 2) === 1 ? 'Mono' : 'Stereo'],
       ['col-sr', `${esc(String((svc.audio?.sampleRateHz ?? 48000) / 1000))} kHz`],
       ['col-port', `${svc.network.ediOutputTcp.port}`],
-      ['col-main', streamDot(activeIsMain, Boolean(svc.input?.uri), on, isWarning && activeIsMain)],
+      ['col-main', streamDot(activeIsMain, Boolean(svc.input?.uri), on && svc.enabled !== false, isWarning && activeIsMain)],
       ['col-bkp', streamDot(activeIsBackup, Boolean(backupUri), false, isWarning && activeIsBackup)],
       ['', vuMeter(STATE.muxRunning ? svc.runtime?.audioLevels : null)],
       ['muted', `<div class="dls-text" title="${esc(dlsPreview)}">${esc(dlsPreview)}</div>`],
       ['col-dlplus', svc.runtime?.dlplusActive ? '<span class="dlplus-icon" title="DL+ active">DL+</span>' : ''],
       ['muted sls-cell', ''],  // placeholder — image handled separately
-      ['row-actions col-actions', `<button class="btn btn-mini" data-act="edit" data-id="${svc.id}">Edit</button><button class="btn btn-mini" data-act="del" data-id="${svc.id}">Del</button>`],
+      ['row-actions col-actions', `<button class="btn btn-mini svc-toggle ${svc.enabled === false ? 'off' : 'on'}" data-act="toggle" data-id="${svc.id}" title="${svc.enabled === false ? 'Service OFF (not in the multiplex) — click to put it back on air' : 'Service ON — click to take it off the multiplex'}">${svc.enabled === false ? 'OFF' : 'ON'}</button><button class="btn btn-mini" data-act="edit" data-id="${svc.id}">Edit</button><button class="btn btn-mini" data-act="del" data-id="${svc.id}">Del</button>`],
     ];
 
     const SLS_COL = 15;
@@ -2227,6 +2230,50 @@ $('#btnTestCover')?.addEventListener('click', async () => {
   }
 });
 
+// ON/OFF button: OFF = service left out of the .mux (off air). ON AIR, the change needs Stop → save → Start.
+let toggleBusy = false;
+async function toggleService(svc, btn) {
+  if (!svc || toggleBusy) return;
+  const turnOn = svc.enabled === false;
+  const name = svc.identity?.ps8 || svc.id;
+  const othersOn = STATE.preset.services.filter((s) => s.id !== svc.id && s.enabled !== false).length;
+  if (!turnOn && STATE.muxRunning && othersOn === 0) {
+    showToast('At least one service must stay ON while ON AIR — use Stop instead.');
+    return;
+  }
+  const cap = STATE.preset.capacity || { totalCu: 0, maxCu: 864 };
+  if (turnOn && cap.totalCu + (svc.cu ?? 0) > cap.maxCu) {
+    showToast(`Not enough capacity: ${cap.totalCu + (svc.cu ?? 0)}/${cap.maxCu} CU`);
+    return;
+  }
+  const save = () => api(`/api/services/${svc.id}`, { method: 'PATCH', body: JSON.stringify({ enabled: turnOn }) });
+  toggleBusy = true;
+  if (btn) btn.disabled = true;
+  try {
+    if (!STATE.muxRunning) {
+      await save();
+      return;
+    }
+    if (!confirm(`${turnOn ? 'Put' : 'Take'} ${name} ${turnOn ? 'back on air' : 'off air'}?\n\nThe multiplex restarts: ALL services go off air for a few seconds.`)) return;
+    await api('/api/mux/stop', { method: 'POST', body: '{}' });
+    let saveErr = null;
+    try { await save(); } catch (err) { saveErr = err; }
+    try {
+      await api('/api/mux/start', { method: 'POST', body: '{}' });
+    } catch (err) {
+      showToast(`Multiplex restart FAILED — press Start: ${err.message || err}`);
+      return;
+    }
+    if (saveErr) showToast(`Change not saved, multiplex restarted with the previous settings: ${saveErr.message || saveErr}`);
+  } catch (err) {
+    showToast(err.message || String(err));
+  } finally {
+    toggleBusy = false;
+    if (btn) btn.disabled = false;   // render() keeps the same button element when its HTML is unchanged
+    await refresh();
+  }
+}
+
 svcTableBody.addEventListener('click', async (e) => {
   const btn = e.target.closest('button');
   const row = e.target.closest('tr');
@@ -2239,6 +2286,9 @@ svcTableBody.addEventListener('click', async (e) => {
 
     if (act === 'edit') {
       openDialogFor(svc);
+    }
+    if (act === 'toggle') {
+      await toggleService(svc, btn);
     }
     if (act === 'del') {
       if (STATE.muxRunning) return;
