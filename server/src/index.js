@@ -210,6 +210,9 @@ const pm = new OdrProcessManager({ logger, odrBinDir: settings.odrBinDir, runtim
 
 // Crash recovery: kill any orphan ODR processes from a previous crash
 pm.cleanupOrphans();
+// Snapshot ODR versions at boot (mux not running yet, autoStart comes later),
+// so System information shows them even when "?" is first opened ON AIR.
+refreshOdrVersions();
 
 // ensure Demo preset exists (shipped default, or empty fallback)
 const shippedDemo = path.resolve(appDir, 'defaults', 'demo.json');
@@ -812,6 +815,30 @@ setInterval(() => {
 }, 2000);
 
 // ── System info (About dialog) ──
+// ODR tool versions via `<bin> --version`. Only called while the mux is NOT running:
+// spawning a second odr-dabmux next to a live one could conflict with its ports.
+function refreshOdrVersions() {
+  const bins = {
+    'ODR-DabMux': 'odr-dabmux',
+    'ODR-AudioEnc': 'odr-audioenc',
+    'ODR-PadEnc': 'odr-padenc',
+    'ODR-DabMod': 'odr-dabmod'
+  };
+  const versions = {};
+  for (const [label, bin] of Object.entries(bins)) {
+    try {
+      const out = execSync(`${bin} --version 2>&1`, { encoding: 'utf8', timeout: 3000 });
+      const first = out.split('\n')[0].trim();
+      const vm = first.match(/(\d+\.\d+[\.\d]*)/);
+      versions[label] = vm ? vm[1] : first;
+    } catch {
+      versions[label] = null;
+    }
+  }
+  app._odrVersionsCache = versions;
+  app._odrVersionsCacheTs = Date.now();
+}
+
 app.get('/api/system/info', (req, res) => {
   try {
     // Memory: read /proc/meminfo
@@ -836,30 +863,11 @@ app.get('/api/system/info', (req, res) => {
       }
     } catch { /* ignore */ }
 
-    // ODR tool versions (cached 60s) — skip when mux is running to avoid
-    // spawning a second odr-dabmux process that could conflict with live ports
-    const now = Date.now();
-    const muxLive = state.getState().muxRunning;
-    if (!muxLive && (!app._odrVersionsCache || now - app._odrVersionsCacheTs > 60000)) {
-      const bins = {
-        'ODR-DabMux': 'odr-dabmux',
-        'ODR-AudioEnc': 'odr-audioenc',
-        'ODR-PadEnc': 'odr-padenc',
-        'ODR-DabMod': 'odr-dabmod'
-      };
-      const versions = {};
-      for (const [label, bin] of Object.entries(bins)) {
-        try {
-          const out = execSync(`${bin} --version 2>&1`, { encoding: 'utf8', timeout: 3000 });
-          const first = out.split('\n')[0].trim();
-          const vm = first.match(/(\d+\.\d+[\.\d]*)/);
-          versions[label] = vm ? vm[1] : first;
-        } catch {
-          versions[label] = null;
-        }
-      }
-      app._odrVersionsCache = versions;
-      app._odrVersionsCacheTs = now;
+    // ODR tool versions (cached 60s) — never spawn while the mux is running
+    // (see refreshOdrVersions); the startup snapshot is shown instead.
+    // Read muxRunning directly: getState() would consume lastError.
+    if (!state.muxRunning && (!app._odrVersionsCache || Date.now() - app._odrVersionsCacheTs > 60000)) {
+      refreshOdrVersions();
     }
 
     res.json({
