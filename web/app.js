@@ -384,8 +384,8 @@ function renderStats(cap) {
   const bufBad = bufInputs.filter((i) => i.state === 'NoData' || i.state === 'Silence').length;
   const bufUnstable = bufInputs.filter((i) => i.state === 'Unstable' && i.recentGlitch).length;
   const alarms = warn + err + bufBad;
-  const card = (title, val, sub, valCls = '') =>
-    `<div class="stat-card"><div class="stat-title">${title}</div><div class="stat-val ${valCls}">${val}</div><div class="stat-sub">${sub}</div></div>`;
+  const card = (title, val, sub, valCls = '', tip = '') =>
+    `<div class="stat-card"${tip ? ` title="${esc(tip)}"` : ''}><div class="stat-title">${title}</div><div class="stat-val ${valCls}">${val}</div><div class="stat-sub">${sub}</div></div>`;
   const html = [
     card('Ensemble', esc(ens.label || '—'), `${esc(ens.idHex || '')} · ${muxSub}`, 'stat-val-sm'),
     card('Capacity', `${cap.totalCu} / ${cap.maxCu} CU`,
@@ -395,7 +395,9 @@ function renderStats(cap) {
     card('Mux inputs', bufInputs.length ? `${bufOk} / ${bufInputs.length}` : '—',
       bufInputs.length ? `healthy · ${bufUnstable} glitching · ${bufBad} no audio` : (STATE.muxRunning ? (MUX_STATS?.error ? 'stats unavailable' : 'loading…') : 'off air'),
       bufInputs.length ? (bufBad ? 'cap-bad' : bufUnstable ? 'cap-warn' : 'cap-ok') : ''),
-    card('Metadata', STATE.muxRunning ? `${dls} · ${sls}` : '—', 'DLS · SLS active'),
+    card('Metadata', STATE.muxRunning ? `${dls} / ${enabled.length}` : '—',
+      STATE.muxRunning ? `DLS text · ${sls} cover art` : 'off air', STATE.muxRunning && dls === enabled.length ? 'cap-ok' : '',
+      'DLS: enabled services currently sending a text (now playing or default text). Cover art: services currently sending a dynamic image (album cover from JSON/XML or SLS URL) — static logos are not counted.'),
     card('Alarms', `${alarms}`, alarms ? `${warn} warning · ${err} error · ${bufBad} mux input` : 'none', alarms ? (err ? 'cap-bad' : 'cap-warn') : 'cap-ok'),
   ].join('');
   if (el._last !== html) { el.innerHTML = html; el._last = html; }
