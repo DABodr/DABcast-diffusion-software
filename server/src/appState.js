@@ -567,6 +567,24 @@ export class AppState {
 
     this.logger.line(`svc:${id}`, `setService: locked=${locked} uriChanged=${uriChanged} (${existing.input.uri} => ${normalized.input.uri}) needRestart=${needRestart}`, 'DEBUG');
 
+    // ON AIR: these fields are saved now but only reach the encoder/mux at the next encoder
+    // restart or mux Start. Expose them as rt.pendingRestart for a UI hint (display only).
+    // rt is rebuilt by _initRuntime() at startMux(), which clears the hint.
+    if (locked) {
+      const rt = this.serviceRuntime.get(normalized.id);
+      if (rt) {
+        const pick = (s) => ({ enabled: s.enabled, gainDb: s.audio?.gainDb, channels: s.audio?.channels,
+          encoderBufferMs: s.input?.encoderBufferMs, pty: s.identity?.pty, languageHex: s.identity?.languageHex });
+        const cur = pick(normalized);
+        if (!rt.appliedConfig) rt.appliedConfig = pick(existing);
+        if (needRestart && this.pm.isRunning(`svc:${id}:audioenc`)) {
+          // encoder restarts below with the new config → encoder-level fields get applied
+          Object.assign(rt.appliedConfig, { gainDb: cur.gainDb, channels: cur.channels, encoderBufferMs: cur.encoderBufferMs });
+        }
+        rt.pendingRestart = Object.keys(cur).filter((k) => cur[k] !== rt.appliedConfig[k]);
+      }
+    }
+
     this.preset.services[idx] = normalized;
     this._savePreset();
 

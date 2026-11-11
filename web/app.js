@@ -43,6 +43,14 @@ function bufTag(inp, always = false) {
   const tip = `Mux input: ${inp.state}${note} · fill ${inp.minFill}–${inp.maxFill} · underruns ${inp.underruns}${d} · overruns ${inp.overruns} · peak ${inp.peakLeft}/${inp.peakRight} dBFS`;
   return `<span class="buf-tag ${cls}" title="${esc(tip)}">${label}${d ? ' ▲' : ''}</span>`;
 }
+// ON AIR edits saved but not yet applied (rt.pendingRestart from setService)
+const PENDING_LABELS = { gainDb: 'audio gain', encoderBufferMs: 'encoder buffer', channels: 'channels', pty: 'PTY', languageHex: 'language', enabled: 'enabled' };
+function pendingTag(rt) {
+  const keys = rt?.pendingRestart;
+  if (!keys?.length) return '';
+  const tip = `Saved, not applied yet: ${keys.map((k) => PENDING_LABELS[k] || k).join(', ')} — takes effect at the next mux Start (or when this encoder restarts)`;
+  return `<span class="buf-tag pend" title="${esc(tip)}">PENDING</span>`;
+}
 function maybeFetchMuxStats() {
   if (!STATE?.muxRunning) { MUX_STATS = null; return; }
   if (Date.now() - _muxStatsAt < 5000) return;
@@ -544,7 +552,7 @@ function render() {
 
     // Cell definitions: [cssClass, innerHTML]
     const cells = [
-      ['', badge(status) + (STATE.muxRunning ? bufTag(MUX_STATS?.inputs?.[svc.id]) : '')],
+      ['', badge(status) + (STATE.muxRunning ? bufTag(MUX_STATS?.inputs?.[svc.id]) + pendingTag(svc.runtime) : '')],
       ['', `<div class="ps"${ps8Title ? ` title="${esc(ps8Title)}"` : ''}>${esc(ps8)}</div><div class="muted">${esc(ps16)}</div>`],
       ['col-pid hide-mobile', esc(svc.id)],
       ['col-bitrate', `${svc.dab.bitrateKbps} kbps`],
@@ -784,7 +792,7 @@ function openDialogFor(service) {
   showServiceError('');
 
   $('#dlgTitle').textContent = editingId ? `Edit: ${service?.identity?.ps8}` : 'Add service';
-  $('#dlgLockHint').textContent = locked ? 'ON AIR: identity/bitrate/protection locked' : '';
+  $('#dlgLockHint').textContent = locked ? 'ON AIR: changing identity, bitrate, protection or audio format restarts the whole multiplex on save · audio gain and encoder buffer alone apply at the next mux Start' : '';
 
   // --- General tab ---
   $('#f_pi').value = (service?.identity?.pi || '').replace(/^0x/i, '');
@@ -1928,7 +1936,7 @@ $('#f_codec')?.addEventListener('change', () => {
   if (codec === 'HE-AAC v2 (PS)') {
     chSel.value = '2';
     chSel.disabled = true;
-  } else if (!STATE?.muxRunning) {
+  } else if (!STATE?.muxRunning || editingId) {
     chSel.disabled = false;
   }
 });
