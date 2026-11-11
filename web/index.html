@@ -25,13 +25,16 @@
     </div>
 
     <div class="actions">
+      <button id="btnMux" class="btn">Multiplex</button>
+      <button id="btnLevels" class="btn" title="Audio levels and gain suggestions">Levels</button>
+      <button id="btnLogs" class="btn">Logs</button>
+      <button id="btnDablin" class="btn">Dablin</button>
+      <button id="btnPlayer" class="btn" title="Listen to a service of the multiplex in this browser">Player</button>
+      <button id="btnTelegram" class="btn" title="Telegram notifications">Telegram</button>
+      <button id="btnAbout" class="btn" title="System information">Sys. info</button>
       <button id="btnAuth" class="btn btn-about hide-mobile" title="Account and password">&#128274;</button>
       <button id="btnSignOut" class="btn btn-about" title="Sign out" aria-label="Sign out">&#x23FB;</button>
-      <button id="btnTelegram" class="btn" title="Telegram notifications">Telegram</button>
-      <button id="btnAbout" class="btn btn-about" title="About">?</button>
-      <button id="btnDablin" class="btn">Dablin</button>
-      <button id="btnMux" class="btn">Multiplex</button>
-      <button id="btnLogs" class="btn">Logs</button>
+      <button id="btnLegal" class="btn btn-about" title="About DABcast: credits and license">?</button>
       <button id="btnStop" class="btn btn-danger">Stop</button>
       <button id="btnStart" class="btn btn-success">Start</button>
       <div class="onair-group">
@@ -720,6 +723,105 @@
         <div class="spacer"></div>
         <button type="button" class="btn" data-action="mux-cancel">Cancel</button>
         <button class="btn btn-success" id="btnMuxSave" value="default">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgLevels" class="modal">
+    <form method="dialog" class="modal-body modal-levels">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Audio levels</div>
+          <div class="modal-sub">Peaks measured by odr-dabmux, sliding 5-minute window (measured while this page is open)</div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close">✕</button>
+      </div>
+      <div class="lv-bar">
+        <label>Target typical peak
+          <select id="lvTarget">
+            <option value="-3">-3 dBFS (loud)</option>
+            <option value="-6">-6 dBFS</option>
+            <option value="-9">-9 dBFS</option>
+            <option value="-12">-12 dBFS (quiet)</option>
+          </select>
+        </label>
+        <button id="lvReset" class="btn btn-sm" type="button">Reset measurement</button>
+        <div class="spacer"></div>
+        <button id="lvApplyAll" class="btn btn-sm btn-primary" type="button" disabled>Apply all</button>
+      </div>
+      <div id="lvTable"></div>
+      <p class="hint">Typical peak = median of the peaks (silence ignored). Max = highest peak measured; in red when the audio clips (above -1 dBFS) — the suggestion then always lowers the gain, back to 0 dB at least if a boost was added. A boost is limited to +6 dB per step: apply, then measure again. Peaks are not perceived loudness: two stations with the same peaks can sound different depending on their processing — use the suggestion as a starting point. Apply saves the gain and restarts only that service's encoder (2–3 s gap on that service, the multiplex keeps running).</p>
+      <div class="modal-actions">
+        <div class="spacer"></div>
+        <button value="cancel" class="btn">Close</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dlgPlayer" class="modal">
+    <form method="dialog" class="modal-body modal-player">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Player</div>
+          <div class="modal-sub" id="plSub">Decoded from the multiplex output</div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close">✕</button>
+      </div>
+      <div class="pl-layout">
+        <div class="pl-list" id="plList"></div>
+        <div class="pl-main">
+          <div class="pl-now">
+            <div class="pl-art"><img id="plArt" alt="" /><span id="plArtTxt"></span></div>
+            <div class="pl-meta">
+              <div class="pl-name" id="plName">—</div>
+              <div class="pl-info" id="plInfo"></div>
+              <div class="pl-dlplus" id="plDlplus"></div>
+              <div class="pl-dls" id="plDls"></div>
+            </div>
+          </div>
+          <div class="pl-vu">
+            <div class="pl-vu-row"><span class="pl-vu-ch">L</span><div class="pl-vu-bar"><div class="pl-vu-mask" id="plVuMaskL"></div><div class="pl-vu-peak" id="plVuPeakL"></div></div><span class="pl-vu-db" id="plVuDbL">—</span></div>
+            <div class="pl-vu-row"><span class="pl-vu-ch">R</span><div class="pl-vu-bar"><div class="pl-vu-mask" id="plVuMaskR"></div><div class="pl-vu-peak" id="plVuPeakR"></div></div><span class="pl-vu-db" id="plVuDbR">—</span></div>
+            <div class="pl-vu-scale"><span style="left:0%">-60</span><span style="left:33.3%">-40</span><span style="left:66.7%">-20</span><span style="left:83.3%">-10</span><span style="left:100%">0</span></div>
+          </div>
+          <div class="pl-controls">
+            <button id="plPlay" class="btn btn-primary" type="button">▶ Play</button>
+            <label class="pl-vol">Vol <input id="plVol" type="range" min="0" max="1" step="0.01" value="0.8" /></label>
+            <span class="pl-status" id="plStatus"></span>
+          </div>
+        </div>
+      </div>
+      <p class="hint pl-hint">Audio decoded from the multiplex output (as a DAB receiver hears it), re-encoded to MP3 for the browser, a few seconds behind live. DLS, DL+ and slides are the ones DABcast sends; ZMQ/EDI direct inputs carry their own, not shown here.</p>
+    </form>
+  </dialog>
+
+  <dialog id="dlgLegal" class="modal">
+    <form method="dialog" class="modal-body modal-legal">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">DABcast <span id="legalVersion" class="legal-ver"></span></div>
+          <div class="modal-sub">DAB+ broadcast manager for ODR-mmbTools</div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close">✕</button>
+      </div>
+      <div class="about-grid legal-grid">
+        <span class="about-label">Created by</span><span class="about-value">Aurélien Picart</span>
+        <span class="about-label">Source code</span><span class="about-value"><a href="https://github.com/DABodr/DABcast-diffusion-software" target="_blank" rel="noopener">GitHub</a></span>
+        <span class="about-label">Website</span><span class="about-value"><a href="https://dabodr.github.io/DABcast-diffusion-software/" target="_blank" rel="noopener">dabodr.github.io</a></span>
+      </div>
+      <hr class="about-sep legal-sep">
+      <div class="legal-title">License</div>
+      <p class="legal-text">DABcast Source-Available License, version 1.0 — <b>free to use, free to modify, not for resale</b>.
+        You may use, study, modify and redistribute DABcast free of charge; selling it or charging for access is not allowed.
+        Attribution and modification notices must be preserved.<br>
+        Copyright © 2026 DABodr. All rights reserved. <a href="https://github.com/DABodr/DABcast-diffusion-software/blob/main/LICENSE" target="_blank" rel="noopener">Full license text</a></p>
+      <div class="legal-title">Third-party software</div>
+      <p class="legal-text">DABcast drives the <a href="https://www.opendigitalradio.org/" target="_blank" rel="noopener">ODR-mmbTools</a>, installed separately and run as independent programs:
+        ODR-DabMux, ODR-AudioEnc and ODR-PadEnc (GPL v2), ODR-DabMod (GPL v3). The DABcast license does not change the rights the GPL grants on these tools.<br>
+        Node.js packages: express, morgan, nanoid, archiver, jose (MIT), bcryptjs (BSD 3-Clause).</p>
+      <div class="modal-actions">
+        <div class="spacer"></div>
+        <button value="cancel" class="btn">Close</button>
       </div>
     </form>
   </dialog>
