@@ -637,9 +637,11 @@ function render() {
     svcTableBody.lastChild.remove();
   }
 
-  // lock delete while on air
+  // ON AIR: only OFF services (not in the running mux) can be deleted
   document.querySelectorAll('[data-act="del"]').forEach((b) => {
-    b.disabled = STATE.muxRunning;
+    const s = STATE.preset.services.find((x) => x.id === b.dataset.id);
+    b.disabled = STATE.muxRunning && s?.enabled !== false;
+    b.title = b.disabled ? 'ON AIR: turn the service OFF first, then delete it' : 'Delete this service';
   });
 
   // Setup drag & drop for service reordering
@@ -808,7 +810,9 @@ function openDialogFor(service) {
   showServiceError('');
 
   $('#dlgTitle').textContent = editingId ? `Edit: ${service?.identity?.ps8}` : 'Add service';
-  $('#dlgLockHint').textContent = locked ? 'ON AIR: changing identity, bitrate, protection or audio format restarts the whole multiplex on save · audio gain and encoder buffer alone apply at the next mux Start' : '';
+  $('#dlgLockHint').textContent = !locked ? ''
+    : editingId ? 'ON AIR: changing identity, bitrate, protection or audio format restarts the whole multiplex on save · audio gain and encoder buffer alone apply at the next mux Start'
+    : 'ON AIR: the new service is added OFF — press its ON button to put it on air (restarts the multiplex)';
 
   // --- General tab ---
   $('#f_pi').value = (service?.identity?.pi || '').replace(/^0x/i, '');
@@ -838,7 +842,7 @@ function openDialogFor(service) {
   if ($('#f_codec').value === 'HE-AAC v2 (PS)') {
     chSel.value = '2';
     chSel.disabled = true;
-  } else if (!locked || editingId) {
+  } else {
     chSel.disabled = false;
   }
 
@@ -918,10 +922,10 @@ function openDialogFor(service) {
     }
   }
 
-  // ON AIR: these fields stay editable for an existing service; saving a change restarts the mux
+  // ON AIR: fields stay editable — edit restarts the mux on save, a new service is added OFF
   MUX_RESTART_FIELDS.forEach((id) => {
     const el = document.getElementById(id);
-    if (el) el.disabled = (locked && !editingId) || (id === 'f_ch' && $('#f_codec').value === 'HE-AAC v2 (PS)');
+    if (el) el.disabled = id === 'f_ch' && $('#f_codec').value === 'HE-AAC v2 (PS)';
   });
   restartSnapshot = locked && editingId ? restartFieldValues() : null;
   updateRestartWarn();
@@ -1104,7 +1108,11 @@ async function importService(file) {
   const serviceId = payload?.service?.id;
   const serviceName = payload?.service?.identity?.ps8 || serviceId;
 
-  if (serviceId && STATE.preset.services.some(s => s.id === serviceId)) {
+  const existing = serviceId && STATE.preset.services.find(s => s.id === serviceId);
+  if (existing && STATE.muxRunning && existing.enabled !== false) {
+    throw new Error(`"${serviceName}" is ON AIR — turn it OFF first to replace it`);
+  }
+  if (existing) {
     const overwrite = confirm(`Service "${serviceName}" already exists. Do you want to overwrite it?`);
     if (!overwrite) {
       throw new Error('Import cancelled');
@@ -1991,7 +1999,7 @@ $('#f_codec')?.addEventListener('change', () => {
   if (codec === 'HE-AAC v2 (PS)') {
     chSel.value = '2';
     chSel.disabled = true;
-  } else if (!STATE?.muxRunning || editingId) {
+  } else {
     chSel.disabled = false;
   }
 });
@@ -2254,7 +2262,7 @@ async function toggleService(svc, btn) {
       await save();
       return;
     }
-    if (!confirm(`${turnOn ? 'Put' : 'Take'} ${name} ${turnOn ? 'back on air' : 'off air'}?\n\nThe multiplex restarts: ALL services go off air for a few seconds.`)) return;
+    if (!confirm(`${turnOn ? 'Put' : 'Take'} ${name} ${turnOn ? 'on air' : 'off air'}?\n\nThe multiplex restarts: ALL services go off air for a few seconds.`)) return;
     await api('/api/mux/stop', { method: 'POST', body: '{}' });
     let saveErr = null;
     try { await save(); } catch (err) { saveErr = err; }
@@ -2291,7 +2299,7 @@ svcTableBody.addEventListener('click', async (e) => {
       await toggleService(svc, btn);
     }
     if (act === 'del') {
-      if (STATE.muxRunning) return;
+      if (STATE.muxRunning && svc?.enabled !== false) return;
       if (!confirm('Delete this service?')) return;
       await api(`/api/services/${id}`, { method: 'DELETE' });
       await refresh();
@@ -2410,7 +2418,10 @@ $('#svcForm').addEventListener('submit', async (e) => {
     } else if (editingId) {
       await api(`/api/services/${editingId}`, { method: 'PATCH', body: JSON.stringify(payload) });
     } else {
-      await api('/api/services', { method: 'POST', body: JSON.stringify(payload) });
+      const created = await api('/api/services', { method: 'POST', body: JSON.stringify(payload) });
+      if (created?.enabled === false) {   // added while ON AIR
+        showToast(`${payload.identity?.ps8 || 'Service'} added OFF — press ON to put it on air`, 'success');
+      }
     }
     dlg.close();
     await refresh();
@@ -2499,12 +2510,13 @@ fileImportService?.addEventListener('change', async (e) => {
   e.target.value = '';
 
   // Show summary
+  const offNote = STATE?.muxRunning && imported ? '\n\nON AIR: imported services are OFF — press ON to put them on air.' : '';
   if (failed === 0) {
-    alert(`✓ ${imported} service(s) imported successfully!`);
+    alert(`✓ ${imported} service(s) imported successfully!${offNote}`);
   } else if (imported === 0) {
     alert(`✗ Import failed:\n\n${errors.join('\n')}`);
   } else {
-    alert(`Import completed:\n✓ ${imported} service(s) imported\n✗ ${failed} failed\n\n${errors.join('\n')}`);
+    alert(`Import completed:\n✓ ${imported} service(s) imported\n✗ ${failed} failed\n\n${errors.join('\n')}${offNote}`);
   }
 });
 

@@ -206,7 +206,7 @@ body {
 }
 .tablewrap { overflow: auto; }
 .table { width: 100%; border-collapse: collapse; min-width: 960px; }
-.table-wide { min-width: 1400px; }
+.table-wide { min-width: 1100px; }
 .table th, .table td { padding: 12px 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .table th { text-align: left; color: var(--muted); font-weight: 700; }
 .table tbody tr { transition: background 0.2s ease; }
@@ -563,8 +563,8 @@ body { background: var(--bg); font-family: Inter, ui-sans-serif, system-ui, -app
 .card { border-radius: 8px; box-shadow: none; }
 .card-head { padding: 12px 16px; background: var(--card); }
 .card-title { font-size: 15px; font-weight: 700; }
-.table th { position: sticky; top: 0; z-index: 2; background: var(--surface2); font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; padding: 8px 10px; white-space: nowrap; }
-.table td { padding: 7px 10px; font-size: 12px; }
+.table th { position: sticky; top: 0; z-index: 2; background: var(--surface2); font-size: 10.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; padding: 8px 7px; white-space: nowrap; }
+.table td { padding: 7px 7px; font-size: 12px; }
 .table tbody tr:nth-child(2n) { background: transparent; }
 .table tbody tr:hover { background: var(--surface2); }
 .col-pid, .col-bitrate, .col-cu, .col-prot, .col-codec, .col-ch, .col-sr, .col-port { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -623,7 +623,8 @@ input, select { background: var(--surface2); border-radius: 6px; padding: 8px 10
 .menu-list .btn { border-color: transparent; text-align: left; width: 100%; }
 .menu-sep { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
 .table td.row-actions { display: table-cell; text-align: right; white-space: nowrap; }
-.table td.row-actions .btn { padding: 4px 9px; font-size: 11.5px; margin-left: 4px; }
+.table td.col-pid, .table td.col-bitrate, .table td.col-cu, .table td.col-prot, .table td.col-sr, .table td.col-port { white-space: nowrap; }
+.table td.row-actions .btn { padding: 3px 7px; font-size: 11.5px; margin-left: 3px; }
 .table td.row-actions .svc-toggle { min-width: 38px; padding: 4px 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; }
 .svc-toggle.on { background: rgba(46,204,113,.14); border-color: rgba(46,204,113,.45); color: var(--green); }
 .svc-toggle.off { background: var(--surface3); color: var(--muted); }

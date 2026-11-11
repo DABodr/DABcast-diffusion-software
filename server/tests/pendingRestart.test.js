@@ -65,3 +65,117 @@ describe('setService — pendingRestart hint', () => {
     assert.equal(state.serviceRuntime.get(svcId).pendingRestart, undefined);
   });
 });
+
+describe('addService — ON AIR', () => {
+  let dir, state;
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-add-'));
+    fs.mkdirSync(path.join(dir, 'presets'), { recursive: true });
+    fs.copyFileSync(demoPreset, path.join(dir, 'presets', 'demo.json'));
+    state = new AppState({
+      settings: structuredClone(DEFAULT_SETTINGS),
+      dataDir: dir,
+      logger: { line() {} },
+      processManager: { isRunning: () => false },
+    });
+  });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('adds the service OFF while ON AIR', () => {
+    state.muxRunning = true;
+    const svc = state.addService({ identity: { pi: 'FAB1', ps8: 'NEWONE' } });
+    assert.equal(svc.enabled, false);
+    assert.equal(state.serviceRuntime.get(svc.id).status, 'STOPPED');
+  });
+
+  it('adds the service ON when the mux is stopped', () => {
+    state.muxRunning = false;
+    const svc = state.addService({ identity: { pi: 'FAB2', ps8: 'NEWTWO' } });
+    assert.equal(svc.enabled, true);
+  });
+});
+
+describe('deleteService — ON AIR', () => {
+  let dir, state, running;
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-del-'));
+    fs.mkdirSync(path.join(dir, 'presets'), { recursive: true });
+    fs.copyFileSync(demoPreset, path.join(dir, 'presets', 'demo.json'));
+    running = false;
+    state = new AppState({
+      settings: structuredClone(DEFAULT_SETTINGS),
+      dataDir: dir,
+      logger: { line() {} },
+      processManager: { isRunning: () => running },
+    });
+  });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('refuses to delete an ON service while ON AIR', () => {
+    state.muxRunning = true;
+    const id = state.preset.services[0].id;
+    assert.throws(() => state.deleteService(id), /turn it OFF first/);
+    assert.ok(state.preset.services.some((s) => s.id === id));
+  });
+
+  it('deletes an OFF service while ON AIR', () => {
+    state.muxRunning = true;
+    const svc = state.addService({ identity: { pi: 'FAD1', ps8: 'DELME' } });
+    assert.equal(svc.enabled, false);
+    state.deleteService(svc.id);
+    assert.ok(!state.preset.services.some((s) => s.id === svc.id));
+  });
+
+  it('refuses an OFF service whose encoder is still running', () => {
+    state.muxRunning = true;
+    const svc = state.addService({ identity: { pi: 'FAD2', ps8: 'DELME2' } });
+    running = true;
+    assert.throws(() => state.deleteService(svc.id), /turn it OFF first/);
+    running = false;
+  });
+
+  it('deletes any service when the mux is stopped', () => {
+    state.muxRunning = false;
+    const id = state.preset.services[0].id;
+    state.deleteService(id);
+    assert.ok(!state.preset.services.some((s) => s.id === id));
+  });
+});
+
+describe('upsertService (import) — ON AIR', () => {
+  let dir, state;
+  before(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-imp-'));
+    fs.mkdirSync(path.join(dir, 'presets'), { recursive: true });
+    fs.copyFileSync(demoPreset, path.join(dir, 'presets', 'demo.json'));
+    state = new AppState({
+      settings: structuredClone(DEFAULT_SETTINGS),
+      dataDir: dir,
+      logger: { line() {} },
+      processManager: { isRunning: () => false },
+    });
+  });
+  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it('imports a new service OFF while ON AIR, even if the file says enabled', () => {
+    state.muxRunning = true;
+    const src = structuredClone(state.preset.services[0]);
+    src.id = 'FAE1'; src.identity.pi = 'FAE1'; src.identity.serviceIdHex = '0xFAE1'; src.enabled = true;
+    const svc = state.upsertService(src);
+    assert.equal(svc.enabled, false);
+  });
+
+  it('refuses to replace an ON service while ON AIR', () => {
+    state.muxRunning = true;
+    const src = structuredClone(state.preset.services[0]);
+    assert.notEqual(src.enabled, false);
+    assert.throws(() => state.upsertService(src), /turn it OFF first/);
+  });
+
+  it('keeps the enabled flag from the file when the mux is stopped', () => {
+    state.muxRunning = false;
+    const src = structuredClone(state.preset.services[0]);
+    src.id = 'FAE2'; src.identity.pi = 'FAE2'; src.identity.serviceIdHex = '0xFAE2'; src.enabled = true;
+    assert.equal(state.upsertService(src).enabled, true);
+  });
+});
