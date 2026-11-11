@@ -14,7 +14,7 @@ processes to produce and multiplex DAB+ radio signals.
 **Stack:**
 - Backend: Node.js 18+ (ESM `type: "module"`), Express 4, no TypeScript
 - Frontend: Vanilla JS single-page app (`web/app.js`), no framework, no build step
-- Tests: Node.js built-in test runner (`node --test server/tests/*.test.js` — Node 24 no longer accepts a bare directory)  — **211 tests, 49 suites**
+- Tests: Node.js built-in test runner (`node --test server/tests/*.test.js` — Node 24 no longer accepts a bare directory)  — **247 tests, 58 suites**
 - Build: `esbuild` (bundle) → `@yao-pkg/pkg` (binary) → `dpkg-deb` (.deb package)
 - Targets: `./build.sh` → amd64 | `./build.sh arm64` → Raspberry Pi OS 64-bit
 - Service port: **9090** (default)
@@ -44,6 +44,7 @@ project root/
 │   │   ├── logger.js             # FileLogger: append-only, rotation, dedup, optional notifier
 │   │   ├── telegramNotifier.js   # Async Telegram Bot API log forwarding and rate limiting
 │   │   ├── fsutil.js             # ensureDir, readJson, writeJson (atomic), safeExists
+│   │   ├── slideImage.js         # SLS slide conversion: 320x240 JPEG, bands in the picture's edge colours
 │   │   ├── player.js             # Web player: mux ETI monitor → dablin -p → ffmpeg MP3 (read-only)
 │   │   ├── preset.js             # Preset load/save helpers
 │   │   ├── auth/
@@ -555,7 +556,10 @@ These are non-obvious behaviors that have caused bugs in the past:
 | **DLS file write** | Use `writeTextFileAtomicIfChanged()` (in dlplus.js) to avoid unnecessary writes to the runtime dir. |
 | **dablin -s flag** | Do NOT pass `-s <serviceId>` to dablin — causes immediate exit if SId format doesn't match. Let dablin auto-select first service. |
 | **WARNING status** | Set when `!activeIsMain && consecutiveCrashes > 0` (backup unstable). Cleared when `effectiveActiveOk && !backupUnstable`. |
-| **SLS slides = JPEG 320x240** | odr-padenc sends every file of `mot/<PI>/slide/`. Anything written there must go through the ImageMagick conversion (`_convertToSlide` in appState, `convertToSlideFile`/`writeSlideImage` in index.js): an unconverted 300x300 PNG weighs 50-110 kB = 30-80 s to send with a 58-byte PAD (5-15 kB once converted). `repairSlides()` converts non-conforming `*.jpg` at start-up (before autoStart), originals kept in `mot/<PI>/original/`. Temp files go in `mot/<PI>/`, never in `slide/`. |
+| **Metadata loop periods** | `metadata.intervalSec` ('Refresh (sec)', JSON tab) only paces URL modes (JSON / XML / FILE). STREAM (local ICY file) and NONE use `META_LOCAL_INTERVAL_SEC` (5 s). Any `metadata` patch resets `rt.lastMetaUpdateMs` → applied at the next 1 s tick. Mode NONE honours `defaultDlsAllowed`. ZMQ/EDI direct inputs are skipped by the loop (DLS/DL+/SLS from the remote encoder). |
+| **End of item (JSON)** | APIs often keep returning the last song during ads. Same rules for every station, no setting needed: start / duration / type are read from configured keys or from usual fields next to the title (`findNearTitle`). Duration known → over at start + duration + 15 s (any item, a 2 h show keeps its logo). Else by type (`classifyItemType`): ad/jingle → over at once; song → capped at `trackMaxMin` (default 8, 0 = never); show / talk / unknown → never cut (previous behaviour). Over = default DLS + no cover (logo back on air) until the title changes. |
+| **On-air slides (`mot/<PI>/air`)** | odr-padenc's `-d` is `mot/<PI>/air`, not `slide/`. `_syncAirSlides()` (at `_startService` and after each metadata tick) copies there either `cover.jpg` alone (a track cover exists, JSON mode) or every image of `slide/` except the cover. odr-padenc has no priority option: with logo + cover in its dir the logo replaced the cover within seconds. `slide/` stays the source of truth; temp files go in `mot/<PI>/`; on error `-d slide/` (previous behaviour). `rt.airSlides` = what is on air. `metadata.logoEverySec` (default 40, 0 = cover only): during a cover, one logo (in turn) replaces it every N s for its estimated send time (size / (PAD × 24 B/s) + 4 s, min 6 s); a new cover goes first and restarts the count (`_airChoice`). |
+| **SLS slides = JPEG 320x240** | odr-padenc sends every file of `mot/<PI>/slide/`. Anything written there must go through the conversion of `slideImage.js` (`convertToSlide`, used by `_convertToSlide` in appState and `convertToSlideFile`/`writeSlideImage` in index.js). Square pictures get side bands in the median colour of their own left / right edge (top / bottom for wide ones) instead of black; transparency flattened on black; PPM read with `-depth 8` (Q16 builds): an unconverted 300x300 PNG weighs 50-110 kB = 30-80 s to send with a 58-byte PAD (5-15 kB once converted). `repairSlides()` converts non-conforming `*.jpg` at start-up (before autoStart), originals kept in `mot/<PI>/original/`. Temp files go in `mot/<PI>/`, never in `slide/`. |
 | **MOT logo seed** | On startup, logos are copied from `defaults/mot/` to `data/mot/` only if no `logo.jpg` exists. Uses `force: true` + try/catch. |
 | **build.sh MOT copy** | Uses `find -type f` (not `cp -r`) to exclude runtime FIFOs created by odr-padenc from the .deb package. |
 | **Data preservation on upgrade** | `/var/lib/dabcast/` is never modified by dpkg. demo.json only copied if absent. Logos only seeded if no logo.jpg found. |
