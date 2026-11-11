@@ -181,6 +181,13 @@ function updateCuPreview() {
 function updateSourceVisibility() {
   const mode = $('#f_src')?.value;
   const isDirect = mode === 'ZMQ' || mode === 'EDI';
+  // Metadata tab: text settings are not used for direct inputs (DLS / DL+ / slides from the remote encoder)
+  $('#metaDirectNote')?.classList.toggle('hidden', !isDirect);
+  for (const id of ['f_meta_mode', 'f_dlplus_enabled', 'f_json_default_dls', 'f_default_dls', 'f_json_url', 'f_json_interval', 'f_json_artist', 'f_json_title', 'f_json_sls', 'f_json_start', 'f_json_duration', 'f_json_trackmax', 'f_json_logoevery']) {
+    const el = document.getElementById(id);
+    if (el) el.disabled = isDirect;
+  }
+  updateMetaModeVisibility();   // mode buttons follow the disabled state
   const encoderRowIds = ['f_gain_row', 'f_uri_row', 'f_thresh_row', 'f_return_row', 'f_switch_row', 'f_backup_row', 'f_swap_row'];
   for (const id of encoderRowIds) {
     const el = document.getElementById(id);
@@ -527,6 +534,7 @@ function renderStats(cap) {
 function render() {
   if (!STATE) return;
   if (dlgPlayer?.open) renderPlayer();
+  if (dlg?.open) renderMetaLive();
 
   // Password change banner + lock UI
   const pwdBanner = $('#pwdBanner');
@@ -671,7 +679,10 @@ function render() {
 
     const status = svc.runtime?.status || 'UNKNOWN';
     const dlsPreview = svc.runtime?.currentDls || (svc.metadata?.defaultDlsAllowed !== false ? (svc.metadata?.defaultDls || '') : '');
-    const trackKey = dlsPreview || '';
+    // ON AIR: thumbnails show what odr-padenc really sends (runtime.airSlides: the cover alone, or a
+    // logo during its turn, or the logos), not every image of slide/
+    const airFiles = STATE.muxRunning && Array.isArray(svc.runtime?.airSlides) && svc.runtime.airSlides.length ? svc.runtime.airSlides : null;
+    const trackKey = `${dlsPreview || ''}${airFiles ? `|${airFiles.join(',')}` : ''}`;
     const svcKey = encodeURIComponent(svc.pad?.fifoName || svc.id);
     const backupUri = svc.input?.backupUri || '';
     const isDirectInput = ['ZMQ', 'EDI'].includes(String(svc.input?.mode || '').toUpperCase());
@@ -747,7 +758,7 @@ function render() {
     }
 
     // Refresh slide list when track changes
-    _refreshSlideList(svc.id, svcKey, trackKey);
+    _refreshSlideList(svc.id, svcKey, trackKey, false, airFiles);
 
     orderedRows.push(tr);
   }
@@ -804,11 +815,11 @@ $('#dlgSlidePreview')?.addEventListener('click', function(e) {
 // --- Slide rotation for thumbnails ---
 
 /** Fetch slide list for a service and update rotation state */
-async function _refreshSlideList(svcId, svcKey, trackKey, force = false) {
+async function _refreshSlideList(svcId, svcKey, trackKey, force = false, airFiles = null) {
   let rot = slideRotation.get(svcId);
   if (!force && rot && rot.key === trackKey) return; // already up-to-date
   try {
-    const files = await api(`/api/mot/${svcKey}/slides`);
+    const files = airFiles ? [...airFiles] : await api(`/api/mot/${svcKey}/slides`);
     if (!Array.isArray(files)) return;
     // Preserve current index if forcing refresh (logo added/deleted)
     const currentIndex = force && rot ? rot.index : 0;
@@ -824,8 +835,9 @@ async function _forceRefreshSlides(svcId) {
   if (!svc) return;
   const svcKey = encodeURIComponent(svc.pad?.fifoName || svc.id);
   const dlsPreview = svc.runtime?.currentDls || (svc.metadata?.defaultDlsAllowed !== false ? (svc.metadata?.defaultDls || '') : '');
-  const trackKey = dlsPreview || '';
-  await _refreshSlideList(svcId, svcKey, trackKey, true);
+  const airFiles = STATE.muxRunning && Array.isArray(svc.runtime?.airSlides) && svc.runtime.airSlides.length ? svc.runtime.airSlides : null;
+  const trackKey = `${dlsPreview || ''}${airFiles ? `|${airFiles.join(',')}` : ''}`;
+  await _refreshSlideList(svcId, svcKey, trackKey, true, airFiles);
 }
 
 /** Preload and display current slide for a service */
@@ -999,6 +1011,7 @@ function openDialogFor(service) {
   // --- Metadata tab ---
   $('#f_meta_mode').value = service?.metadata?.mode || 'STREAM';
   $('#f_default_dls').value = service?.metadata?.defaultDls || '';
+  updateDlsCount();
   $('#f_sls_url').value = service?.metadata?.slsUrl || '';
 
   // JSON mode fields
@@ -1007,11 +1020,16 @@ function openDialogFor(service) {
   $('#f_json_artist').value = service?.metadata?.artistKey || 'artist';
   $('#f_json_title').value = service?.metadata?.titleKey || 'title';
   $('#f_json_sls').value = service?.metadata?.slsKey || 'slide';
+  $('#f_json_start').value = service?.metadata?.startKey || '';
+  $('#f_json_duration').value = service?.metadata?.durationKey || '';
+  $('#f_json_trackmax').value = service?.metadata?.trackMaxMin ?? 8;
+  $('#f_json_logoevery').value = service?.metadata?.logoEverySec ?? 40;
   $('#f_dlplus_enabled').value = service?.dlplus?.enabled !== false ? 'yes' : 'no';
   $('#f_json_default_dls').value = service?.metadata?.defaultDlsAllowed !== false ? 'yes' : 'no';
   $('#jsonTestStatus').textContent = '';
   const cpb = $('#coverPreviewBox'); if (cpb) cpb.style.display = 'none';
   updateMetaModeVisibility();
+  renderMetaLive();
 
   // SLS preview (logo or slsUrl)
   const img = $('#slsImg');
@@ -1419,9 +1437,102 @@ function updateTxModeVisibility() {
   document.querySelectorAll('.hackrf-only').forEach((el) => el.classList.toggle('hidden', mode !== 'HACKRF'));
 }
 
+// DLS length: DAB carries at most 128 characters (odr-padenc cuts longer texts)
+const DLS_MAX_CHARS = 128;
+function updateDlsCount() {
+  const el = $('#dlsCount');
+  const n = ($('#f_default_dls')?.value || '').length;
+  if (!el) return;
+  el.textContent = `${n} / ${DLS_MAX_CHARS}${n > DLS_MAX_CHARS ? ' — too long, cut on air' : ''}`;
+  el.classList.toggle('over', n > DLS_MAX_CHARS);
+}
+$('#f_default_dls')?.addEventListener('input', updateDlsCount);
+const META_MODE_HELP = {
+  STREAM: 'Titles come from the audio stream (ICY StreamTitle), read every 5 s. The default text is sent when the stream gives no title.',
+  JSON: 'Titles and covers come from a now-playing API, read every “Refresh” seconds. A track cover is sent alone while it plays.',
+  NONE: 'No title source: the text below is sent as is.',
+};
 function updateMetaModeVisibility() {
   const mode = ($('#f_meta_mode')?.value || 'STREAM').toUpperCase();
   document.querySelectorAll('.json-only').forEach((el) => el.classList.toggle('hidden', mode !== 'JSON'));
+  document.querySelectorAll('#metaModeSeg button').forEach((b) => {
+    const on = b.dataset.mode === mode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+    b.disabled = Boolean($('#f_meta_mode')?.disabled);
+  });
+  const help = $('#metaModeHelp');
+  if (help) help.textContent = META_MODE_HELP[mode] || '';
+  const manual = mode === 'NONE';
+  if ($('#dlsTextLabel')) $('#dlsTextLabel').textContent = manual ? 'Text sent on air' : 'Default text (when there is no title)';
+  if ($('#dlsAllowedLabel')) $('#dlsAllowedLabel').textContent = manual ? 'Send this text' : 'Send default text';
+}
+$('#metaModeSeg')?.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-mode]');
+  const sel = $('#f_meta_mode');
+  if (!b || !sel || sel.disabled) return;
+  sel.value = b.dataset.mode;
+  sel.dispatchEvent(new Event('change'));
+});
+
+// ── Metadata tab: what is on air now for the edited service (refreshed with /api/state) ──
+const _liveSlideSizes = new Map();
+function renderMetaLive() {
+  if (!dlg?.open || !$('#metaLive')) return;
+  const svc = editingId ? STATE?.preset?.services?.find((x) => x.id === editingId) : null;
+  const img = $('#metaLiveImg'), imgTxt = $('#metaLiveImgTxt'), slideEl = $('#metaLiveSlide');
+  const dlsEl = $('#metaLiveDls'), dlpEl = $('#metaLiveDlplus'), stEl = $('#metaLiveStatus'), dot = $('#metaLiveDot');
+  const setImg = (src, txt) => {
+    if (src) { if (img.getAttribute('src') !== src) img.src = src; img.style.display = 'block'; imgTxt.textContent = ''; }
+    else { img.removeAttribute('src'); img.style.display = 'none'; imgTxt.textContent = txt; }
+  };
+  const blank = (txt) => { setImg('', txt); slideEl.textContent = ''; dlsEl.textContent = '—'; dlpEl.innerHTML = ''; stEl.textContent = ''; dot.className = 'meta-live-dot'; };
+  if (!svc) return blank('Save the service first');
+  if (!STATE.muxRunning) return blank('Off air — press Start to see what is sent');
+  if (svc.enabled === false) return blank('Service OFF (not in the multiplex)');
+  if (['ZMQ', 'EDI'].includes(String(svc.input?.mode || '').toUpperCase())) return blank('Sent by the remote encoder (not visible here)');
+  const rt = svc.runtime || {};
+  // slide: the one shown by the services table (it follows runtime.airSlides)
+  const thumb = svcTableBody.querySelector(`tr[data-service-id="${CSS.escape(svc.id)}"] img.sls-thumb`);
+  const src = thumb && thumb.style.display !== 'none' && thumb.src ? thumb.src : '';
+  setImg(src, 'No slide');
+  if (src) {
+    const u = new URL(src, location.href);
+    const name = decodeURIComponent(u.pathname.split('/').pop());
+    const key = `${u.pathname}|${u.searchParams.get('v') || ''}`;
+    const show = (n) => {
+      const kind = name === 'cover.jpg' ? 'track cover' : 'station logo';
+      if (!Number.isFinite(n)) { slideEl.textContent = `${name} · ${kind}`; return; }
+      const { text, over } = slideSizeLabel(n);
+      slideEl.textContent = `${name} · ${kind} · ${text}`;
+      slideEl.className = `meta-live-slide${over ? ' over' : ''}`;
+    };
+    if (_liveSlideSizes.has(key)) show(_liveSlideSizes.get(key));
+    else {
+      _liveSlideSizes.set(key, NaN);
+      show(NaN);
+      fetch(u.pathname, { method: 'HEAD', cache: 'no-store' }).then((r) => { _liveSlideSizes.set(key, Number(r.headers.get('content-length'))); renderMetaLive(); }).catch(() => {});
+    }
+  } else slideEl.textContent = '';
+  // DLS and DL+
+  const dls = rt.currentDls || '';
+  dlsEl.textContent = dls || '(empty)';
+  if (rt.dlplusActive && dls.includes(' - ')) {
+    const i = dls.indexOf(' - ');
+    dlpEl.innerHTML = `<div><span class="tag">ARTIST</span>${esc(dls.slice(0, i))}</div><div><span class="tag">TITLE</span>${esc(dls.slice(i + 3))}</div>`;
+  } else dlpEl.innerHTML = dls ? '<div class="muted">DL+: not sent (no “Artist - Title”)</div>' : '';
+  // last update
+  const ms = rt.metaStatus;
+  const ago = (t) => { const sec = Math.max(0, Math.round((Date.now() - t) / 1000)); return sec < 60 ? `${sec} s ago` : `${Math.round(sec / 60)} min ago`; };
+  if (ms) {
+    stEl.textContent = `${ms.ok ? '✓' : '⚠'} ${ms.msg} · updated ${ago(ms.at)}`;
+    stEl.className = `meta-live-status${ms.ok ? '' : ' err'}`;
+    dot.className = `meta-live-dot ${ms.ok ? 'ok' : 'warn'}`;
+  } else {
+    stEl.textContent = 'Waiting for the first update…';
+    stEl.className = 'meta-live-status';
+    dot.className = 'meta-live-dot';
+  }
 }
 
 async function saveMuxSettings() {
@@ -1548,9 +1659,56 @@ function renderPlayer() {
   const art = $('#plArt');
   if (src) { if (art.getAttribute('src') !== src) art.src = src; art.style.display = ''; $('#plArtTxt').textContent = ''; }
   else { art.style.display = 'none'; $('#plArtTxt').textContent = svc.identity?.ps8 || ''; }
+  plSlideInfo(src);
   art.parentElement.classList.toggle('empty', !src);   // frame = slide size; fixed 4:3 placeholder without slide
   $('#plPlay').textContent = PL.playing ? '■ Stop' : '▶ Play';
   $('#plPlay').disabled = !STATE.muxRunning && !PL.playing;
+}
+// Weight of the slide shown, against the ODR limit: odr-padenc's default --max-slide-size is
+// 51200 bytes (SlideShow "Simple profile", TS 101 499); above it, odr-padenc recompresses the slide.
+const SLS_MAX_BYTES = 51200;
+const _slideSizes = new Map();   // slide path + track -> bytes (HEAD request, once per file/track)
+const fmtKb = (b) => (b / 1024).toFixed(1);
+// "6.3 kB / 50.0 kB max" + over flag, shared by the Player and the service dialog
+function slideSizeLabel(bytes) {
+  return { text: `${fmtKb(bytes)} kB / ${fmtKb(SLS_MAX_BYTES)} kB max`, over: bytes > SLS_MAX_BYTES };
+}
+// Service dialog (Metadata tab): weight of the logo file shown under its preview, when it is a
+// slide served by DABcast (/api/mot/...); nothing for an external SLS URL preview.
+$('#slsImg')?.addEventListener('load', (e) => {
+  const el = $('#slsSize');
+  if (!el) return;
+  const u = new URL(e.target.src, location.href);
+  if (u.origin !== location.origin || !u.pathname.startsWith('/api/mot/')) { el.textContent = ''; return; }
+  fetch(u.pathname, { method: 'HEAD', cache: 'no-store' }).then((r) => {
+    const n = Number(r.headers.get('content-length'));
+    if (!r.ok || !Number.isFinite(n)) { el.textContent = ''; return; }
+    const { text, over } = slideSizeLabel(n);
+    el.textContent = over ? `${text} — too heavy` : text;
+    el.className = `sls-size${over ? ' over' : ''}`;
+    el.title = 'Recommended maximum = odr-padenc default --max-slide-size (51200 bytes, SlideShow Simple profile). Above it, odr-padenc recompresses the slide.';
+  }).catch(() => { el.textContent = ''; });
+});
+$('#slsImg')?.addEventListener('error', () => { const el = $('#slsSize'); if (el) el.textContent = ''; });
+function plSlideInfo(src) {
+  const el = $('#plSlideInfo');
+  if (!el) return;
+  if (!src) { el.textContent = ''; return; }
+  const u = new URL(src, location.href);
+  const name = decodeURIComponent(u.pathname.split('/').pop());
+  const key = `${u.pathname}|${u.searchParams.get('v') || ''}`;   // v = current track: cover.jpg changes with it
+  const show = (bytes) => {
+    if (!Number.isFinite(bytes)) { el.textContent = ''; return; }
+    const over = bytes > SLS_MAX_BYTES;
+    el.className = `pl-slide-info${over ? ' over' : ''}`;
+    el.textContent = `Slide ${name}: ${fmtKb(bytes)} kB · max ${fmtKb(SLS_MAX_BYTES)} kB (ODR)${over ? ' — too heavy, odr-padenc recompresses it' : ''}`;
+    el.title = 'Recommended maximum = odr-padenc default --max-slide-size (51200 bytes, SlideShow Simple profile). Smaller slides reach receivers faster.';
+  };
+  if (_slideSizes.has(key)) { show(_slideSizes.get(key)); return; }
+  _slideSizes.set(key, NaN);   // one request per file
+  fetch(u.pathname, { method: 'HEAD', cache: 'no-store' })
+    .then((r) => { const n = Number(r.headers.get('content-length')); _slideSizes.set(key, n); if (dlgPlayer.open) renderPlayer(); })
+    .catch(() => { _slideSizes.delete(key); });
 }
 function plEnsureAudio() {
   if (PL.audio) return;
@@ -2844,6 +3002,10 @@ $('#svcForm').addEventListener('submit', async (e) => {
       artistKey: $('#f_json_artist').value.trim() || 'artist',
       titleKey: $('#f_json_title').value.trim() || 'title',
       slsKey: $('#f_json_sls').value.trim() || 'slide',
+      startKey: $('#f_json_start').value.trim() || null,
+      durationKey: $('#f_json_duration').value.trim() || null,
+      trackMaxMin: Math.max(0, Math.min(60, Math.round(Number($('#f_json_trackmax').value)))) || 0,
+      logoEverySec: $('#f_json_logoevery').value === '' ? 40 : Math.max(0, Math.min(3600, Math.round(Number($('#f_json_logoevery').value)))) || 0,
       dlsIncluded: true,
       defaultDlsAllowed: $('#f_json_default_dls').value === 'yes'
     },

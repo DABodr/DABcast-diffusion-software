@@ -14,6 +14,7 @@ import { TelegramLogNotifier } from './telegramNotifier.js';
 import { OdrProcessManager } from './odr/processManager.js';
 import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
+import { convertToSlide as convertSlideImage } from './slideImage.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
@@ -244,13 +245,12 @@ if (fs.existsSync(shippedMot)) {
 }
 
 // ── SLS slides: every image odr-padenc reads must be a JPEG 320x240 ──
-// Same conversion as AppState._convertToSlide (ImageMagick, black side bars, quality 85).
+// Same conversion as AppState._convertToSlide (slideImage.js: bands in the picture's edge colours, quality 85).
 // An unconverted logo (e.g. a 300x300 RGBA PNG named logo.jpg, written by an import) can weigh
 // 50-110 kB: 30-80 s to transmit with a 58-byte PAD, versus 5-15 kB once converted.
 function convertToSlideFile(src, dest) {
   try {
-    execFileSync('convert', [src, '-resize', '320x240', '-background', 'black', '-gravity', 'center',
-      '-extent', '320x240', '-quality', '85', dest], { timeout: 10000 });
+    convertSlideImage(src, dest);   // 320x240 JPEG, side bands in the picture's own edge colours
     return true;
   } catch (e) {
     logger.line('sls', `convert error: ${e.message}`, 'WARN');

@@ -5,6 +5,7 @@ import { execFileSync } from 'node:child_process';
 import { nanoid } from 'nanoid';
 import { ensureDir, readJson, writeJson, safeExists } from './fsutil.js';
 import { buildMuxConfig } from './odr/muxBuilder.js';
+import { convertToSlide as convertSlideImage } from './slideImage.js';
 import { buildAudioEncCommand, buildDabMuxCommand, buildPadEncCommand, buildDabModConfig, buildHackrfTransferCommand, buildProbeCommand } from './odr/commandBuilder.js';
 import { validateService } from './odr/validate.js';
 import { ALLOWED_BITRATES_KBPS, DEFAULT_BITRATE_KBPS, DEFAULT_ZMQ_BUFFER, DEFAULT_ZMQ_PREBUFFER, DEFAULT_DEMO_PRESET_ID, DAB_FREQ_TABLE } from './defaults.js';
@@ -37,6 +38,88 @@ export function resolveFirst(data, keySpec) {
     if (val != null && val !== '') return String(val).trim();
   }
   return '';
+}
+
+// ── End of the current track (JSON mode) ──
+// Many now-playing APIs keep returning the last song during ads / jingles, so its cover and title
+// would stay on air. Rules, for every station, with no per-station setting:
+//  - duration known (configured key, or a field next to the title): over at start + duration + grace;
+//  - item type known (field next to the title): an ad / jingle is over at once (logo + default text),
+//    a song is capped at trackMaxMin minutes (default 8), a show / talk / news is never cut;
+//  - neither: never cut (previous behaviour). A show logo may legitimately stay for hours, and a
+//    stale song cover during ads only lasts until the next song.
+export const TRACK_END_GRACE_MS = 15000;
+// Track start from an API value: epoch ms, epoch seconds or a date string. null if unusable
+// (absent, unparsable, in the future or more than a day old: clock skew / stale data).
+export function parseTimeMs(raw, nowMs = Date.now()) {
+  if (raw == null || raw === '') return null;
+  const str = String(raw).trim();
+  let ms = null;
+  if (/^\d+(\.\d+)?$/.test(str)) {
+    const n = Number(str);
+    ms = n > 1e12 ? n : n > 1e9 ? n * 1000 : null;
+  } else {
+    const p = Date.parse(str);
+    ms = Number.isFinite(p) ? p : null;
+  }
+  if (ms == null || ms > nowMs + 60000 || ms < nowMs - 24 * 3600 * 1000) return null;
+  return ms;
+}
+// Track duration: seconds, milliseconds (values > 3600) or "mm:ss" / "hh:mm:ss". null if unusable.
+export function parseDurationMs(raw) {
+  if (raw == null || raw === '') return null;
+  const str = String(raw).trim();
+  if (/^\d+(\.\d+)?$/.test(str)) {
+    const n = Number(str);
+    if (n <= 0) return null;
+    return n > 3600 ? n : n * 1000;
+  }
+  const m = /^(?:(\d+):)?(\d{1,2}):(\d{2})$/.exec(str);
+  return m ? ((Number(m[1] || 0) * 60 + Number(m[2])) * 60 + Number(m[3])) * 1000 : null;
+}
+// Item type from an API value: 'song', 'ad' (ad / jingle / promo), 'other' (show, talk, news…), null.
+export function classifyItemType(raw) {
+  const t = String(raw ?? '').trim().toLowerCase();
+  if (!t) return null;
+  if (/\b(song|songs|music|musik|track|titel|title|chanson|titre|morceau)\b/.test(t)) return 'song';
+  if (/\b(ad|ads|advert\w*|commercial\w*|spot|werbung|pub|publicit\w*|jingle\w*|promo\w*|sponsor\w*|trailer)\b/.test(t)) return 'ad';
+  return 'other';
+}
+// Common field names next to the title, for APIs where no key is configured.
+const SIBLING_NAMES = {
+  start: ['start', 'starttime', 'start_time', 'started', 'startedat', 'started_at', 'playedat', 'played_at', 'playtime', 'play_time', 'airtime', 'air_time'],
+  duration: ['duration', 'durationms', 'duration_ms', 'durationseconds', 'duration_seconds', 'length', 'runtime'],
+  type: ['type', 'kind', 'category', 'itemtype', 'item_type', 'class'],
+};
+// Value of a scalar field named like `kind` in the object holding the title, or the one above it
+// (e.g. playHistories.0.start next to playHistories.0.track.title). null if none.
+export function findNearTitle(data, titleKeySpec, kind) {
+  const parts = String(titleKeySpec || '').split('|')[0].split('.').filter(Boolean);
+  const names = SIBLING_NAMES[kind] || [];
+  for (let up = 1; up <= 2 && up <= parts.length; up++) {
+    let obj = data;
+    for (const p of parts.slice(0, parts.length - up)) {
+      if (obj == null) break;
+      obj = Array.isArray(obj) && /^\d+$/.test(p) ? obj[Number(p)] : obj[p];
+    }
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) continue;
+    for (const [k, v] of Object.entries(obj)) {
+      if (names.includes(k.toLowerCase()) && v != null && v !== '' && typeof v !== 'object') return v;
+    }
+  }
+  return null;
+}
+// When the item is over (ms epoch), or null = never.
+export function trackEndMs({ startMs = null, durationMs = null, firstSeenMs = null, maxMin = 8, itemType = null }) {
+  const from = startMs ?? firstSeenMs;
+  if (from == null) return null;
+  if (durationMs != null) return from + durationMs + TRACK_END_GRACE_MS;
+  if (itemType === 'ad') return from;   // ad / jingle: logo + default text right away
+  if (itemType === 'song') {
+    const cap = Number(maxMin) > 0 ? Number(maxMin) * 60000 : 0;
+    return cap ? from + cap : null;
+  }
+  return null;   // show / talk / unknown: never cut
 }
 
 // Parse odr-audioenc VU meter: "In: [LLLLLL|RRRRRR] P"
@@ -125,6 +208,13 @@ function quickTcpCheck(uri, timeoutMs = 1000) {
     socket.on('error', () => { clearTimeout(timer); resolve(false); });
   });
 }
+
+// Metadata refresh period for modes that read local data (STREAM = ICY file written by
+// odr-audioenc, NONE = fixed text). URL modes use the service's 'Refresh (sec)'.
+const META_LOCAL_INTERVAL_SEC = 5;
+// During a track cover, the station logo comes back every N seconds unless the service sets
+// metadata.logoEverySec (0 = cover only).
+const LOGO_EVERY_DEFAULT_SEC = 40;
 
 export class AppState {
   constructor({ settings, dataDir, logger, processManager }) {
@@ -451,6 +541,9 @@ export class AppState {
     }
     if (patch.metadata) {
       next.metadata = { ...(next.metadata || {}), ...(patch.metadata || {}) };
+      // apply the new text / mode / URL at the next metadata tick (≤ 1 s), not after the interval
+      const rtMeta = this.serviceRuntime.get(id);
+      if (rtMeta) rtMeta.lastMetaUpdateMs = 0;
       // Clear DLS file when defaultDlsAllowed is turned off
       if (next.metadata.defaultDlsAllowed === false) {
         this._writeDlsFile(next, '');
@@ -1038,15 +1131,8 @@ export class AppState {
       this._imgBinLogged = true;
     }
     try {
-      execFileSync('convert', [
-        srcPath,
-        '-resize', '320x240',
-        '-background', 'black',
-        '-gravity', 'center',
-        '-extent', '320x240',
-        '-quality', '85',
-        destPath
-      ], { timeout: 10000 });
+      // 320x240 JPEG, side bands in the picture's own edge colours (slideImage.js)
+      convertSlideImage(srcPath, destPath);
       return true;
     } catch (err) {
       this.logger.line('sls', `convert error: ${err.message}`, 'ERROR');
@@ -1112,13 +1198,98 @@ export class AppState {
     if (!this.muxRunning) return;
     const now = Date.now();
     for (const svc of this.preset.services.filter((s) => s.enabled)) {
+      // ZMQ/EDI direct inputs: DLS / DL+ / slides come from the remote encoder (no padenc here)
+      if (['ZMQ', 'EDI'].includes(String(svc.input?.mode || '').toUpperCase())) continue;
       const rt = this.serviceRuntime.get(svc.id);
       if (!rt) continue;
-      const intervalSec = Number(svc.metadata?.intervalSec ?? 10);
+      // 'Refresh (sec)' is the polling period of a remote URL (JSON / XML / FILE). STREAM reads the
+      // local ICY file and NONE a fixed text: short fixed period, whatever the hidden JSON setting.
+      const mode = String(svc.metadata?.mode || 'NONE').toUpperCase();
+      const intervalSec = ['JSON', 'XML', 'FILE'].includes(mode) ? Number(svc.metadata?.intervalSec ?? 10) : META_LOCAL_INTERVAL_SEC;
       const intervalMs = Math.max(1, intervalSec) * 1000;
-      if (rt.lastMetaUpdateMs && now - rt.lastMetaUpdateMs < intervalMs) continue;
+      if (rt.lastMetaUpdateMs && now - rt.lastMetaUpdateMs < intervalMs) {
+        // logo every N s during a cover: on-air dir checked each second (readdir + stat, copies only on change)
+        if (Number(svc.metadata?.logoEverySec ?? LOGO_EVERY_DEFAULT_SEC) > 0) this._syncAirSlides(svc);
+        continue;
+      }
       rt.lastMetaUpdateMs = now;
       await this._updateServiceMetadata(svc, rt);
+    }
+  }
+
+  /**
+   * On-air slide directory given to odr-padenc: mot/<PI>/air.
+   * odr-padenc sends every image of its directory in turn, with no priority. While the current
+   * track has a cover (JSON mode → slide/cover.jpg) only the cover is put on air, so receivers keep
+   * showing it; otherwise the station logos (slide/ minus cover.jpg) rotate as before.
+   * slide/ stays the source of truth (UI, uploads, exports). Copies go through a temp file outside
+   * the air dir + rename (odr-padenc reads every file there). Returns the directory for -d; on any
+   * error, slide/ itself (previous behaviour).
+   */
+  /**
+   * Which slides go on air. No cover: every logo of slide/. Track cover: the cover alone, except
+   * that with metadata.logoEverySec > 0 one logo (in turn) replaces it every N seconds, just long
+   * enough to be sent once (size / PAD throughput + margin). A new cover always goes first and
+   * restarts the count, so a logo never cuts a cover that has just arrived.
+   */
+  _airChoice(svc, slideDir, src) {
+    // logo.jpg first, then logo_1, logo_2 … logo_10 in numeric order
+    const logos = src.filter((f) => f !== 'cover.jpg').sort((a, b) => (a === 'logo.jpg' ? -1 : b === 'logo.jpg' ? 1 : a.localeCompare(b, undefined, { numeric: true })));
+    if (!src.includes('cover.jpg')) return logos;
+    const rt = this.serviceRuntime.get(svc.id);
+    const every = Number(svc.metadata?.logoEverySec ?? LOGO_EVERY_DEFAULT_SEC) || 0;   // explicit 0 = cover only
+    if (!rt || every <= 0 || !logos.length) return ['cover.jpg'];
+    const now = Date.now();
+    const coverMtime = fs.statSync(path.join(slideDir, 'cover.jpg')).mtimeMs;
+    if (rt.airCoverMtime !== coverMtime) {          // new cover (new track): cover first, count restarts
+      rt.airCoverMtime = coverMtime;
+      rt.airLogoPhaseStartMs = now;
+      rt.airLogoPhaseUntilMs = 0;
+      return ['cover.jpg'];
+    }
+    if (rt.airLogoPhaseUntilMs && now < rt.airLogoPhaseUntilMs) return [rt.airLogoName];
+    if (now - (rt.airLogoPhaseStartMs || 0) >= every * 1000) {
+      rt.airLogoIdx = ((rt.airLogoIdx ?? -1) + 1) % logos.length;
+      rt.airLogoName = logos[rt.airLogoIdx];
+      // time to send it once: X-PAD ≈ PAD bytes × ~24 AU/s (≈ 1.4 kB/s with PAD 58), + margin
+      const bytesPerSec = Math.max(200, (Number(svc.dab?.padSize) || 58) * 24);
+      const size = fs.statSync(path.join(slideDir, rt.airLogoName)).size;
+      rt.airLogoPhaseStartMs = now;
+      rt.airLogoPhaseUntilMs = now + Math.max(6000, Math.ceil(size / bytesPerSec * 1000) + 4000);
+      return [rt.airLogoName];
+    }
+    return ['cover.jpg'];
+  }
+
+  _syncAirSlides(svc) {
+    const motDirAbs = this._resolveMotDir(svc);
+    const slideDir = path.resolve(motDirAbs, svc.pad?.slideDir || 'slide');
+    const airDir = path.resolve(motDirAbs, 'air');
+    try {
+      ensureDir(airDir);
+      const isImg = (f) => /\.(jpe?g|png|webp)$/i.test(f);
+      const src = fs.readdirSync(slideDir).filter((f) => isImg(f) && fs.statSync(path.join(slideDir, f)).isFile());
+      const want = this._airChoice(svc, slideDir, src);
+      for (const f of want) {
+        const from = path.join(slideDir, f);
+        const to = path.join(airDir, f);
+        const a = fs.statSync(from);
+        let b = null;
+        try { b = fs.statSync(to); } catch { /* not copied yet */ }
+        if (b && b.size === a.size && b.mtimeMs >= a.mtimeMs) continue;
+        const tmp = path.join(motDirAbs, `.air_${f}`);
+        fs.copyFileSync(from, tmp);
+        fs.renameSync(tmp, to);
+      }
+      for (const f of fs.readdirSync(airDir)) {
+        if (!want.includes(f)) { try { fs.unlinkSync(path.join(airDir, f)); } catch { /* ignore */ } }
+      }
+      const rt = this.serviceRuntime.get(svc.id);
+      if (rt) rt.airSlides = want;   // what odr-padenc sends now (UI hint)
+      return airDir;
+    } catch (err) {
+      this.logger.line(`svc:${svc.id}`, `on-air slides sync failed, using slide/: ${err.message}`, 'WARN');
+      return slideDir;
     }
   }
 
@@ -1145,15 +1316,19 @@ export class AppState {
     }
 
     // DLS metadata extraction per mode
+    // result of this update, for the 'On air now' panel (rt.metaStatus, UI only)
+    let metaStatus = { ok: true, msg: mode.toLowerCase() };
     if (mode === 'NONE') {
-      // Manual mode: use the DLS text entered by the user
-      dlsValue = svc.metadata?.defaultDls || '';
+      // Manual mode: the DLS text entered by the user, unless 'Show default DLS' is No
+      dlsValue = defaultDlsAllowed ? (svc.metadata?.defaultDls || '') : '';
+      metaStatus = { ok: true, msg: dlsValue ? 'manual text' : 'manual text switched off' };
     } else if (mode === 'STREAM') {
       const mtaPath = this._getMtaPath(svc);
       if (fs.existsSync(mtaPath)) {
         const line = fs.readFileSync(mtaPath, 'utf8').split('\n')[0] || '';
         dlsValue = line.trim();
       }
+      metaStatus = { ok: true, msg: dlsValue ? 'title from the stream (ICY)' : 'no title in the stream → default text' };
       if (!dlsValue && defaultDlsAllowed) dlsValue = svc.metadata?.defaultDls || '';
     } else if (mode === 'FILE') {
       const src = String(svc.metadata?.url || '');
@@ -1167,11 +1342,13 @@ export class AppState {
       if (!dlsValue && defaultDlsAllowed) dlsValue = svc.metadata?.defaultDls || '';
     } else if (mode === 'JSON') {
       const url = String(svc.metadata?.url || '');
+      metaStatus = { ok: false, msg: 'no JSON URL' };
       if (url) {
         this._logMeta(svc, 'json', 'fetch URL OK', 'DEBUG');
         const text = await this._fetchText(url);
         if (!text) {
           this._logMeta(svc, 'err', 'empty response from URL', 'WARN');
+          metaStatus = { ok: false, msg: 'no answer from the JSON URL (or empty)' };
         } else {
           try {
             const data = JSON.parse(text);
@@ -1181,8 +1358,34 @@ export class AppState {
             const artist = resolveFirst(data, artistKey);
             const title = resolveFirst(data, titleKey);
             dlsValue = [artist, title].filter(Boolean).join(' - ');
-            const coverUrl = resolveFirst(data, slsKey);
+            let coverUrl = resolveFirst(data, slsKey);
             this._logMeta(svc, 'json', `artist=${artist ? 'OK' : 'none'} title=${title ? 'OK' : 'none'} cover=${coverUrl ? 'yes' : 'none'}`);
+            metaStatus = { ok: Boolean(artist || title), msg: `JSON: artist ${artist ? '✓' : '✗'} · title ${title ? '✓' : '✗'} · cover ${coverUrl ? '✓' : '✗'}` };
+            // Track over (ad / jingle while the API still returns the last song): logo + default text
+            if (dlsValue) {
+              if (rt.trackKey !== dlsValue) { rt.trackKey = dlsValue; rt.trackFirstSeenMs = Date.now(); rt.trackOverLogged = false; }
+              // configured keys first, else the usual fields next to the title (start, duration, type)
+              const near = (key, kind) => (key ? resolveFirst(data, key) : findNearTitle(data, titleKey, kind));
+              const itemType = classifyItemType(near(svc.metadata?.typeKey, 'type'));
+              const durationMs = parseDurationMs(near(svc.metadata?.durationKey, 'duration'));
+              const end = trackEndMs({
+                startMs: parseTimeMs(near(svc.metadata?.startKey, 'start')),
+                durationMs,
+                firstSeenMs: rt.trackFirstSeenMs,
+                maxMin: svc.metadata?.trackMaxMin ?? 8,
+                itemType,
+              });
+              if (end != null && Date.now() > end) {
+                const why = durationMs != null ? 'duration elapsed' : itemType === 'ad' ? 'ad / jingle' : `song longer than ${svc.metadata?.trackMaxMin ?? 8} min`;
+                if (!rt.trackOverLogged) {
+                  rt.trackOverLogged = true;
+                  this._logMeta(svc, 'json', `item over (${why}): "${dlsValue}" → logo and default DLS until the next item`);
+                }
+                metaStatus = { ok: true, msg: `item over (${why}) → logo and default text until the next item` };
+                dlsValue = '';
+                coverUrl = '';
+              }
+            }
             if (coverUrl) {
               slsUrl = coverUrl;
               // Re-download when URL changes OR when DLS changes (same URL, new song)
@@ -1204,6 +1407,7 @@ export class AppState {
             }
           } catch (err) {
             this._logMeta(svc, 'err', `json parse failed: ${String(err?.message || err)}`, 'WARN');
+            metaStatus = { ok: false, msg: `invalid JSON: ${String(err?.message || err).slice(0, 80)}` };
           }
         }
       }
@@ -1242,6 +1446,8 @@ export class AppState {
       slsUrl = String(svc.metadata.slsUrl).trim();
     }
 
+    rt.metaStatus = { ...metaStatus, at: Date.now() };
+
     // Write DLS file to runtime directory (with DL+ support if enabled)
     if (dlsValue !== rt.currentDls) {
       this._logMeta(svc, 'dls', `"${dlsValue}"`);
@@ -1260,6 +1466,9 @@ export class AppState {
         this._copyDefaultSls(slideDir);
       }
     }
+
+    // put the new cover (or the logos again) on air
+    this._syncAirSlides(svc);
   }
 
   async startMux() {
@@ -1526,11 +1735,11 @@ export class AppState {
       }
     }
 
-    // padenc (watch slide directory for logo.jpg, use runtime DLS file)
+    // padenc (watch the on-air slide directory, use runtime DLS file)
     const slideDir = path.resolve(motDirAbs, svc.pad?.slideDir || 'slide');
     const dlsRuntimePath = this._getDlsRuntimePath(svc);
     ensureDir(slideDir);
-    const padCmd = buildPadEncCommand(svc, slideDir, dlsRuntimePath);
+    const padCmd = buildPadEncCommand(svc, this._syncAirSlides(svc), dlsRuntimePath);
     this.pm.spawn(`svc:${svc.id}:padenc`, padCmd.bin, padCmd.args, { cwd: motDirAbs });
 
     // audioenc (uses the fifo name in cwd)

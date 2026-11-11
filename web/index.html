@@ -436,106 +436,155 @@
       </section>
 
       <section class="tabpanel hidden" data-panel="metadata">
-        <div class="grid-meta-top">
-          <label>
-            <span>Metadata mode</span>
-            <select id="f_meta_mode">
-              <option value="STREAM">Stream (ICY)</option>
-              <option value="JSON">JSON (API)</option>
-              <option value="NONE">None (manual)</option>
-            </select>
-          </label>
-          <label>
-            <span>DL+ tags</span>
-            <select id="f_dlplus_enabled">
-              <option value="yes" selected>Enabled</option>
-              <option value="no">Disabled</option>
-            </select>
-          </label>
-          <label>
-            <span>Show default DLS</span>
-            <select id="f_json_default_dls">
-              <option value="yes" selected>Yes</option>
-              <option value="no">No</option>
-            </select>
-          </label>
-          <label>
-            <span>DLS (displayed text)</span>
-            <input id="f_default_dls" placeholder="My DAB+ Radio" />
-          </label>
+        <div class="alert alert-warn hidden" id="metaDirectNote">ZMQ/EDI direct input: DLS, DL+ and slides on air come from the remote encoder. The text settings below are not used for this service (the logo is still shown in DABcast).</div>
+        <div class="meta-layout">
+          <div class="meta-main">
+
+            <!-- 1. Where the titles come from -->
+            <div class="meta-card">
+              <div class="meta-card-title">Titles source</div>
+              <div class="seg" id="metaModeSeg" role="radiogroup" aria-label="Metadata mode">
+                <button type="button" data-mode="STREAM" role="radio">Stream (ICY)</button>
+                <button type="button" data-mode="JSON" role="radio">JSON API</button>
+                <button type="button" data-mode="NONE" role="radio">Manual text</button>
+              </div>
+              <select id="f_meta_mode" class="hidden" aria-hidden="true" tabindex="-1">
+                <option value="STREAM">Stream (ICY)</option>
+                <option value="JSON">JSON (API)</option>
+                <option value="NONE">None (manual)</option>
+              </select>
+              <p class="meta-help" id="metaModeHelp"></p>
+
+              <div class="json-only">
+                <label class="meta-full">
+                  <span>JSON URL</span>
+                  <input id="f_json_url" placeholder="https://api.example.com/nowplaying" />
+                </label>
+                <div class="meta-grid4">
+                  <label>
+                    <span>Refresh (s)</span>
+                    <input id="f_json_interval" type="number" min="3" max="3600" value="10" />
+                  </label>
+                  <label class="meta-span3">
+                    <span>Artist key</span>
+                    <input id="f_json_artist" placeholder="artist" value="artist" />
+                  </label>
+                </div>
+                <label class="meta-full">
+                  <span>Title key</span>
+                  <input id="f_json_title" placeholder="title" value="title" />
+                </label>
+                <label class="meta-full">
+                  <span>Cover URL key <small class="muted">(a|b = b if a is empty)</small></span>
+                  <input id="f_json_sls" placeholder="slide" value="slide" />
+                </label>
+                <div class="row meta-tests">
+                  <button type="button" class="btn btn-sm" id="btnTestJson">Test JSON</button>
+                  <button type="button" class="btn btn-sm" id="btnTestCover">Test cover</button>
+                  <span class="muted" id="jsonTestStatus"></span>
+                </div>
+                <div id="coverPreviewBox" style="display:none;">
+                  <img id="coverPreviewImg" alt="Cover preview" style="width: 160px; height: 120px; object-fit: contain; background: #000; border-radius: 8px;" />
+                  <span class="muted" id="coverPreviewInfo"></span>
+                </div>
+                <details class="meta-adv">
+                  <summary>End of item (ads, jingles, shows)</summary>
+                  <p class="meta-help">Start time, duration and type are read automatically next to the title when the API gives them. Fill these keys only for unusual APIs.</p>
+                  <div class="meta-grid3">
+                    <label title="Optional. Key of the item start time (epoch ms or s, or a date). If empty, a usual field next to the title is used (start, startTime, played_at…).">
+                      <span>Start time key</span>
+                      <input id="f_json_start" placeholder="auto" />
+                    </label>
+                    <label title="Optional. Key of the item duration (seconds, milliseconds or mm:ss). If empty, a usual field next to the title is used (duration, length…). With a duration, the cover leaves the air at the end of the item, whatever its type.">
+                      <span>Duration key</span>
+                      <input id="f_json_duration" placeholder="auto" />
+                    </label>
+                    <label title="Without a duration, when the API says the item is a song (type field next to the title) and still returns it after this time (ads, jingles), its cover and title leave the air: logo and default DLS until the next item. Ads / jingles leave at once; shows, talk and unknown items are never cut. 0 = never.">
+                      <span>Max song (min)</span>
+                      <input id="f_json_trackmax" type="number" min="0" max="60" step="1" value="8" />
+                    </label>
+                  </div>
+                </details>
+              </div>
+            </div>
+
+            <!-- 2. Text sent (DLS) -->
+            <div class="meta-card">
+              <div class="meta-card-title">Text (DLS)</div>
+              <label class="meta-full">
+                <span id="dlsTextLabel">Default text</span>
+                <input id="f_default_dls" placeholder="My DAB+ Radio" />
+                <span class="dls-count" id="dlsCount"></span>
+              </label>
+              <div class="meta-grid2">
+                <label>
+                  <span id="dlsAllowedLabel">Send default text</span>
+                  <select id="f_json_default_dls">
+                    <option value="yes" selected>Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </label>
+                <label title="DL+ tags let receivers show artist and title separately (text in the form 'Artist - Title').">
+                  <span>DL+ tags (artist / title)</span>
+                  <select id="f_dlplus_enabled">
+                    <option value="yes" selected>Enabled</option>
+                    <option value="no">Disabled</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+
+            <!-- 3. Station logo and slides -->
+            <div class="meta-card">
+              <div class="meta-card-title">Station logo &amp; slides</div>
+              <div class="slsrow">
+                <div class="meta-logo-col">
+                  <div id="slsImgWrap" class="no-logo">
+                    <img id="slsImg" alt="SLS" />
+                  </div>
+                  <div class="meta-logo-note">320×240 JPEG</div>
+                  <div class="sls-size" id="slsSize"></div>
+                </div>
+                <div class="slsctl">
+                  <label>
+                    <span>Picture URL</span>
+                    <input id="f_sls_url" placeholder="https://.../logo.jpg" />
+                  </label>
+                  <div class="row">
+                    <button type="button" class="btn btn-sm" id="btnTestSls">Test</button>
+                    <button type="button" class="btn btn-sm" id="btnDownloadSls">Download</button>
+                    <span class="muted" id="slsTestStatus"></span>
+                  </div>
+                  <label>
+                    <span>Or upload a picture</span>
+                    <input id="f_logo" type="file" accept="image/jpeg,image/png,image/webp" />
+                  </label>
+                  <div class="row">
+                    <button type="button" class="btn btn-sm" id="btnClearLogo">Clear</button>
+                    <button type="button" class="btn btn-sm" id="btnManageLogos">📁 Manage logos</button>
+                  </div>
+                  <div class="muted" id="slsHint"></div>
+                </div>
+              </div>
+              <label class="json-only meta-inline" title="During a song with a cover, the station logo (and the extra logos, in turn) comes back on air every N seconds, just long enough to be sent once, then the cover returns. A new cover always goes first. 0 = cover only.">
+                <span>During a cover, send the logo every</span>
+                <input id="f_json_logoevery" type="number" min="0" max="3600" step="5" value="40" />
+                <span class="muted">s (default 40, 0 = cover only)</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Live: what is sent now -->
+          <aside class="meta-live" id="metaLive">
+            <div class="meta-card-title">On air now <span class="meta-live-dot" id="metaLiveDot"></span></div>
+            <div class="meta-live-img"><img id="metaLiveImg" alt="" /><span id="metaLiveImgTxt">—</span></div>
+            <div class="meta-live-slide" id="metaLiveSlide"></div>
+            <div class="meta-live-label">DLS</div>
+            <div class="meta-live-dls" id="metaLiveDls">—</div>
+            <div class="meta-live-dlplus" id="metaLiveDlplus"></div>
+            <div class="meta-live-status" id="metaLiveStatus"></div>
+          </aside>
         </div>
-
-          <!-- JSON mode fields -->
-          <div class="json-only" style="margin-top: 12px;">
-            <div class="grid2">
-              <label class="span2">
-                <span>JSON URL</span>
-                <input id="f_json_url" placeholder="https://api.example.com/nowplaying" />
-              </label>
-            </div>
-            <div class="grid-keys">
-              <label>
-                <span>Refresh (sec)</span>
-                <input id="f_json_interval" type="number" min="3" max="3600" value="10" />
-              </label>
-              <label>
-                <span>Artist key</span>
-                <input id="f_json_artist" placeholder="artist" value="artist" />
-              </label>
-              <label>
-                <span>Title key</span>
-                <input id="f_json_title" placeholder="title" value="title" />
-              </label>
-              <label>
-                <span>Cover URL key</span>
-                <input id="f_json_sls" placeholder="slide" value="slide" />
-              </label>
-            </div>
-            <div class="grid2" style="margin-top: 12px;">
-              <div class="row span2">
-                <button type="button" class="btn" id="btnTestJson">Test JSON</button>
-                <button type="button" class="btn" id="btnTestCover">Test cover</button>
-                <span class="muted" id="jsonTestStatus"></span>
-              </div>
-              <div class="span2" id="coverPreviewBox" style="display:none;">
-                <img id="coverPreviewImg" alt="Cover preview" style="width: 160px; height: 120px; object-fit: contain; background: #000; border-radius: 8px;" />
-                <span class="muted" id="coverPreviewInfo"></span>
-              </div>
-            </div>
-          </div>
-
-          <!-- SLS image section (always visible) -->
-          <div class="slsbox">
-            <div class="sls-title">SLS (displayed picture)</div>
-            <div class="slsrow">
-              <div style="text-align: center;">
-                <div id="slsImgWrap" class="no-logo">
-                  <img id="slsImg" alt="SLS" />
-                </div>
-                <div style="font-size: 11px; color: #666; margin-top: 4px;">320x240 .jpeg</div>
-              </div>
-              <div class="slsctl">
-                <label>
-                  <span>Picture URL</span>
-                  <input id="f_sls_url" placeholder="https://.../cover.jpg" />
-                </label>
-                <div class="row">
-                  <button type="button" class="btn" id="btnTestSls">Test</button>
-                  <button type="button" class="btn" id="btnDownloadSls">Download</button>
-                  <span class="muted" id="slsTestStatus"></span>
-                </div>
-                <label>
-                  <span>Or upload a local picture</span>
-                  <input id="f_logo" type="file" accept="image/jpeg,image/png,image/webp" />
-                </label>
-                <div class="row">
-                  <button type="button" class="btn" id="btnClearLogo">Clear</button>
-                  <button type="button" class="btn" id="btnManageLogos">📁 Manage Logos</button>
-                </div>
-                <div class="muted" id="slsHint"></div>
-              </div>
-            </div>
-          </div>
       </section>
 
       <div class="modal-actions">
@@ -777,6 +826,7 @@
               <div class="pl-info" id="plInfo"></div>
               <div class="pl-dlplus" id="plDlplus"></div>
               <div class="pl-dls" id="plDls"></div>
+              <div class="pl-slide-info" id="plSlideInfo"></div>
             </div>
           </div>
           <div class="pl-vu">
