@@ -536,9 +536,8 @@ signed in, and use the account panel to sign out or change credentials later.</p
 </p>
 <table>
   <tr><th>Tag</th><th>Meaning</th><th>What to do</th></tr>
-  <tr><td>🟢 BUF OK</td><td>Audio arrives regularly, no recent buffer incident</td><td>Nothing</td></tr>
-  <tr><td>⚪ UNSTABLE (grey)</td><td>Past glitches only — typically the buffer filling up right after Start. dabmux keeps this state for several minutes.</td><td>Nothing</td></tr>
-  <tr><td>🟡 UNSTABLE ▲</td><td>Underruns increased during the last minute: the buffer ran empty and listeners may hear dropouts</td><td>Check the source stream, network and encoder of that service</td></tr>
+  <tr><td>🟢 BUF OK</td><td>Audio arrives regularly, no buffer incident in the last 30 seconds. Shown even while dabmux itself still reports <em>Unstable</em> for old glitches (e.g. the buffer filling up right after Start) — the tooltip says so.</td><td>Nothing</td></tr>
+  <tr><td>🟡 UNSTABLE ▲</td><td>Underruns increased during the last 30 seconds: the buffer ran empty and listeners may hear dropouts (▲ = increase since the previous reading)</td><td>Check the source stream, network and encoder of that service</td></tr>
   <tr><td>🟡 SILENCE</td><td>Data arrives but the audio is (almost) silent</td><td>Check the source programme</td></tr>
   <tr><td>🔴 NO DATA</td><td>Nothing arrives from the encoder</td><td>Check the encoder and its logs</td></tr>
 </table>

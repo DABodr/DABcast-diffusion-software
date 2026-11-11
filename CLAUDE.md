@@ -561,7 +561,7 @@ These are non-obvious behaviors that have caused bugs in the past:
 | **Telegram failure isolation** | Network/API failures must never interrupt file logging or the ON AIR process chain. Default forwarding threshold is `ERROR`. |
 | **dabmux management port** | `managementport` (12720) is a **ZMQ REP** socket, not HTTP/telnet. Send `values` → per-subchannel `inputstat` (state, min/max fill, `num_underruns`, `num_overruns`, peaks). Use `odr/dabmuxStats.js` (pure-JS ZMTP client, no native zeromq dep). Telnet 12721 = parameters only, no fill stats. |
 | **sub_N ↔ service mapping** | `.mux` subchannels are `sub_1…sub_N` over **all** services (enabled or not) sorted by `ui.order ?? 0` — same as `muxBuilder`. Never filter on `enabled` when mapping stats. |
-| **dabmux "Unstable" is sticky** | Start-up prebuffering underruns put every input in `Unstable`, and it stays so for minutes after counters stop increasing. Judge health on **counter increases**, not on the state string. The UI greys `Unstable` unless underruns rose in the last 60s. |
+| **dabmux "Unstable" is sticky** | Start-up prebuffering underruns put every input in `Unstable`, and it stays so for minutes after counters stop increasing. Judge health on **counter increases**, not on the state string. The UI shows `Unstable` as `BUF OK` (and counts it healthy) unless underruns rose in the last 30 s (`BUF_GLITCH_WINDOW_MS`). |
 | **/api/mux/stats and getState()** | Do not call `getState()` there: it consumes `lastError`, which the frontend must receive via `/api/state`. Read `state.muxRunning` / `state.preset` / `state.settings` directly. Results cached 2s, concurrent requests share one query. |
 
 ## ARCHITECTURE LOCK MODE

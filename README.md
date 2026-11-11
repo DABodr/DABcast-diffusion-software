@@ -270,7 +270,7 @@ The `dabcast.service` file at the root contains commented `Environment=` lines f
 - ✅ **Watchdog**: process health monitoring and audio stream surveillance
 - ✅ **Mux input buffer monitoring** (read-only): DABcast queries the odr-dabmux management port (ZMQ, `managementport`) every 5 s while ON AIR
   - Per-service tag in the Status column: `BUF OK`, `UNSTABLE`, `SILENCE`, `NO DATA` (hover for fill, underruns, overruns, peaks)
-  - `UNSTABLE ▲` in yellow = underruns increased in the last minute (listeners may hear dropouts); grey = only past glitches (e.g. start-up prebuffering)
+  - `UNSTABLE` in yellow = underruns increased in the last 30 s (listeners may hear dropouts, `▲` = since the previous reading); an input dabmux still reports `Unstable` for past glitches only (e.g. start-up prebuffering) is shown as `BUF OK`
   - "Mux inputs" card in the summary row; `SILENCE` / `NO DATA` inputs count as alarms; full table in the About (?) dialog
   - Detects dropouts the process watchdog cannot see (encoder alive but not delivering audio); no automatic action is taken
 - ✅ **Detailed logs**:

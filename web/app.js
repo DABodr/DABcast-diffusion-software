@@ -37,18 +37,19 @@ let _updateInfo = null;      // cached result of /api/update/check
 let MUX_STATS = null;
 let _muxStatsAt = 0;
 const _bufLastGlitchAt = new Map();  // service id -> last time dabmux underruns increased
-const BUF_GLITCH_WINDOW_MS = 60000;
+const BUF_GLITCH_WINDOW_MS = 30000;
 const BUF_STATES = {
   Streaming: ['ok', 'BUF OK'], Unstable: ['warn', 'UNSTABLE'], Silence: ['warn', 'SILENCE'], NoData: ['err', 'NO DATA'],
 };
 function bufTag(inp, always = false) {
   if (!inp) return '';
   let [cls, label] = BUF_STATES[inp.state] || ['', String(inp.state || '?').toUpperCase()];
-  // dabmux keeps "Unstable" long after old glitches (e.g. start-up prebuffering): only warn on recent ones
-  if (inp.state === 'Unstable' && !inp.recentGlitch) cls = '';
+  // dabmux keeps "Unstable" for minutes after old glitches (e.g. start-up prebuffering):
+  // with no new underrun in BUF_GLITCH_WINDOW_MS the input is healthy → show it as BUF OK
+  if (inp.state === 'Unstable' && !inp.recentGlitch) [cls, label] = BUF_STATES.Streaming;
   if (!always && !label) return '';
   const d = inp.underrunsDelta > 0 ? ` (+${inp.underrunsDelta})` : '';
-  const note = inp.state === 'Unstable' && !inp.recentGlitch ? ' (past glitches, no new underruns in the last minute)' : '';
+  const note = inp.state === 'Unstable' && !inp.recentGlitch ? ` (past glitches only, no new underruns in the last ${BUF_GLITCH_WINDOW_MS / 1000} s)` : '';
   const tip = `Mux input: ${inp.state}${note} · fill ${inp.minFill}–${inp.maxFill} · underruns ${inp.underruns}${d} · overruns ${inp.overruns} · peak ${inp.peakLeft}/${inp.peakRight} dBFS`;
   return `<span class="buf-tag ${cls}" title="${esc(tip)}">${label}${d ? ' ▲' : ''}</span>`;
 }
@@ -378,7 +379,7 @@ function renderStats(cap) {
     ? `${esc(block)} · ${((DAB_FREQ_TABLE[block] || 0) / 1e6).toFixed(3)} MHz`
     : `TX: ${esc(tx)}`;
   const bufInputs = STATE.muxRunning && MUX_STATS?.inputs ? Object.values(MUX_STATS.inputs) : [];
-  // healthy = Streaming, or Unstable with no new underrun in the last minute (dabmux keeps "Unstable" long after start-up)
+  // healthy = Streaming, or Unstable with no recent underrun (dabmux keeps "Unstable" long after start-up)
   const bufOk = bufInputs.filter((i) => i.state === 'Streaming' || (i.state === 'Unstable' && !i.recentGlitch)).length;
   const bufBad = bufInputs.filter((i) => i.state === 'NoData' || i.state === 'Silence').length;
   const bufUnstable = bufInputs.filter((i) => i.state === 'Unstable' && i.recentGlitch).length;
