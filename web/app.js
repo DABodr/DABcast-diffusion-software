@@ -1036,14 +1036,17 @@ dlgLogs.addEventListener('close', () => {
   _logRefreshTimer = null;
 });
 
-async function exportAllConfig() {
-  const payload = await api('/api/export/full');
-  // File named after the ensemble (mux) label; falls back to the preset id
+// Config export file name: ensemble (mux) label made filename-safe; falls back to the preset id
+function configExportBaseName(payload) {
   const label = String(payload?.settings?.ensemble?.label || '')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
-  const name = label || (payload?.preset?.id ? payload.preset.id.replace(/\s+/g, '_') : 'dabcast');
-  downloadJson(`dabcast_config_${name}.json`, payload);
+  return label || (payload?.preset?.id ? payload.preset.id.replace(/\s+/g, '_') : 'dabcast');
+}
+
+async function exportAllConfig() {
+  const payload = await api('/api/export/full');
+  downloadJson(`dabcast_config_${configExportBaseName(payload)}.json`, payload);
 }
 
 async function importAllConfig(file) {
@@ -1604,13 +1607,15 @@ $('#btnAuthSave').addEventListener('click', async () => {
   }
 });
 
-$('#btnLogout')?.addEventListener('click', async () => {
+async function signOut() {
   try {
     await fetch('/api/logout', { method: 'POST' });
   } finally {
     window.location.replace('/login.html');
   }
-});
+}
+$('#btnLogout')?.addEventListener('click', signOut);
+$('#btnSignOut')?.addEventListener('click', signOut);
 
 // ── Telegram dialog ──
 const dlgTelegram = $('#dlgTelegram');
@@ -2267,7 +2272,7 @@ $('#svcForm').addEventListener('submit', async (e) => {
 $('#btnExportConfig')?.addEventListener('click', async () => {
   try {
     const payload = await api('/api/export/full');
-    const defaultName = payload?.preset?.id ? payload.preset.id.replace(/\s+/g, '_') : 'dabcast';
+    const defaultName = configExportBaseName(payload);
     const fileName = prompt('Configuration file name:', defaultName);
     if (!fileName) return; // User cancelled
     const sanitized = fileName.trim().replace(/\.json$/i, ''); // Remove .json if present
