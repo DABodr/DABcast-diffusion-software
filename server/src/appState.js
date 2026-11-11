@@ -355,12 +355,20 @@ export class AppState {
   }
 
   upsertService(service) {
-    if (this.muxRunning) throw new Error('Cannot replace service while ON AIR');
     if (!service || typeof service !== 'object') {
       throw new Error('Invalid service payload');
     }
     const next = structuredClone(service);
     if (!next.id) next.id = nanoid(8);
+    // ON AIR: an imported service is forced OFF (not in the running .mux; ON/OFF button puts it on air).
+    // Replacing an existing service is only allowed if it is OFF and its encoder is not running.
+    if (this.muxRunning) {
+      const cur = this.preset.services.find((s) => s.id === next.id);
+      if (cur && (cur.enabled !== false || this.pm.isRunning(`svc:${cur.id}:audioenc`) || this.pm.isRunning(`svc:${cur.id}:padenc`))) {
+        throw new Error('Cannot replace a service that is ON while ON AIR — turn it OFF first');
+      }
+      next.enabled = false;
+    }
     next.ui = { ...(next.ui || {}), order: next.ui?.order ?? (this.preset.services.length + 1) };
 
     const { errors, warnings, normalized } = validateService(next, ALLOWED_BITRATES_KBPS);
@@ -606,7 +614,9 @@ export class AppState {
   }
 
   addService(svc) {
-    if (this.muxRunning) throw new Error('Cannot add service while ON AIR');
+    // ON AIR: the service is added OFF (enabled: false). It is not in the running .mux and every
+    // ON AIR loop skips disabled services; the row ON/OFF button restarts the mux to put it on air.
+    const addedOnAir = this.muxRunning;
 
     // Use PI code (hex, no 0x prefix) as service ID for readable MOT directory names
     const piHex = String(svc.identity?.pi || '').replace(/^0x/i, '').toUpperCase();
@@ -617,7 +627,7 @@ export class AppState {
 
     const newSvc = {
       id,
-      enabled: true,
+      enabled: !addedOnAir,
       identity: {
         pi: svc.identity?.pi || '0000',
         serviceIdHex: svc.identity?.serviceIdHex || `0x${svc.identity?.pi || '0000'}`,
@@ -725,10 +735,13 @@ export class AppState {
   }
 
   deleteService(id) {
-    if (this.muxRunning) throw new Error('Cannot delete service while ON AIR');
     const idx = this.preset.services.findIndex((s) => s.id === id);
     if (idx === -1) return;
     const svc = this.preset.services[idx];
+    // ON AIR: only an OFF service (not in the running .mux, no encoder) can be deleted
+    if (this.muxRunning && (svc.enabled !== false || this.pm.isRunning(`svc:${id}:audioenc`) || this.pm.isRunning(`svc:${id}:padenc`))) {
+      throw new Error('Cannot delete a service that is ON while ON AIR — turn it OFF first');
+    }
 
     // Clean up MOT directory (slides, DLS, fifo)
     try {
