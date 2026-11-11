@@ -14,7 +14,7 @@ import { TelegramLogNotifier } from './telegramNotifier.js';
 import { OdrProcessManager } from './odr/processManager.js';
 import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
-import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, PLAYER_MAX_LISTENERS } from './player.js';
+import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
   REMEMBERED_SESSION_MAX_AGE_MS,
@@ -818,6 +818,38 @@ setInterval(() => {
   _prevCpu = cur;
 }, 2000);
 
+// ── Light system load for the main page "System" card (polled every 5 s) ──
+// Reads /proc only; disk usage cached 30 s (statfs, or df on old Node). No ODR tool is spawned.
+let _diskCache = { at: 0, v: null };
+function diskUsage() {
+  if (_diskCache.at && Date.now() - _diskCache.at < 30000) return _diskCache.v;
+  let v = null;
+  try {
+    let totalB, usedB, availB;
+    if (typeof fs.statfsSync === 'function') {
+      const st = fs.statfsSync(dataDir);
+      totalB = st.blocks * st.bsize; usedB = (st.blocks - st.bfree) * st.bsize; availB = st.bavail * st.bsize;
+    } else {
+      const f = execSync(`df -Pk "${dataDir}"`, { encoding: 'utf8', timeout: 3000 }).trim().split('\n')[1].split(/\s+/);
+      totalB = Number(f[1]) * 1024; usedB = Number(f[2]) * 1024; availB = Number(f[3]) * 1024;
+    }
+    const gb = (b) => Math.round(b / 1e8) / 10;
+    v = { totalGb: gb(totalB), freeGb: gb(availB), usedPct: Math.ceil(usedB / (usedB + availB) * 100) };   // same % as df
+  } catch { /* unavailable */ }
+  _diskCache = { at: Date.now(), v };
+  return v;
+}
+app.get('/api/system/load', (req, res) => {
+  let memTotalMb = null, memAvailableMb = null;
+  try {
+    const mi = fs.readFileSync('/proc/meminfo', 'utf8');
+    const t = mi.match(/MemTotal:\s+(\d+)/), a = mi.match(/MemAvailable:\s+(\d+)/);
+    if (t) memTotalMb = Math.round(Number(t[1]) / 1024);
+    if (a) memAvailableMb = Math.round(Number(a[1]) / 1024);
+  } catch { /* ignore */ }
+  res.json({ cpuPct: _cpuPct, cores: os.cpus().length, memTotalMb, memAvailableMb, disk: diskUsage() });
+});
+
 // ── System info (About dialog) ──
 // ODR tool versions via `<bin> --version`. Only called while the mux is NOT running:
 // spawning a second odr-dabmux next to a live one could conflict with its ports.
@@ -946,7 +978,14 @@ app.get('/api/player/stream', (req, res) => {
   if (idx < 0) return res.status(404).json({ error: 'Service not on air' });
   if (!acquireListenerSlot()) return res.status(429).json({ error: `Player busy (max ${PLAYER_MAX_LISTENERS} listeners)` });
   const port = Number(state.settings?.dabmux?.easyDabOutput?.netPort) || 9901;
-  streamService({ port, subchId: idx + 1, dabPlus: true, req, res, log: (m, l) => logger.line('web', m, l) });
+  const key = String(req.query.k || '').slice(0, 40);
+  streamService({ port, subchId: idx + 1, dabPlus: true, key, req, res, log: (m, l) => logger.line('web', m, l) });
+});
+// Server-side meter of a playing stream (for browsers that cannot analyse it, e.g. iOS Safari)
+app.get('/api/player/levels', (req, res) => {
+  const levels = playerLevels(req.query.k, Number(req.query.since) || 0);
+  if (!levels) return res.status(404).json({ error: 'No such stream' });
+  res.json({ levels });
 });
 
 app.get('/api/logs', (req, res) => {
