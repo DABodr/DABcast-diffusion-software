@@ -728,6 +728,7 @@
         <label>
           <span>TX mode</span>
           <select id="m_txmode">
+            <option value="NETWORK">Network outputs (one or several transmitters)</option>
             <option value="EASYDAB">EASYDAB (ZMQ out)</option>
             <option value="EDI">EDI (TCP out)</option>
             <option value="USRP1">USRP1 (stdout ETI)</option>
@@ -758,6 +759,30 @@
           <span>EDI TIST offset (seconds)</span>
           <input id="m_edi_tist_offset" type="number" min="0" max="60" step="0.001" />
         </label>
+        <div class="network-only span2" id="netOutputsBox">
+          <div class="net-head">
+            <span class="net-title">Transmitter outputs</span>
+            <span class="muted net-sub">each output feeds one transmitter, modulator or converter</span>
+            <div class="spacer"></div>
+            <select id="netAddType" aria-label="Type of the output to add">
+              <option value="edi-udp">EDI/UDP — commercial modulator (mux sends)</option>
+              <option value="edi-udp-mc">EDI/UDP multicast — several transmitters</option>
+              <option value="edi-tcp">EDI/TCP — transmitter / converter connects</option>
+              <option value="zmq">ZMQ — EasyDAB</option>
+              <option value="zmq-v2">ZMQ + metadata — EasyDAB V2</option>
+              <option value="eti-tcp">ETI/TCP — raw ETI</option>
+            </select>
+            <button type="button" class="btn btn-sm btn-primary" id="netAdd">+ Add</button>
+          </div>
+          <div id="netOutputs"></div>
+          <div class="net-common">
+            <label class="check-row"><input type="checkbox" id="m_net_pft" /> EDI: PFT / FEC (all EDI outputs)</label>
+            <label class="net-inline"><span>FEC</span><input id="m_net_fec" type="number" min="0" max="5" step="1" /></label>
+            <label class="net-inline"><span>TIST offset (s)</span><input id="m_net_tist" type="number" min="0" max="60" step="0.024" /></label>
+          </div>
+          <p class="meta-help">PFT / FEC protects EDI over UDP against lost packets (usual for commercial modulators, not needed over TCP); it applies to every EDI output.
+            The TIST offset gives transmitters time to buffer (EasyDAB V2: 2 s). The ETI monitoring output (Player / Dablin) is always kept.</p>
+        </div>
         <label class="hackrf-only">
           <span>DAB Block</span>
           <select id="m_hackrf_block"></select>

@@ -441,6 +441,8 @@ app.patch('/api/settings', (req, res) => {
         if (errors.length) throw new Error(`Transmitter outputs: ${errors.join(' · ')}`);
       }
     }
+    // ?check=1: validation only (the UI checks before stopping the multiplex ON AIR)
+    if (req.query.check) return res.json({ ok: true, checked: true });
 
     if (patch.preset) {
       if (patch.preset.name !== undefined) {
@@ -1142,6 +1144,50 @@ app.get('/api/system/info', (req, res) => {
 // shared between concurrent clients and cached 2s to spare the Pi and dabmux.
 let _muxStatsCache = { at: 0, body: null };
 let _muxStatsInFlight = null;
+// Transmitter outputs (NETWORK mode, Multiplex dialog): who is connected to each listening output.
+// Read-only: established TCP connections whose local port is the output port (/proc/net/tcp and
+// tcp6, read asynchronously). An EasyDAB connects to the ZMQ output, a transmitter / converter /
+// remote odr-dabmod to an EDI/TCP output. EDI/UDP has no connection: only the destination is known.
+const hexIp4 = (h) => [3, 2, 1, 0].map((i) => parseInt(h.slice(i * 2, i * 2 + 2), 16)).join('.');
+function hexIp6(h) {
+  if (h.startsWith('0000000000000000FFFF0000')) return hexIp4(h.slice(24));   // IPv4-mapped
+  const words = [];
+  for (let i = 0; i < 32; i += 8) { const w = h.slice(i, i + 8).match(/../g).reverse().join(''); words.push(w.slice(0, 4), w.slice(4)); }
+  return words.map((w) => parseInt(w, 16).toString(16)).join(':');
+}
+async function establishedPeers() {
+  const peers = new Map();   // local port -> [remote ip]
+  for (const [file, toIp] of [['/proc/net/tcp', hexIp4], ['/proc/net/tcp6', hexIp6]]) {
+    let text = '';
+    try { text = await fs.promises.readFile(file, 'utf8'); } catch { continue; }
+    for (const line of text.split('\n').slice(1)) {
+      const f = line.trim().split(/\s+/);
+      if (f.length < 4 || f[3] !== '01') continue;   // 01 = ESTABLISHED
+      const [, lport] = f[1].split(':');
+      const [rip] = f[2].split(':');
+      const port = parseInt(lport, 16);
+      if (!peers.has(port)) peers.set(port, []);
+      peers.get(port).push(toIp(rip));
+    }
+  }
+  return peers;
+}
+app.get('/api/mux/outputs', async (req, res) => {
+  const dabmux = settings.dabmux || {};
+  const outputs = normalizeOutputs(dabmux.outputs);
+  const peers = state.muxRunning ? await establishedPeers() : new Map();
+  const monitorPort = Number(dabmux.easyDabOutput?.netPort) || 9901;
+  res.json({
+    running: state.muxRunning,
+    txMode: String(dabmux.txMode || 'EASYDAB').toUpperCase(),
+    outputs: outputs.map((o) => ({
+      id: o.id,
+      connected: o.type === 'edi-udp' || !o.enabled ? null : [...new Set(peers.get(o.port) || [])],
+    })),
+    monitor: { port: monitorPort, connected: [...new Set(peers.get(monitorPort) || [])] },
+  });
+});
+
 app.get('/api/mux/stats', async (req, res) => {
   // Read fields directly: getState() would consume lastError meant for /api/state.
   if (!state.muxRunning) return res.json({ running: false });

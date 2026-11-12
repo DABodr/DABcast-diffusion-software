@@ -1503,10 +1503,10 @@ function normalizeHex(raw, expectedLen) {
 const MUX_DLG_RESTART_FIELDS = ['m_ens_id','m_ecc','m_label','m_short','m_txmode','m_easydab_ip','m_easydab_port','m_edi_port','m_edi_pft','m_edi_fec','m_edi_tist_offset','m_mgmt','m_telnet',
   'm_hackrf_block','m_hackrf_txgain','m_hackrf_maxframes','m_hackrf_gainmode','m_hackrf_diggain','m_hackrf_rate'];
 let muxRestartSnapshot = null;  // field values when the Multiplex dialog opened ON AIR (null otherwise)
-const muxDlgFieldValues = () => MUX_DLG_RESTART_FIELDS.map((id) => {
+const muxDlgFieldValues = () => [...MUX_DLG_RESTART_FIELDS.map((id) => {
   const el = document.getElementById(id);
   return !el ? '' : el.type === 'checkbox' ? String(el.checked) : el.value;
-});
+}), JSON.stringify(NET_OUTPUTS), String($('#m_net_pft')?.checked), $('#m_net_fec')?.value, $('#m_net_tist')?.value];   // NETWORK outputs too
 const muxDlgFieldsChanged = () => Boolean(muxRestartSnapshot && STATE?.muxRunning
   && muxDlgFieldValues().some((v, i) => v !== muxRestartSnapshot[i]));
 function updateMuxRestartWarn() {
@@ -1535,6 +1535,12 @@ function openMuxDialog() {
   $('#m_mgmt').value = STATE.settings.dabmux.managementPort || 12720;
   $('#m_telnet').value = STATE.settings.dabmux.telnetPort || 12721;
   $('#m_autostart').checked = STATE.settings.autoStart ?? false;
+  // NETWORK mode: outputs list (empty = pre-filled from the current mode when NETWORK is chosen)
+  NET_OUTPUTS = (STATE.settings.dabmux.outputs || []).map((o) => ({ ...o }));
+  $('#m_net_pft').checked = STATE.settings.dabmux.ediOptions?.pft === true;
+  $('#m_net_fec').value = STATE.settings.dabmux.ediOptions?.fec ?? 2;
+  $('#m_net_tist').value = STATE.settings.dabmux.tistOffsetSec ?? 0;
+  renderNetOutputs();
 
   // HackRF fields
   const hackrf = STATE.settings.dabmux?.hackrf || {};
@@ -1566,14 +1572,159 @@ function openMuxDialog() {
 
   updateTxModeVisibility();
   dlgMux.showModal();
+  netStartStatus();
 }
 
 function updateTxModeVisibility() {
   const mode = ($('#m_txmode')?.value || 'EASYDAB').toUpperCase();
+  document.querySelectorAll('.network-only').forEach((el) => el.classList.toggle('hidden', mode !== 'NETWORK'));
+  // first switch to "Network outputs": start from what the current mode sends (same ports)
+  if (mode === 'NETWORK' && !NET_OUTPUTS.length) { NET_OUTPUTS = netOutputsFromLegacy(); renderNetOutputs(); }
   document.querySelectorAll('.easydab-only').forEach((el) => el.classList.toggle('hidden', mode !== 'EASYDAB'));
   document.querySelectorAll('.edi-only').forEach((el) => el.classList.toggle('hidden', mode !== 'EDI'));
   document.querySelectorAll('.usrp1-only').forEach((el) => el.classList.toggle('hidden', mode !== 'USRP1'));
   document.querySelectorAll('.hackrf-only').forEach((el) => el.classList.toggle('hidden', mode !== 'HACKRF'));
+}
+
+// ── Multiplex dialog: transmitter outputs of the NETWORK mode (server: odr/outputs.js) ──
+let NET_OUTPUTS = [];          // outputs being edited (saved as settings.dabmux.outputs)
+let netStatusTimer = null;     // connection state polling while the dialog is open
+const NET_TYPE_LABEL = { 'edi-udp': 'EDI/UDP', 'edi-tcp': 'EDI/TCP', zmq: 'ZMQ', 'eti-tcp': 'ETI/TCP' };
+const NET_HELP = {
+  'edi-udp': 'DABcast sends EDI to the transmitter: set its EDI input to UDP, port below (multicast: join the group). Use PFT / FEC.',
+  'edi-tcp': 'The transmitter, a digris-edi-tcp-converter or a remote odr-dabmod connects to this server on this port (EDI over TCP).',
+  zmq: 'The EasyDAB (or ODR-DabMod) connects to this server on this port (ZMQ client).',
+  'eti-tcp': 'The receiver connects to this server on this port and reads raw ETI.',
+};
+const serverHost = () => location.hostname || 'this server';
+function netNextPort(from) {
+  const used = new Set(NET_OUTPUTS.filter((o) => o.type !== 'edi-udp').map((o) => Number(o.port)));
+  let p = from;
+  while (used.has(p)) p++;
+  return p;
+}
+function netNewId(type) {
+  const base = type.replace(/[^a-z]/g, '');
+  let i = 1;
+  while (NET_OUTPUTS.some((o) => o.id === `${base}${i}`)) i++;
+  return `${base}${i}`;
+}
+// same as outputsFromLegacy() on the server, from the values shown in the dialog
+function netOutputsFromLegacy() {
+  const dm = STATE.settings.dabmux || {};
+  const was = String(dm.txMode || 'EASYDAB').toUpperCase();
+  if (was === 'EDI') return [{ id: 'edi', name: 'EDI', enabled: true, type: 'edi-tcp', port: Number($('#m_edi_port').value) || 13000 }];
+  if (was === 'EASYDAB') return [{ id: 'easydab', name: 'EasyDAB', enabled: true, type: 'zmq', ip: $('#m_easydab_ip').value.trim() || '0.0.0.0', port: Number($('#m_easydab_port').value) || 18081, allowMetadata: false }];
+  return [];
+}
+function netAdd(kind) {
+  const presets = {
+    'edi-udp': () => ({ type: 'edi-udp', name: 'Modulator', destination: '', port: 12000, sourcePort: netNextPort(13000), source: '', ttl: 1 }),
+    'edi-udp-mc': () => ({ type: 'edi-udp', name: 'Multicast', destination: '239.20.10.1', port: 12000, sourcePort: netNextPort(13000), source: '', ttl: 1 }),
+    'edi-tcp': () => ({ type: 'edi-tcp', name: 'EDI/TCP', port: netNextPort(13000) }),
+    zmq: () => ({ type: 'zmq', name: 'EasyDAB', ip: '0.0.0.0', port: netNextPort(18081), allowMetadata: false }),
+    'zmq-v2': () => ({ type: 'zmq', name: 'EasyDAB V2', ip: '0.0.0.0', port: netNextPort(18081), allowMetadata: true }),
+    'eti-tcp': () => ({ type: 'eti-tcp', name: 'ETI/TCP', ip: '0.0.0.0', port: netNextPort(9902) }),
+  };
+  const o = { enabled: true, ...presets[kind]() };
+  o.id = netNewId(o.type);
+  if (kind === 'edi-udp' || kind === 'edi-udp-mc') $('#m_net_pft').checked = true;                 // usual for UDP
+  if (kind === 'zmq-v2' && !(Number($('#m_net_tist').value) > 0)) $('#m_net_tist').value = 2;   // EasyDAB V2 buffer
+  NET_OUTPUTS.push(o);
+  renderNetOutputs();
+  updateMuxRestartWarn();
+}
+function netField(o, i, key, label, attrs = '') {
+  const v = o[key] ?? '';
+  return `<label class="net-inline"><span>${label}</span><input data-net="${i}" data-key="${key}" value="${esc(String(v))}" ${attrs} /></label>`;
+}
+function renderNetOutputs() {
+  const box = $('#netOutputs');
+  if (!box) return;
+  if (!NET_OUTPUTS.length) { box.innerHTML = '<div class="muted net-empty">No output yet: choose a type and press + Add.</div>'; return; }
+  box.innerHTML = NET_OUTPUTS.map((o, i) => {
+    const mc = o.type === 'edi-udp' && /^(22[4-9]|23\d)\./.test(o.destination || '');
+    let fields = '';
+    if (o.type === 'edi-udp') {
+      fields = netField(o, i, 'destination', mc ? 'Multicast group' : 'Transmitter IP', 'placeholder="192.168.1.50" class="net-ip"')
+        + netField(o, i, 'port', 'Port', 'type="number" min="1" max="65535"')
+        + netField(o, i, 'sourcePort', 'Source port', 'type="number" min="1" max="65535"')
+        + (mc ? netField(o, i, 'source', 'Interface IP', 'placeholder="this server" class="net-ip"') + netField(o, i, 'ttl', 'TTL', 'type="number" min="1" max="255"') : '');
+    } else if (o.type === 'edi-tcp') {
+      fields = netField(o, i, 'port', 'Listen port', 'type="number" min="1024" max="65535"');
+    } else {
+      fields = netField(o, i, 'ip', 'Listen IP', 'placeholder="0.0.0.0" class="net-ip"') + netField(o, i, 'port', 'Port', 'type="number" min="1024" max="65535"')
+        + (o.type === 'zmq' ? `<label class="check-row net-inline"><input type="checkbox" data-net="${i}" data-key="allowMetadata" ${o.allowMetadata ? 'checked' : ''} /> metadata (EasyDAB V2)</label>` : '');
+    }
+    const help = o.type === 'edi-udp' ? NET_HELP['edi-udp'] : `${NET_HELP[o.type]} Address: ${serverHost()}:${o.port}`;
+    return `<div class="net-row${o.enabled ? '' : ' off'}">
+      <div class="net-row-head">
+        <label class="check-row" title="ON = fed by the multiplex"><input type="checkbox" data-net="${i}" data-key="enabled" ${o.enabled ? 'checked' : ''} /></label>
+        <input class="net-name" data-net="${i}" data-key="name" value="${esc(o.name || '')}" maxlength="40" aria-label="Output name" />
+        <span class="buf-tag">${NET_TYPE_LABEL[o.type]}</span>
+        <span class="net-status" id="netSt_${esc(o.id)}"></span>
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-mini" data-net-del="${i}" title="Remove this output">✕</button>
+      </div>
+      <div class="net-fields">${fields}</div>
+      <div class="net-help">${esc(help)}</div>
+    </div>`;
+  }).join('');
+}
+// edits in the list → NET_OUTPUTS (numbers kept as numbers)
+$('#netOutputs')?.addEventListener('input', (e) => {
+  const el = e.target.closest('[data-net]');
+  if (!el) return;
+  const o = NET_OUTPUTS[Number(el.dataset.net)];
+  const k = el.dataset.key;
+  o[k] = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value);
+  if (k === 'enabled') el.closest('.net-row').classList.toggle('off', !el.checked);
+  if (k === 'destination' || k === 'port') {   // multicast fields / help address follow
+    const pos = el.selectionStart;
+    renderNetOutputs();
+    const again = document.querySelector(`[data-net="${el.dataset.net}"][data-key="${k}"]`);
+    if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch { /* number input */ } }
+  }
+  updateMuxRestartWarn();
+});
+$('#netOutputs')?.addEventListener('change', (e) => { if (e.target.matches('[data-net]')) updateMuxRestartWarn(); });
+$('#netOutputs')?.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-net-del]');
+  if (!b) return;
+  NET_OUTPUTS.splice(Number(b.dataset.netDel), 1);
+  renderNetOutputs();
+  updateMuxRestartWarn();
+});
+$('#netAdd')?.addEventListener('click', () => netAdd($('#netAddType').value));
+['m_net_pft', 'm_net_fec', 'm_net_tist'].forEach((id) => document.getElementById(id)?.addEventListener('input', updateMuxRestartWarn));
+// connection state of each output (read-only, every 5 s while the dialog is open ON AIR)
+async function refreshNetStatus() {
+  if (!dlgMux.open || ($('#m_txmode').value || '') !== 'NETWORK') return;
+  let st = null;
+  try { st = await api('/api/mux/outputs'); } catch { return; }
+  const saved = (STATE.settings.dabmux?.txMode || '') === 'NETWORK';
+  for (const o of NET_OUTPUTS) {
+    const el = document.getElementById(`netSt_${o.id}`);
+    if (!el) continue;
+    const s = (st.outputs || []).find((x) => x.id === o.id);
+    let txt = '', cls = '';
+    if (!st.running || !saved) txt = st.running ? 'saved settings not applied yet' : 'off air';
+    else if (!o.enabled) txt = 'OFF';
+    else if (o.type === 'edi-udp') { txt = `sending to ${o.destination}:${o.port}`; cls = 'ok'; }
+    else if (!s) txt = 'not applied yet (save to apply)';
+    else if (s.connected?.length) { txt = `${s.connected.length} connected: ${s.connected.join(', ')}`; cls = 'ok'; }
+    else { txt = 'no transmitter connected'; cls = 'warn'; }
+    el.textContent = txt;
+    el.className = `net-status ${cls}`;
+  }
+}
+function netStartStatus() {
+  clearInterval(netStatusTimer);
+  refreshNetStatus();
+  netStatusTimer = setInterval(() => { if (dlgMux.open) refreshNetStatus(); else clearInterval(netStatusTimer); }, 5000);
+}
+function netCollect() {
+  return NET_OUTPUTS.map((o) => ({ ...o }));
 }
 
 // DLS length: DAB carries at most 128 characters (odr-padenc cuts longer texts)
@@ -1734,6 +1885,15 @@ async function saveMuxSettings() {
   if (!Number.isFinite(ediTistOffsetSec) || ediTistOffsetSec < 0 || ediTistOffsetSec > 60) {
     errors.push('EDI TIST offset must be between 0 and 60 seconds.');
   }
+  const network = $('#m_txmode').value === 'NETWORK';
+  if (network) {   // first checks here; the server checks everything (ports in use…) before saving
+    if (!NET_OUTPUTS.some((o) => o.enabled)) errors.push('Network outputs: at least one output must be ON.');
+    for (const o of NET_OUTPUTS) {
+      if (o.type === 'edi-udp' && !/^\d{1,3}(\.\d{1,3}){3}$/.test(String(o.destination || '').trim())) errors.push(`"${o.name}": enter the transmitter IP address.`);
+    }
+    const tist = Number($('#m_net_tist').value);
+    if (!Number.isFinite(tist) || tist < 0 || tist > 60) errors.push('TIST offset must be between 0 and 60 seconds.');
+  }
   if (errors.length) {
     showMuxError(errors.join(' '));
     return false;
@@ -1754,6 +1914,11 @@ async function saveMuxSettings() {
       ediPftEnabled: $('#m_edi_pft').checked,
       ediFec,
       ediTistOffsetSec,
+      ...(network ? {
+        outputs: netCollect(),
+        ediOptions: { pft: $('#m_net_pft').checked, fec: Number($('#m_net_fec').value) },
+        tistOffsetSec: Number($('#m_net_tist').value) || 0,
+      } : {}),
       easyDabOutput: {
         ip: $('#m_easydab_ip').value.trim(),
         port: Number($('#m_easydab_port').value)
@@ -1772,6 +1937,13 @@ async function saveMuxSettings() {
     await api('/api/settings', { method: 'PATCH', body: JSON.stringify(patch) });
     await refresh();
     return;
+  }
+  // check the outputs first: a refused setting must not cost a stop / start
+  try {
+    await api('/api/settings?check=1', { method: 'PATCH', body: JSON.stringify(patch) });
+  } catch (err) {
+    showMuxError(err.message || String(err));
+    return false;
   }
   if (!confirm('These changes require restarting the multiplex.\nALL services go off air for a few seconds.\n\nApply and restart now?')) return false;
   // Stop first (with the current ports / TX mode), save, then start with the new settings
