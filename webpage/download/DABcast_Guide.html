@@ -325,6 +325,7 @@
   <a href="#overview">Overview</a>
   <a href="#installation">Installation</a>
   <a href="#configuration">Configuration</a>
+  <a href="#outputs">Transmitters</a>
   <a href="#metadata">Metadata &amp; audio</a>
   <a href="#operations">Operations</a>
   <a href="#troubleshooting">Troubleshooting</a>
@@ -419,7 +420,7 @@
   </tr>
   <tr>
     <td><strong>Transmission modes</strong></td>
-    <td>EASYDAB (network output), EDI, HackRF and USRP1 RF output modes.</td>
+    <td>EASYDAB (network output), EDI, HackRF and USRP1 RF output modes, and <strong>Network outputs</strong>: several transmitters at once (EDI/UDP, EDI/TCP, ZMQ, ETI), with their connection state.</td>
   </tr>
 </table>
 
@@ -504,7 +505,7 @@ or the web port, or to sign out.</p>
   <li><strong>Ensemble name:</strong> the DAB+ ensemble label broadcast to receivers</li>
   <li><strong>EID:</strong> Ensemble Identifier (hex, e.g. <code>0x1001</code>)</li>
   <li><strong>Frequency:</strong> transmit frequency in MHz (for HACKRF/USRP mode)</li>
-  <li><strong>Output mode:</strong> EASYDAB, EDI, HACKRF, or USRP1</li>
+  <li><strong>TX mode:</strong> EASYDAB, EDI, HACKRF, USRP1 or Network outputs — see <em>Transmitter Outputs</em></li>
   <li><strong>Gain:</strong> RF output gain (HACKRF mode)</li>
 </ul>
 
@@ -560,6 +561,84 @@ or the web port, or to sign out.</p>
 <p>
   The <strong>Mux inputs</strong> card sums these tags; <em>SILENCE</em> and <em>NO DATA</em> inputs are added to the <strong>Alarms</strong> card.
 </p>
+</div>
+
+<!-- Page: Transmitter outputs -->
+<div class="page" id="outputs">
+<h1>Transmitter Outputs</h1>
+
+<p>The <strong>TX mode</strong> of the <strong>Multiplex</strong> dialog says how the multiplex reaches the transmitter(s):</p>
+<table>
+  <tr><th>TX mode</th><th>Use</th></tr>
+  <tr><td><strong>EASYDAB</strong></td><td>One EasyDAB transmitter (ZMQ, port 18081 by default). The simplest choice for a single EasyDAB.</td></tr>
+  <tr><td><strong>EDI</strong></td><td>One transmitter connecting in EDI over TCP (port 13000), optional PFT / FEC and TIST offset (GatesAir profile).</td></tr>
+  <tr><td><strong>Network outputs</strong></td><td><strong>One or several transmitters at the same time</strong>, of any kind: EasyDAB, commercial modulators, converters, remote sites.</td></tr>
+  <tr><td><strong>HACKRF / USRP1</strong></td><td>Modulation on this machine (odr-dabmod) to a local SDR board.</td></tr>
+</table>
+<p>In every mode, a raw ETI copy (port 9901) is kept for the Player and Dablin.</p>
+
+<h2>Network outputs</h2>
+<p>Choose <em>Network outputs</em>, then add one output per transmitter with the menu and <strong>+ Add</strong>. All outputs carry exactly the same multiplex; each one has its own name and ON/OFF switch. When you first choose this mode, the list starts with what your current mode was sending (e.g. your EasyDAB on the same port), so nothing changes for the transmitter.</p>
+<table>
+  <tr><th>Output</th><th>Who connects</th><th>What to set on the transmitter</th></tr>
+  <tr><td><strong>ZMQ — EasyDAB</strong></td><td>The EasyDAB connects to DABcast</td><td>Mux address = this server, port of the output (18081 by default)</td></tr>
+  <tr><td><strong>ZMQ + metadata — EasyDAB V2</strong></td><td>The EasyDAB V2 connects to DABcast</td><td>Same; DABcast adds time information and suggests a TIST offset of 2 s. Only one such output per multiplex.</td></tr>
+  <tr><td><strong>EDI/UDP — commercial modulator</strong></td><td>DABcast sends to the modulator</td><td>EDI input in UDP, on the port of the output; enter the modulator's IP address in DABcast. PFT / FEC is turned on.</td></tr>
+  <tr><td><strong>EDI/UDP multicast</strong></td><td>DABcast sends to a group</td><td>Several transmitters join the multicast group (e.g. 239.20.10.1) on the same network; set the TTL for routed networks</td></tr>
+  <tr><td><strong>EDI/TCP</strong></td><td>The transmitter, a converter or a remote odr-dabmod connects to DABcast</td><td>EDI source = this server, port of the output (13000 by default)</td></tr>
+  <tr><td><strong>ETI/TCP</strong></td><td>The receiver connects to DABcast</td><td>Raw ETI over TCP, for equipment that reads ETI</td></tr>
+</table>
+<p>Two outputs cannot listen on the same port, and the ports already used by DABcast (service inputs, ETI copy, dabmux control ports, web interface) are refused when you save. ON AIR, an invalid change is refused <em>before</em> the multiplex is stopped.</p>
+
+<h2>Connection state</h2>
+<p>While the multiplex is ON AIR, each output of the Multiplex dialog shows who is connected, refreshed every 5 seconds: <strong>"1 connected: 192.168.1.85"</strong> (green), <strong>"no transmitter connected"</strong> (orange), or <strong>"sending to …"</strong> for EDI/UDP (UDP has no connection: DABcast cannot tell whether the transmitter receives). A connected transmitter is not a proof that it is on air (its amplifier may be off), but a disconnection is seen at once.</p>
+
+<h2>PFT / FEC and TIST offset</h2>
+<ul>
+  <li><strong>PFT / FEC</strong> (EDI outputs): splits each frame into packets and adds repair packets, so that the transmitter can rebuild what the network lost. Usual for EDI over UDP (FEC 2 is a good default); useless over TCP, which resends lost data itself. Not shown for EasyDAB.</li>
+  <li><strong>TIST offset</strong> (EDI and EasyDAB V2): every frame carries the time at which it must be transmitted; the offset delays that time so that the transmitter can fill its buffer, and it keeps synchronised transmitters (SFN) aligned. A plain EasyDAB does not read it: the field is not shown and the offset is 0.</li>
+</ul>
+<p>odr-dabmux has <strong>one</strong> value of each for the whole multiplex: the fields are shown in the blocks of the outputs that use them and stay in sync. A different delay per site is set on the site itself (transmitter or converter, below).</p>
+
+<h2>Distant transmitter or several sites: digris-edi-tcp-converter</h2>
+<p>Over the Internet or a long link, send EDI over <strong>TCP</strong> (reliable) to a small Linux machine next to the transmitter, which delivers it locally and buffers it. The <a href="https://github.com/digris/digris-edi-zmq-bridge">digris-edi-zmq-bridge</a> tools (GPL v3, developed for Opendigitalradio) do this.</p>
+<ol>
+  <li>In DABcast: add an <strong>EDI/TCP</strong> output (e.g. port 13000) and set a <strong>TIST offset</strong> of at least 2 s. Open that port in the firewall / router for the site.</li>
+  <li>On the site machine (Debian / Raspberry Pi OS), build the tools:
+<pre>sudo apt install build-essential automake libtool libzmq3-dev git
+git clone https://github.com/digris/digris-edi-zmq-bridge.git
+cd digris-edi-zmq-bridge
+./bootstrap.sh &amp;&amp; ./configure &amp;&amp; make &amp;&amp; sudo make install</pre></li>
+  <li>Run the converter (both machines must have their clock synchronised by NTP / chrony):
+<pre># EDI/UDP to the local modulator 192.168.10.20, port 12000, FEC 2,
+# each frame delivered 1 s before its timestamp
+digris-edi-tcp-converter -c &lt;dabcast-address&gt;:13000 -w -1000 \
+    -d 192.168.10.20 -p 12000 -f 2 -C "chronyc waitsync 2 0.01"
+
+# or ZMQ for an EasyDAB on the site (it connects to this machine, port 18081)
+digris-edi-tcp-converter -c &lt;dabcast-address&gt;:13000 -w -1000 -z *:18081</pre></li>
+</ol>
+<p>Several sites can each run a converter connected to the same EDI/TCP output (or each to its own output). Run the converter under a process supervisor (e.g. a systemd service) so that it restarts automatically.</p>
+
+<h2>Remote modulator with odr-dabmod</h2>
+<p>A machine with an SDR board on the site can run <code>odr-dabmod</code> fed by an EDI/TCP output of DABcast. Main settings of its configuration file:</p>
+<pre>[input]
+transport=edi
+source=tcp://&lt;dabcast-address&gt;:13000
+
+[output]
+output=soapysdr
+
+[soapyoutput]
+device=driver=hackrf
+channel=5A
+txgain=40</pre>
+<p>Start from the complete <code>example.ini</code> of ODR-DabMod and validate the RF settings (gain, filter, channel) on the real hardware.</p>
+
+<div class="box box-warn">
+  <div class="box-label">Radio transmission</div>
+  Transmitting on a DAB frequency requires an authorisation from your national regulator. Test with a dummy load or within the limits of your licence.
+</div>
 </div>
 
 <!-- Page: Metadata, player & levels -->

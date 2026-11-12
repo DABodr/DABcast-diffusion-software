@@ -21,6 +21,7 @@ import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import { convertToSlide as convertSlideImage, removeBlackBands } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
+import { normalizeOutputs, normalizeEdiOptions, validateOutputs } from './odr/outputs.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
@@ -410,9 +411,38 @@ app.get('/api/settings', (req, res) => {
   res.json({ settings });
 });
 
+// NETWORK mode: ports a listening transmitter output must not take (this machine's other uses)
+function reservedForOutputs(dabmux) {
+  const r = new Map([[8080, 'lighttpd'], [9099, 'the audio probe'], [listenPort, 'the DABcast web interface']]);
+  for (const k of ['managementPort', 'telnetPort']) if (Number(dabmux[k])) r.set(Number(dabmux[k]), `dabmux ${k}`);
+  const zmqEp = /:(\d+)$/.exec(String(dabmux.zmqEndpoint || ''));
+  if (zmqEp) r.set(Number(zmqEp[1]), 'dabmux remote control (ZMQ)');
+  r.set(Number(dabmux.easyDabOutput?.netPort) || 9901, 'the ETI monitoring output (Player / Dablin)');
+  for (const svc of state.preset?.services || []) {
+    const port = Number(svc.network?.ediOutputTcp?.port);
+    if (port) r.set(port, `the input port of ${svc.identity?.ps8 || svc.id}`);
+  }
+  return r;
+}
+
 app.patch('/api/settings', (req, res) => {
   try {
     const patch = req.body || {};
+    // Transmitter outputs (NETWORK mode): normalized and checked BEFORE anything is changed
+    if (patch.dabmux) {
+      const next = { ...settings.dabmux, ...patch.dabmux };
+      if (patch.dabmux.outputs !== undefined) patch.dabmux.outputs = normalizeOutputs(patch.dabmux.outputs);
+      if (patch.dabmux.ediOptions !== undefined) patch.dabmux.ediOptions = normalizeEdiOptions(patch.dabmux.ediOptions);
+      if (String(next.txMode || '').toUpperCase() === 'NETWORK') {
+        const errors = validateOutputs(normalizeOutputs(patch.dabmux.outputs ?? next.outputs), {
+          reserved: reservedForOutputs(next),
+          ediOptions: normalizeEdiOptions(patch.dabmux.ediOptions ?? next.ediOptions),
+        });
+        if (errors.length) throw new Error(`Transmitter outputs: ${errors.join(' · ')}`);
+      }
+    }
+    // ?check=1: validation only (the UI checks before stopping the multiplex ON AIR)
+    if (req.query.check) return res.json({ ok: true, checked: true });
 
     if (patch.preset) {
       if (patch.preset.name !== undefined) {
@@ -919,7 +949,7 @@ app.post('/api/dablin/start', (req, res) => {
     // Check TX mode
     const txMode = (settings.dabmux?.txMode || 'EASYDAB').toUpperCase();
 
-    if (txMode === 'EDI' || txMode === 'HACKRF') {
+    if (txMode === 'EDI' || txMode === 'HACKRF' || txMode === 'NETWORK') {
       // DABlin receives the dedicated raw ETI monitoring output. This remains
       // compatible when the transmitter-facing EDI output uses PFT/FEC.
       try {
@@ -1114,6 +1144,50 @@ app.get('/api/system/info', (req, res) => {
 // shared between concurrent clients and cached 2s to spare the Pi and dabmux.
 let _muxStatsCache = { at: 0, body: null };
 let _muxStatsInFlight = null;
+// Transmitter outputs (NETWORK mode, Multiplex dialog): who is connected to each listening output.
+// Read-only: established TCP connections whose local port is the output port (/proc/net/tcp and
+// tcp6, read asynchronously). An EasyDAB connects to the ZMQ output, a transmitter / converter /
+// remote odr-dabmod to an EDI/TCP output. EDI/UDP has no connection: only the destination is known.
+const hexIp4 = (h) => [3, 2, 1, 0].map((i) => parseInt(h.slice(i * 2, i * 2 + 2), 16)).join('.');
+function hexIp6(h) {
+  if (h.startsWith('0000000000000000FFFF0000')) return hexIp4(h.slice(24));   // IPv4-mapped
+  const words = [];
+  for (let i = 0; i < 32; i += 8) { const w = h.slice(i, i + 8).match(/../g).reverse().join(''); words.push(w.slice(0, 4), w.slice(4)); }
+  return words.map((w) => parseInt(w, 16).toString(16)).join(':');
+}
+async function establishedPeers() {
+  const peers = new Map();   // local port -> [remote ip]
+  for (const [file, toIp] of [['/proc/net/tcp', hexIp4], ['/proc/net/tcp6', hexIp6]]) {
+    let text = '';
+    try { text = await fs.promises.readFile(file, 'utf8'); } catch { continue; }
+    for (const line of text.split('\n').slice(1)) {
+      const f = line.trim().split(/\s+/);
+      if (f.length < 4 || f[3] !== '01') continue;   // 01 = ESTABLISHED
+      const [, lport] = f[1].split(':');
+      const [rip] = f[2].split(':');
+      const port = parseInt(lport, 16);
+      if (!peers.has(port)) peers.set(port, []);
+      peers.get(port).push(toIp(rip));
+    }
+  }
+  return peers;
+}
+app.get('/api/mux/outputs', async (req, res) => {
+  const dabmux = settings.dabmux || {};
+  const outputs = normalizeOutputs(dabmux.outputs);
+  const peers = state.muxRunning ? await establishedPeers() : new Map();
+  const monitorPort = Number(dabmux.easyDabOutput?.netPort) || 9901;
+  res.json({
+    running: state.muxRunning,
+    txMode: String(dabmux.txMode || 'EASYDAB').toUpperCase(),
+    outputs: outputs.map((o) => ({
+      id: o.id,
+      connected: o.type === 'edi-udp' || !o.enabled ? null : [...new Set(peers.get(o.port) || [])],
+    })),
+    monitor: { port: monitorPort, connected: [...new Set(peers.get(monitorPort) || [])] },
+  });
+});
+
 app.get('/api/mux/stats', async (req, res) => {
   // Read fields directly: getState() would consume lastError meant for /api/state.
   if (!state.muxRunning) return res.json({ running: false });
@@ -1146,7 +1220,7 @@ app.get('/api/mux/stats', async (req, res) => {
 
 // Web player: decodes one service of the running mux from its ETI monitoring output (the same
 // read-only source as the Dablin button) and streams it as MP3. See player.js.
-const PLAYER_TX_MODES = ['EDI', 'HACKRF', 'EASYDAB'];
+const PLAYER_TX_MODES = ['EDI', 'HACKRF', 'EASYDAB', 'NETWORK'];
 app.get('/api/player/info', (req, res) => {
   const txMode = (state.settings?.dabmux?.txMode || 'EASYDAB').toUpperCase();
   res.json({

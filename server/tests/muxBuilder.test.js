@@ -160,4 +160,38 @@ describe('buildMuxConfig', () => {
     const mux = buildMuxConfig(makeConfig());
     assert.ok(mux.includes("RADIO1"));
   });
+  it('NETWORK mode: outputs block from the transmitter outputs list', () => {
+    const cfg = makeConfig('NETWORK');
+    cfg.settings.dabmux.outputs = [
+      { id: 'easydab', name: 'EasyDAB', type: 'zmq', port: 18081 },
+      { id: 'tx1', name: 'TX1', type: 'edi-udp', destination: '192.168.1.50', port: 12000 },
+      { id: 'off', name: 'Spare', type: 'edi-udp', destination: '192.168.1.99', port: 12000, enabled: false },
+    ];
+    cfg.settings.dabmux.ediOptions = { pft: true, fec: 3 };
+    cfg.settings.dabmux.tistOffsetSec = 2;
+    const mux = buildMuxConfig(cfg);
+    assert.ok(mux.includes('throttle "simul://"'));
+    assert.ok(mux.includes('out_easydab "zmq+tcp://0.0.0.0:18081"'));
+    assert.ok(mux.includes('destination "192.168.1.50"'));
+    assert.ok(!mux.includes('192.168.1.99'), 'OFF output left out');
+    assert.ok(mux.includes('enable_pft true') && mux.includes('fec 3'));
+    assert.ok(mux.includes('dablin "tcp://0.0.0.0:9901"'), 'ETI monitoring output kept (Player / Dablin)');
+    assert.ok(mux.includes('tist_offset 2'));
+    assert.ok(!mux.includes('listenport 13000'), 'legacy EDI output not added');
+  });
+
+  it('NETWORK mode ignores the legacy EDI TIST offset, the legacy modes ignore the NETWORK one', () => {
+    const net = makeConfig('NETWORK');
+    net.settings.dabmux.ediTistOffsetSec = 5;
+    net.settings.dabmux.outputs = [{ id: 'a', type: 'edi-tcp', port: 13001 }];
+    assert.ok(!buildMuxConfig(net).includes('tist_offset'));
+    const edi = makeConfig('EDI');
+    edi.settings.dabmux.tistOffsetSec = 7;
+    assert.ok(!buildMuxConfig(edi).includes('tist_offset'));
+    const easy = makeConfig('EASYDAB');
+    easy.settings.dabmux.tistOffsetSec = 7;
+    easy.settings.dabmux.outputs = [{ id: 'x', type: 'edi-udp', destination: '10.0.0.1' }];
+    const e = buildMuxConfig(easy);
+    assert.ok(!e.includes('tist_offset') && !e.includes('10.0.0.1'), 'EASYDAB unchanged by the outputs list');
+  });
 });

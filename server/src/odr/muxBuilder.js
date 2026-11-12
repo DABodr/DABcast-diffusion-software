@@ -1,3 +1,5 @@
+import { buildOutputLines } from './outputs.js';
+
 function escapeLabel(value) {
   return String(value ?? '').replace(/"/g, "'");
 }
@@ -18,8 +20,9 @@ export function buildMuxConfig({ settings, preset }) {
   lines.push('    syslog false');
   lines.push('    writescca false');
   lines.push('    tist true');
-  if (txMode === 'EDI') {
-    const tistOffset = Number(settings.dabmux?.ediTistOffsetSec);
+  if (txMode === 'EDI' || txMode === 'NETWORK') {
+    // NETWORK mode: its own offset (tistOffsetSec), the legacy EDI mode keeps ediTistOffsetSec
+    const tistOffset = Number(txMode === 'NETWORK' ? settings.dabmux?.tistOffsetSec : settings.dabmux?.ediTistOffsetSec);
     if (Number.isFinite(tistOffset) && tistOffset > 0) {
       lines.push(`    tist_offset ${tistOffset}`);
     }
@@ -118,7 +121,14 @@ export function buildMuxConfig({ settings, preset }) {
   lines.push('');
 
   lines.push('outputs {');
-  if (txMode === 'USRP1') {
+  if (txMode === 'NETWORK') {
+    // Transmitter outputs list (odr/outputs.js) + throttle + raw ETI monitoring output (Player / Dablin)
+    lines.push(...buildOutputLines(settings.dabmux?.outputs || [], {
+      monitorIp: settings.dabmux?.easyDabOutput?.ip || '0.0.0.0',
+      monitorPort: Number(settings.dabmux?.easyDabOutput?.netPort) || 9901,
+      ediOptions: settings.dabmux?.ediOptions,
+    }));
+  } else if (txMode === 'USRP1') {
     lines.push('    stdout "fifo:///dev/stdout?type=raw"');
   } else if (txMode === 'EDI' || txMode === 'HACKRF') {
     const monitorIp = settings.dabmux?.easyDabOutput?.ip || '0.0.0.0';
