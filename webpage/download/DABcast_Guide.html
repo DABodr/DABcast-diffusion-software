@@ -325,6 +325,7 @@
   <a href="#overview">Overview</a>
   <a href="#installation">Installation</a>
   <a href="#configuration">Configuration</a>
+  <a href="#metadata">Metadata &amp; audio</a>
   <a href="#operations">Operations</a>
   <a href="#troubleshooting">Troubleshooting</a>
 </nav>
@@ -333,7 +334,7 @@
 <div class="cover">
   <div class="cover-kicker">User Guide</div>
   <div class="cover-logo">DABcast</div>
-  <div class="cover-sub">Source-available DAB+ Broadcast Management Software</div>
+  <div class="cover-sub">Open-source DAB+ Broadcast Management Software</div>
   <div class="cover-version">Version 1.7.4 — November 2026</div>
   <div class="cover-rule"></div>
   <div class="cover-desc">
@@ -355,9 +356,10 @@
 </p>
 
 <div class="box box-ok">
-  <div class="box-label">Source-available</div>
-  DABcast is free to use, modify and redistribute. Source code is available at
-  <strong>github.com/DABodr/DABcast-diffusion-software</strong>.
+  <div class="box-label">Open source — GNU AGPL v3</div>
+  DABcast is free software: free to use (commercial broadcasters included), modify and redistribute.
+  A modified version that is distributed or made available over a network must stay under the AGPL v3,
+  with its source code. Source code: <strong>github.com/DABodr/DABcast-diffusion-software</strong>.
 </div>
 
 <h2>Key Features</h2>
@@ -384,8 +386,20 @@
     <td>Forwards logs and critical broadcast alerts to a Telegram bot, with configurable severity, silent delivery and a built-in connection test.</td>
   </tr>
   <tr>
-    <td><strong>Live metadata — DLS &amp; SLS</strong></td>
-    <td>Pushes Now Playing text and album art to listeners in real time. Supports direct stream metadata, JSON API polling and DL+ tags.</td>
+    <td><strong>Live metadata — DLS, DL+ &amp; SLS</strong></td>
+    <td>Now Playing text, DL+ tags and album art in real time, from the stream (ICY), a JSON API (Server-Sent Events feeds included) or manual text. Covers alternate with the station logo; the logo comes back on its own when a track is over (ads).</td>
+  </tr>
+  <tr>
+    <td><strong>Web player</strong></td>
+    <td>Listen to any service in the browser, decoded from the multiplex output itself, with level meters, DLS, DL+ and the slides on air.</td>
+  </tr>
+  <tr>
+    <td><strong>Audio levels assistant</strong></td>
+    <td>Measures every service over 5 to 30 minutes, flags encoder clipping and suggests a gain that keeps 3 dB of headroom for AAC.</td>
+  </tr>
+  <tr>
+    <td><strong>Guided service setup</strong></td>
+    <td>Stream URL test with the current title, automatic detection of JSON API keys, live hints on PI, PS8 / PS16 and multiplex capacity.</td>
   </tr>
   <tr>
     <td><strong>Raspberry Pi ready</strong></td>
@@ -397,7 +411,7 @@
   </tr>
   <tr>
     <td><strong>Integrated secure sign-in</strong></td>
-    <td>Uses a responsive DABcast login screen, signed private sessions, login rate limiting and automatic invalidation after credential changes.</td>
+    <td>DABcast sign-in page, signed private sessions, login rate limiting and automatic invalidation after credential changes. Account, password and web port in the ⚙ Settings window; command-line reset for lost credentials.</td>
   </tr>
   <tr>
     <td><strong>Preset management</strong></td>
@@ -450,7 +464,7 @@ USRP1 mode, <code>odr-dabmod</code> generates the RF signal.</p>
 <p>Run the provided script as root (or with sudo). It will install all required tools:</p>
 <pre>sudo bash install-tools.sh</pre>
 <p>The script installs: <code>odr-audioenc</code>, <code>odr-padenc</code>, <code>odr-dabmux</code>,
-<code>odr-dabmod</code> (optional), <code>dablin</code>, <code>imagemagick</code>, and required libraries.</p>
+<code>odr-dabmod</code> (optional), <code>dablin</code> and <code>ffmpeg</code> (web player), <code>imagemagick</code> (slides), and required libraries.</p>
 
 <h2>Step 2 — Install the DABcast package</h2>
 
@@ -470,7 +484,8 @@ USRP1 mode, <code>odr-dabmod</code> generates the RF signal.</p>
 <p>DABcast displays its own secure sign-in page. The default login is
 <code>admin</code> / <code>dabcast</code>. <strong>Change the password immediately</strong>
 on first login — the interface will prompt you to do so. You can keep a trusted device
-signed in, and use the account panel to sign out or change credentials later.</p>
+signed in, and use the <strong>⚙ Settings</strong> button (top bar) to change the credentials
+or the web port, or to sign out.</p>
 
 <div class="box box-info">
   <div class="box-label">Finding the server IP</div>
@@ -484,7 +499,7 @@ signed in, and use the account panel to sign out or change credentials later.</p
 <h1>First Configuration</h1>
 
 <h2>Multiplex Settings</h2>
-<p>Go to the <strong>Settings</strong> panel to configure your multiplex:</p>
+<p>Click <strong>Multiplex</strong> in the top bar to configure your multiplex:</p>
 <ul>
   <li><strong>Ensemble name:</strong> the DAB+ ensemble label broadcast to receivers</li>
   <li><strong>EID:</strong> Ensemble Identifier (hex, e.g. <code>0x1001</code>)</li>
@@ -494,20 +509,20 @@ signed in, and use the account panel to sign out or change credentials later.</p
 </ul>
 
 <h2>Adding a Service (Radio Programme)</h2>
-<p>Click <strong>Add Service</strong> to configure a radio programme:</p>
+<p>Click <strong>+ Add service</strong> (or double-click a row / <strong>Edit</strong> to change one). The dialog has three tabs:</p>
 
 <table>
-  <tr><th>Field</th><th>Description</th></tr>
-  <tr><td><strong>Name</strong></td><td>Programme name shown on receivers (max 16 chars)</td></tr>
-  <tr><td><strong>PI code</strong></td><td>Programme Identifier — unique 4-digit hex (e.g. <code>0xF9A3</code>)</td></tr>
-  <tr><td><strong>Bitrate</strong></td><td>Audio bitrate in kbps (24–192). Affects multiplex capacity.</td></tr>
-  <tr><td><strong>Protection</strong></td><td>EEP-A or EEP-B, levels 1–4. Lower = more protection, more capacity.</td></tr>
-  <tr><td><strong>Main stream URL</strong></td><td>Primary audio source (Icecast, HTTP, RTSP…)</td></tr>
-  <tr><td><strong>Backup stream URL</strong></td><td>Fallback URL if the main stream fails</td></tr>
-  <tr><td><strong>Input mode</strong></td><td>VLC (most formats) or GStreamer (HTTPS recommended)</td></tr>
-  <tr><td><strong>PTY</strong></td><td>Programme Type (genre) code</td></tr>
-  <tr><td><strong>Metadata source</strong></td><td>Stream inline, JSON API, or static text</td></tr>
+  <tr><th>Tab</th><th>Fields</th></tr>
+  <tr><td><strong>General</strong></td><td><strong>Identity</strong>: PI (unique 4-digit hex, e.g. <code>F9A3</code>), PS8 (short name, 8 chars), PS16 (long name, 16 chars), language, PTY (genre). Live hints flag an invalid or duplicate PI and a PS8 whose letters are not in the PS16.<br>
+  <strong>DAB coding</strong>: bitrate, codec (HE-AAC v1 / v2 / AAC-LC), protection EEP-A 1–4, sample rate, channels, PAD size. The capacity used by the whole multiplex (CU) is shown live.</td></tr>
+  <tr><td><strong>Audio source</strong></td><td>Input mode: <strong>GStreamer</strong> (recommended, HTTPS), <strong>VLC</strong>, or <strong>ZMQ / EDI direct</strong> (an external encoder sends DAB+ audio). Main and backup stream URLs, each with a <strong>Test</strong> button (answer, format, current title), audio gain, and the failover settings.</td></tr>
+  <tr><td><strong>Metadata</strong></td><td>Where the titles come from (stream ICY, JSON API, manual text), the default text, DL+, the station logo and slides. See <em>Metadata &amp; slides</em>.</td></tr>
 </table>
+
+<div class="box box-info">
+  <div class="box-label">Codec choice</div>
+  At 96 kbps and below, <strong>HE-AAC v1 (SBR)</strong> usually sounds best. AAC-LC only pays off from about 128–144 kbps in stereo; below that it can sound metallic.
+</div>
 
 <h2>Starting the Multiplex</h2>
 <p>Click the <strong>Start</strong> button on the dashboard. DABcast will:</p>
@@ -532,7 +547,7 @@ signed in, and use the account panel to sign out or change credentials later.</p
 <p>
   While ON AIR, a second tag next to the status badge shows how <code>odr-dabmux</code> receives
   each service's audio. DABcast reads it every 5 seconds from the dabmux management port
-  (read-only, no action is taken). Hover a tag for details; the full list is in the <strong>?</strong> (About) dialog.
+  (read-only, no action is taken). Hover a tag for details; the full list is in the <strong>Sys. info</strong> dialog.
 </p>
 <table>
   <tr><th>Tag</th><th>Meaning</th><th>What to do</th></tr>
@@ -545,6 +560,61 @@ signed in, and use the account panel to sign out or change credentials later.</p
 <p>
   The <strong>Mux inputs</strong> card sums these tags; <em>SILENCE</em> and <em>NO DATA</em> inputs are added to the <strong>Alarms</strong> card.
 </p>
+</div>
+
+<!-- Page: Metadata, player & levels -->
+<div class="page" id="metadata">
+<h1>Metadata &amp; Slides</h1>
+
+<p>Each service sends a text (<strong>DLS</strong>), optional <strong>DL+</strong> tags (artist / title) and pictures (<strong>SLS</strong> slides). Everything is set in the <strong>Metadata</strong> tab of the service dialog; the panel <em>On air now</em> on the right shows, live, the slide, the DLS and the DL+ tags really sent, with the reason of the last update.</p>
+
+<h2>Titles source</h2>
+<table>
+  <tr><th>Source</th><th>Use</th></tr>
+  <tr><td><strong>Stream (ICY)</strong></td><td>The title sent inside the audio stream (Icecast / Shoutcast). Nothing else to set.</td></tr>
+  <tr><td><strong>JSON API</strong></td><td>A now-playing address of the station (JSON, or a Server-Sent Events feed). Gives artist, title and usually the track cover.</td></tr>
+  <tr><td><strong>Manual text</strong></td><td>A fixed text (the default DLS).</td></tr>
+</table>
+<p>The green <strong>Validate</strong> button saves the metadata settings only, keeps the dialog open and restarts nothing (even ON AIR): the result appears in <em>On air now</em> within a few seconds.</p>
+
+<h2>Setting up a JSON API</h2>
+<ol>
+  <li>Paste the API address in <strong>JSON URL</strong> (the API, not the web page of the station).</li>
+  <li>Click <strong>Detect keys</strong>: DABcast reads the JSON and fills <em>Artist key</em>, <em>Title key</em> and <em>Cover URL key</em> (the current item is preferred over history / next, the track cover over the station logo).</li>
+  <li>Check with <strong>Test JSON</strong> and <strong>Test cover</strong>: green = received, red = nothing found.</li>
+  <li><strong>Validate</strong> (or OK).</li>
+</ol>
+<p>Keys use dots for nested fields and numbers for lists (<code>now_playing.song.title</code>, <code>data.0.artist</code>); <code>a|b</code> means "b if a is empty".</p>
+
+<div class="box box-info">
+  <div class="box-label">End of a track</div>
+  Many APIs keep returning the last song during ads. When the API gives the track duration (or start time / type),
+  DABcast detects the end of the item and puts the station logo and the default text back on air until the next title —
+  same rule for every station, no setting needed. Without such information, a song is capped at 8 minutes (setting
+  <em>End of item</em>); shows and talk are never cut.
+</div>
+
+<h2>Slides</h2>
+<ul>
+  <li>Any picture (logo or cover) is converted to a <strong>320x240 JPEG</strong>; square pictures get side bands in the colours of their own edges (no black bands).</li>
+  <li>During a track cover, the logo is sent again every <strong>40 s</strong> by default (<em>During a cover, send the logo every … s</em>, 0 = cover only).</li>
+  <li>Keep slides small: the PAD size sets the sending speed (shown under the PAD field). A 5–15 kB slide is sent in a few seconds.</li>
+  <li>Off air, the thumbnails of the services table show the logos only.</li>
+</ul>
+
+<h1>Web Player</h1>
+<p>Click <strong>Player</strong> in the top bar, choose a service and press play. The audio is decoded from the multiplex output itself (the same signal as the receivers), with left / right level meters, the DLS, the DL+ tags and the slides with their size. Two listeners at most. It requires <code>dablin</code> and <code>ffmpeg</code> on the server (installed by <code>install-tools.sh</code>).</p>
+
+<h1>Audio Levels</h1>
+<p>Click <strong>Levels</strong> (or the <em>Mux inputs</em> card) while ON AIR. DABcast measures the peaks of every service while this window is open and suggests a gain:</p>
+<table>
+  <tr><th>Setting / column</th><th>Meaning</th></tr>
+  <tr><td><strong>Target typical peak</strong></td><td>Where the usual peaks should be (−6 dBFS by default).</td></tr>
+  <tr><td><strong>Analysis window</strong></td><td>5, 15 or 30 minutes. 15–30 minutes (songs, ads and jingles) gives a more reliable suggestion.</td></tr>
+  <tr><td><strong>Max</strong></td><td>Highest peak, in red above −3 dBFS: AAC encoding raises the decoded peaks by 1–3 dB, so higher peaks can crackle in receivers.</td></tr>
+  <tr><td><strong>CLIP ×N</strong></td><td>The encoder saturated N times: a cut of at least 2 dB is suggested.</td></tr>
+</table>
+<p><strong>Apply</strong> (or <em>Apply all</em>) saves the gain and restarts only that service's encoder (2–3 s gap on that service; the multiplex keeps running). An isolated peak does not make a quiet station quieter.</p>
 </div>
 
 <!-- Page 4: Failover & Watchdog -->
@@ -586,25 +656,35 @@ signed in, and use the account panel to sign out or change credentials later.</p
 
 <h2>Preset management</h2>
 <p>
-  Complete multiplex configurations can be saved as <strong>presets</strong> (JSON files).
-  Use <em>File → Save Preset</em> to export your configuration, and <em>File → Load Preset</em>
-  to restore it. The active configuration is always stored as <code>demo.json</code>.
+  The whole configuration (multiplex settings and services) can be saved and restored with the
+  <strong>Import / Export</strong> menu: <em>Export config</em> / <em>Import config</em> (JSON),
+  <em>Export selected service</em> / <em>Import service</em> (<code>.dct</code> with its logo), and
+  <em>Export all services (.zip)</em>, named <code>all-services-&lt;multiplex name&gt;.zip</code>.
+  The active configuration is stored as <code>/var/lib/dabcast/presets/demo.json</code>.
 </p>
 
 <h1>Service Management</h1>
 <ul>
-  <li><strong>Enable / Disable:</strong> toggle a service without removing its configuration</li>
-  <li><strong>Logo upload:</strong> upload a JPEG image for SLS (slide show) broadcasting</li>
-  <li><strong>Reorder services:</strong> drag services to change their order in the multiplex</li>
-  <li><strong>Import / Export:</strong> copy individual service configurations between presets</li>
+  <li><strong>ON / OFF:</strong> an OFF service is left out of the multiplex (its capacity is freed) and keeps its configuration. ON AIR, switching it restarts the multiplex after a confirmation.</li>
+  <li><strong>Logo upload:</strong> in the Metadata tab; any picture is converted to a 320x240 JPEG slide</li>
+  <li><strong>Reorder services:</strong> drag the rows (in multiplex order, without filter) to change their order in the multiplex</li>
+  <li><strong>Columns:</strong> status and mux buffer tag, PS8 / PS16, PI, PTY, bitrate, CU, protection, codec, channels, sample rate, input port, main / backup stream, level meters, DLS (cut with "…", full text on hover), DL+ and the slide on air</li>
+  <li><strong>Import / Export:</strong> copy individual service configurations between servers</li>
 </ul>
 
 <h1>Auto-start</h1>
 <p>
-  Enable <strong>Auto-start on boot</strong> in Settings. DABcast will automatically restart
+  Tick <strong>Start multiplex at startup</strong> in the <strong>Multiplex</strong> dialog. DABcast will automatically restart
   the multiplex 2 seconds after the web server starts — ideal for unattended broadcast servers.
   The systemd service is configured to start on boot by default.
 </p>
+
+<h1>Settings (⚙)</h1>
+<p>The round <strong>⚙</strong> button of the top bar opens the Settings window:</p>
+<ul>
+  <li><strong>Account:</strong> username and password (at least 10 characters, common passwords refused). Changing them signs out the other sessions.</li>
+  <li><strong>Web server:</strong> the port of the web interface (9090 by default). <strong>Save &amp; restart</strong> checks the port first (1024–65535, not used by the broadcast chain or by another program), asks for confirmation, then restarts DABcast; the page reopens at the new address. <strong>ON AIR, the restart cuts the multiplex for about 10 s</strong> (it comes back on air if <em>Start multiplex at startup</em> is ticked). A <code>PORT=</code> line in <code>/etc/default/dabcast</code> takes precedence and locks the field.</li>
+</ul>
 </div>
 
 <!-- Page 5: Troubleshooting & ODR hints -->
@@ -614,7 +694,8 @@ signed in, and use the account panel to sign out or change credentials later.</p
 <h2>The web interface is not accessible</h2>
 <ul>
   <li>Check the service is running: <code>sudo systemctl status dabcast</code></li>
-  <li>Verify port 9090 is not blocked by a firewall: <code>sudo ufw allow 9090</code></li>
+  <li>Verify the web port (9090 by default, see ⚙ Settings) is not blocked by a firewall: <code>sudo ufw allow 9090</code></li>
+  <li>Port changed and forgotten: <code>sudo grep -m1 '"port"' /var/lib/dabcast/settings.json</code></li>
   <li>Check logs: <code>sudo journalctl -u dabcast -n 50</code></li>
 </ul>
 
@@ -623,13 +704,13 @@ signed in, and use the account panel to sign out or change credentials later.</p
   <li>Check that the stream URL is reachable from the server: <code>curl -I &lt;url&gt;</code></li>
   <li>For HTTPS streams, use <strong>GStreamer</strong> input mode (not VLC)</li>
   <li>Ensure enough bandwidth — streams above 320 kbps may saturate slow connections</li>
-  <li>Check DABcast logs in <em>Settings → Logs</em></li>
+  <li>Check DABcast logs with the <strong>Logs</strong> button</li>
 </ul>
 
 <h2>No audio in the DAB+ signal</h2>
 <ul>
   <li>Verify <code>odr-audioenc</code> is listed as RUNNING in the process list</li>
-  <li>Check the ZMQ port is not used by another process: <code>ss -tlnp | grep 930</code></li>
+  <li>Check the service input port (Port column) is not used by another process: <code>ss -tlnp | grep 900</code></li>
   <li>Verify the bitrate and protection settings match your multiplex plan</li>
 </ul>
 
@@ -638,7 +719,7 @@ signed in, and use the account panel to sign out or change credentials later.</p
   <li>The encoder may be running while its audio does not reach the multiplex in time: hover the tag to see how many underruns were added</li>
   <li>Recurring <strong>UNSTABLE ▲</strong>: the source stream or network delivers irregularly — test the URL, or try a backup stream</li>
   <li><strong>NO DATA</strong>: check the encoder in <em>Logs</em>; it may be stuck or unable to reach its stream</li>
-  <li>"Stats unavailable" in the About dialog: the dabmux <code>managementport</code> is disabled (0) or not reachable on localhost</li>
+  <li>"Stats unavailable" in the <strong>Sys. info</strong> dialog: the dabmux <code>managementport</code> is disabled (0) or not reachable on localhost</li>
 </ul>
 
 <h2>Metadata not updating</h2>
@@ -646,13 +727,28 @@ signed in, and use the account panel to sign out or change credentials later.</p
   <li>Ensure <code>odr-padenc</code> is running (shown in the process list)</li>
   <li>For JSON API metadata, verify the API URL returns valid JSON</li>
   <li>Check that the DLS text is not empty in the metadata source</li>
+  <li>Use <strong>Test JSON</strong> / <strong>Detect keys</strong>, then look at <em>On air now</em>: its status line tells what was read and why the default text is shown (e.g. "item over" during ads)</li>
 </ul>
+
+<h2>Crackles in the audio</h2>
+<ul>
+  <li>The source is probably too loud: open <strong>Levels</strong>, measure 15–30 minutes and apply the suggested gain (CLIP badge = the encoder saturates)</li>
+  <li>As a quick fix, lower the gain of that service by 2–3 dB (Edit › Audio source)</li>
+</ul>
+
+<h2>Forgotten password</h2>
+<pre>sudo /opt/dabcast/bin/dabcast --reset-password
+sudo systemctl restart dabcast</pre>
+<p>The password becomes <code>dabcast</code> (username kept) and a new one is required at the next sign-in. Add a username after <code>--reset-password</code> to change it too.</p>
+
+<h2>Still stuck?</h2>
+<p>Report a bug or ask a question on the <a href="https://github.com/DABodr/DABcast-diffusion-software/issues">GitHub Issues</a> page. Attach the relevant lines of <code>/var/lib/dabcast/logs/dabweb.log</code> (remove any private URL or token first).</p>
 
 <h2>Viewing application logs</h2>
 <pre># Live log output
 sudo journalctl -u dabcast -f
 
-# DABcast internal logs (Settings → Logs in the web UI)
+# DABcast internal logs (Logs button in the web UI)
 sudo tail -f /var/lib/dabcast/logs/dabweb.log</pre>
 
 <h2>Manual start (for debugging)</h2>
@@ -671,7 +767,7 @@ sudo rm -rf /var/lib/dabcast</pre>
 <p>Run the included <code>uninstall-tools.sh</code> script (available in the DABcast source repository).</p>
 
 <div class="footer">
-  DABcast v1.7.4 — Source-available DAB+ broadcast software — github.com/DABodr/DABcast-diffusion-software<br>
+  DABcast v1.7.4 — Open-source DAB+ broadcast software (GNU AGPL v3) — github.com/DABodr/DABcast-diffusion-software<br>
   Built with ODR-mmbTools — opendigitalradio.org
 </div>
 </div>

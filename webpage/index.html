@@ -15,7 +15,7 @@
         <img src="logodab.png" alt="DABcast" class="logo" />
         <div>
           <div class="site-title">DABcast</div>
-          <div class="site-tagline">Source-available DAB+ broadcast management</div>
+          <div class="site-tagline">Open-source DAB+ broadcast management</div>
         </div>
       </div>
       <nav>
@@ -91,8 +91,8 @@
 
           <div class="feature-card">
             <div class="feature-icon">🎵</div>
-            <h3>Live metadata — DLS &amp; SLS</h3>
-            <p>Pushes Now Playing text and album art to listeners in real time. Supports direct stream metadata, JSON API polling and DL+ tags.</p>
+            <h3>Live metadata — DLS, DL+ &amp; SLS</h3>
+            <p>Now Playing text, DL+ tags and album art in real time, from the stream (ICY), a JSON API (Server-Sent Events feeds included) or manual text. Covers alternate with your logo, and the logo comes back on its own during ads. Slides are converted to 320x240 with side bands in the picture's own colours.</p>
           </div>
 
           <div class="feature-card">
@@ -104,12 +104,12 @@
           <div class="feature-card">
             <div class="feature-icon">🖥️</div>
             <h3>Control-room web interface</h3>
-            <p>Dark UI with live summary cards, service search, sort and compact view, usable from any device on your network. Secure sign-in with signed sessions and brute-force protection.</p>
+            <p>Dark UI with live summary cards (capacity, CPU, memory, disk), service search, sort and compact view, usable from any device on your network. Secure sign-in, and a ⚙ Settings window for the account, password and web port.</p>
           </div>
 
           <div class="feature-card">
             <div class="feature-icon">📊</div>
-            <h3>Mux input monitoring <span class="new-badge">New in 1.4</span></h3>
+            <h3>Mux input monitoring</h3>
             <p>Reads the odr-dabmux input buffers of every service: underruns, silence or missing audio are flagged live — even when the encoder process still looks healthy.</p>
           </div>
 
@@ -123,6 +123,24 @@
             <div class="feature-icon">🔁</div>
             <h3>One-click over-the-air updates</h3>
             <p>DABcast checks for new releases automatically. When an update is available, install it with a single click — the service restarts and the page reloads on its own.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🎧</div>
+            <h3>Web player <span class="new-badge">New</span></h3>
+            <p>Listen to any service of the multiplex in the browser, decoded from the mux output itself: what you hear is what receivers get. Level meters, DLS, DL+ and slides with their size in kB.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🎚️</div>
+            <h3>Audio levels assistant <span class="new-badge">New</span></h3>
+            <p>Measures each service over 5 to 30 minutes, flags encoder clipping and suggests a gain that keeps 3 dB of headroom for AAC. Apply it in one click: only that service's encoder restarts.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🧭</div>
+            <h3>Guided service setup <span class="new-badge">New</span></h3>
+            <p>Test a stream URL and see its current title, detect the artist / title / cover keys of a JSON API automatically, and get live hints on PI, PS8 / PS16 and multiplex capacity while you type.</p>
           </div>
 
         </div>
@@ -203,8 +221,8 @@ sudo systemctl enable --now dabcast
 
   <footer>
     <div class="footer-inner">
-      <span>DABcast — Source-available DAB+ broadcast software</span>
-      <span class="muted">Built with <a href="https://www.opendigitalradio.org/" target="_blank" rel="noopener">ODR-mmbTools</a></span>
+      <span>DABcast — Open-source DAB+ broadcast software · GNU AGPL v3</span>
+      <span class="muted"><a href="https://github.com/DABodr/DABcast-diffusion-software/issues" target="_blank" rel="noopener">Bug reports &amp; questions</a> · <a href="https://buymeacoffee.com/dabodr" target="_blank" rel="noopener">☕ Buy me a coffee</a> · Built with <a href="https://www.opendigitalradio.org/" target="_blank" rel="noopener">ODR-mmbTools</a></span>
     </div>
   </footer>
 
