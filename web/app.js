@@ -176,7 +176,96 @@ function updateCuPreview() {
   const cu = estimateCu(bitrate, protection, 'A');
   const cuEl = $('#f_cu');
   if (cuEl) cuEl.value = String(cu);
+  updateCuImpact();
 }
+// Multiplex capacity once this service has the CU shown (the edited service counted once)
+function updateCuImpact() {
+  const el = $('#cuImpact');
+  if (!el || !STATE?.preset) return;
+  const cu = Number($('#f_cu')?.value) || 0;
+  const max = STATE.preset.capacity?.maxCu ?? 864;
+  const others = STATE.preset.services.filter((s) => s.enabled !== false && s.id !== editingId).reduce((t, s) => t + (s.cu ?? 0), 0);
+  const svc = editingId ? STATE.preset.services.find((s) => s.id === editingId) : null;
+  const counted = svc ? svc.enabled !== false : !STATE.muxRunning;   // a service added ON AIR arrives OFF
+  const total = others + (counted ? cu : 0);
+  el.textContent = `mux ${total} / ${max}${counted ? '' : ' (OFF, not counted)'}${total > max ? ' — exceeded' : ''}`;
+  el.title = counted ? 'Capacity units used by the multiplex with this service' : 'This service is OFF: its CU are not counted in the multiplex';
+  el.classList.toggle('over', total > max);
+}
+// PAD size → slide sending speed (X-PAD ≈ PAD bytes × ~24 AU/s)
+function updatePadHelp() {
+  const el = $('#padHelp');
+  const pad = Number($('#f_padsize')?.value) || 0;
+  if (!el) return;
+  if (pad < 4) { el.textContent = ''; return; }
+  const bps = pad * 24;
+  const t = (kb) => Math.max(1, Math.round(kb * 1024 / bps));
+  el.textContent = `≈ ${(bps / 1024).toFixed(1)} kB/s for slides: 5 kB logo ≈ ${t(5)} s, 15 kB cover ≈ ${t(15)} s`;
+}
+$('#f_padsize')?.addEventListener('input', updatePadHelp);
+// PS8 / PS16 character counters
+function updatePsCounts() {
+  for (const [id, max] of [['ps8', 8], ['ps16', 16]]) {
+    const el = $(`#${id}Count`);
+    if (el) el.textContent = `${($(`#f_${id}`)?.value || '').length} / ${max}`;
+  }
+  // Live hint of the PS8 ⊂ PS16 rule (still enforced on save by validateServiceForm)
+  const c16 = $('#ps16Count');
+  const bad = shortLabelMismatch($('#f_ps8')?.value.trim(), $('#f_ps16')?.value.trim());
+  if (c16) {
+    if (bad) c16.textContent = `⚠ PS8 not in PS16 · ${c16.textContent}`;
+    c16.classList.toggle('over', bad);
+    c16.title = bad ? 'PS16 must contain all characters of PS8, in the same order' : '';
+  }
+  // Live hint for the PI: 4 hex digits, not used by another service (still checked on save)
+  const piHint = $('#piHint');
+  if (piHint) {
+    const raw = $('#f_pi')?.value.trim() || '';
+    const pi = normalizePiValue(raw);
+    const dup = pi && STATE?.preset?.services?.find((s) => s.id !== editingId && normalizePiValue(s.identity?.pi || s.id) === pi);
+    const msg = !raw ? '' : !pi ? '⚠ 4 hex digits (0-9, A-F)' : dup ? `⚠ already used by ${dup.identity?.ps8 || dup.id}` : '';
+    piHint.textContent = msg;
+    piHint.classList.toggle('over', Boolean(msg));
+  }
+}
+['f_pi', 'f_ps8', 'f_ps16'].forEach((id) => document.getElementById(id)?.addEventListener('input', updatePsCounts));
+// Failover block: silence / return only matter when switching to the backup is on
+function updateFailoverVisibility() {
+  const mode = $('#f_src')?.value;
+  if (mode === 'ZMQ' || mode === 'EDI') return;   // whole block hidden by updateSourceVisibility
+  const on = $('#f_switch')?.value === '1';
+  for (const id of ['f_thresh_row', 'f_return_row']) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = on ? '' : 'none';
+  }
+}
+$('#f_switch')?.addEventListener('change', updateFailoverVisibility);
+// 'Test' next to the main / backup stream URLs (server-side check, read-only)
+document.querySelectorAll('[data-test-url]').forEach((btn) => btn.addEventListener('click', async () => {
+  const id = btn.dataset.testUrl;
+  const out = $(`#${id}_test`);
+  const url = ($(`#${id}`)?.value || '').trim();
+  if (!out) return;
+  if (!url) { out.textContent = 'Enter a URL first'; out.className = 'field-note err'; return; }
+  btn.disabled = true;
+  out.textContent = 'Testing…';
+  out.className = 'field-note';
+  try {
+    const r = await api('/api/streams/test', { method: 'POST', body: JSON.stringify({ url }) });
+    out.className = `field-note ${r.ok === true ? 'ok' : r.ok === false ? 'err' : ''}`;
+    // ICY title sent by the stream (what STREAM mode would put in the DLS)
+    const title = r.ok === true || r.ok === null
+      ? (r.title ? `<span class="stream-title">♪ ${esc(r.title)}</span>`
+        : `<span class="stream-notitle">no title${r.icyMeta ? ' (empty ICY title)' : ' (no ICY metadata in this stream)'}</span>`)
+      : '';
+    out.innerHTML = `${esc(r.message)}${title ? `<br>${title}` : ''}`;
+  } catch (err) {
+    out.textContent = err.message || String(err);
+    out.className = 'field-note err';
+  } finally {
+    btn.disabled = false;
+  }
+}));
 
 function updateSourceVisibility() {
   const mode = $('#f_src')?.value;
@@ -188,7 +277,8 @@ function updateSourceVisibility() {
     if (el) el.disabled = isDirect;
   }
   updateMetaModeVisibility();   // mode buttons follow the disabled state
-  const encoderRowIds = ['f_gain_row', 'f_uri_row', 'f_thresh_row', 'f_return_row', 'f_switch_row', 'f_backup_row', 'f_swap_row'];
+  updateFailoverVisibility();
+  const encoderRowIds = ['f_gain_row', 'f_uri_row', 'f_thresh_row', 'f_return_row', 'f_switch_row', 'f_backup_row', 'f_swap_row', 'f_failover_card'];
   for (const id of encoderRowIds) {
     const el = document.getElementById(id);
     if (el) el.style.display = isDirect ? 'none' : '';
@@ -952,7 +1042,7 @@ function openDialogFor(service) {
 
   $('#dlgTitle').textContent = editingId ? `Edit: ${service?.identity?.ps8}` : 'Add service';
   $('#dlgLockHint').textContent = !locked ? ''
-    : editingId ? 'ON AIR: changing identity, bitrate, protection or audio format restarts the whole multiplex on save · audio gain and encoder buffer alone apply at the next mux Start'
+    : editingId ? 'ON AIR: changing identity, bitrate, protection or audio format restarts the whole multiplex on save · audio gain restarts only this service’s encoder (2–3 s) · encoder buffer alone applies at the next mux Start'
     : 'ON AIR: the new service is added OFF — press its ON button to put it on air (restarts the multiplex)';
 
   // --- General tab ---
@@ -1030,6 +1120,11 @@ function openDialogFor(service) {
   const cpb = $('#coverPreviewBox'); if (cpb) cpb.style.display = 'none';
   updateMetaModeVisibility();
   renderMetaLive();
+  applyMetaFold();
+  updatePsCounts();
+  updatePadHelp();
+  updateCuImpact();
+  ['f_uri_test', 'f_backup_test'].forEach((id) => { const el = document.getElementById(id); if (el) el.textContent = ''; });
 
   // SLS preview (logo or slsUrl)
   const img = $('#slsImg');
@@ -1081,6 +1176,17 @@ function openDialogFor(service) {
   setActiveTab('general');
 
   dlg.showModal();
+  // Same dialog height on the three tabs (the tallest one at opening); unfolding Metadata blocks still grows it
+  const panels = [...document.querySelectorAll('#dlgService .tabpanel')];
+  panels.forEach((p) => { p.style.minHeight = ''; });
+  const tallest = Math.max(...panels.map((p) => {
+    const hidden = p.classList.contains('hidden');
+    p.classList.remove('hidden');
+    const h = p.offsetHeight;
+    if (hidden) p.classList.add('hidden');
+    return h;
+  }));
+  panels.forEach((p) => { p.style.minHeight = `${tallest}px`; });
 }
 
 function setActiveTab(tab) {
@@ -1475,6 +1581,46 @@ $('#metaModeSeg')?.addEventListener('click', (e) => {
   sel.dispatchEvent(new Event('change'));
 });
 
+// ── Metadata tab: foldable blocks. Default: only 'Titles source' open; the viewer's choice is kept
+// in this browser. A folded block shows a one-line summary in its title. ──
+const META_FOLD_DEFAULT = { source: false, text: true, logo: true, advanced: true };   // true = folded
+function metaFoldState() {
+  try { return { ...META_FOLD_DEFAULT, ...JSON.parse(localStorage.getItem('dabcast.metaFold') || '{}') }; } catch { return { ...META_FOLD_DEFAULT }; }
+}
+function updateMetaSummaries() {
+  const modeBtn = document.querySelector('#metaModeSeg button.active');
+  if ($('#metaSumSource')) $('#metaSumSource').textContent = modeBtn ? modeBtn.textContent : '';
+  const txt = ($('#f_default_dls')?.value || '').trim();
+  if ($('#metaSumText')) $('#metaSumText').textContent = `${txt ? `“${txt}”` : 'no text'} · DL+ ${$('#f_dlplus_enabled')?.value === 'no' ? 'off' : 'on'}`;
+  const size = ($('#slsSize')?.textContent || '').split(' / ')[0];
+  const every = $('#f_json_logoevery')?.value;
+  const json = ($('#f_meta_mode')?.value || '').toUpperCase() === 'JSON';
+  if ($('#metaSumAdv')) $('#metaSumAdv').textContent = `ZMQ ${$('#f_zbuf')?.value || '—'} / ${$('#f_zpre')?.value || '—'} · encoder ${$('#f_encbuf')?.value || '—'} ms`;
+  if ($('#metaSumLogo')) $('#metaSumLogo').textContent = [size ? `logo ${size}` : 'no logo', json ? (Number(every) > 0 ? `logo every ${every} s` : 'cover only') : ''].filter(Boolean).join(' · ');
+}
+function applyMetaFold() {
+  const st = metaFoldState();
+  document.querySelectorAll('.meta-card[data-fold]').forEach((card) => {
+    const folded = Boolean(st[card.dataset.fold]);
+    card.classList.toggle('folded', folded);
+    card.querySelector('.meta-card-title')?.setAttribute('aria-expanded', folded ? 'false' : 'true');
+  });
+  updateMetaSummaries();
+}
+function toggleMetaFold(card) {
+  const st = metaFoldState();
+  st[card.dataset.fold] = !card.classList.contains('folded');
+  try { localStorage.setItem('dabcast.metaFold', JSON.stringify(st)); } catch { /* ignore */ }
+  applyMetaFold();
+}
+document.querySelectorAll('.meta-card[data-fold] > .meta-card-title').forEach((t) => {
+  t.addEventListener('click', () => toggleMetaFold(t.parentElement));
+  t.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleMetaFold(t.parentElement); } });
+});
+['f_default_dls', 'f_dlplus_enabled', 'f_json_logoevery', 'f_meta_mode'].forEach((id) => document.getElementById(id)?.addEventListener('input', updateMetaSummaries));
+['f_dlplus_enabled', 'f_meta_mode'].forEach((id) => document.getElementById(id)?.addEventListener('change', updateMetaSummaries));
+['f_zbuf', 'f_zpre', 'f_encbuf'].forEach((id) => document.getElementById(id)?.addEventListener('input', updateMetaSummaries));
+
 // ── Metadata tab: what is on air now for the edited service (refreshed with /api/state) ──
 const _liveSlideSizes = new Map();
 function renderMetaLive() {
@@ -1686,6 +1832,7 @@ $('#slsImg')?.addEventListener('load', (e) => {
     const { text, over } = slideSizeLabel(n);
     el.textContent = over ? `${text} — too heavy` : text;
     el.className = `sls-size${over ? ' over' : ''}`;
+    updateMetaSummaries();
     el.title = 'Recommended maximum = odr-padenc default --max-slide-size (51200 bytes, SlideShow Simple profile). Above it, odr-padenc recompresses the slide.';
   }).catch(() => { el.textContent = ''; });
 });
@@ -3195,3 +3342,53 @@ $('#muxForm').addEventListener('submit', async (e) => {
 // ═══════════════════════════════════════════════
 // ═══════════════════════════════════════════════
 
+
+// Drop-down lists of the dialogs (mouse only): browsers keep the native list inside the page, so a
+// long list (bitrate, PTY, language) with no room above nor below is drawn over the field itself
+// and the button release picks whatever option is under the cursor. Our own list is always placed
+// beside the field (scrolls when needed); the <select> stays the source of truth (value, keyboard,
+// change events). Touch keeps the native picker.
+let _selPop = null;
+let _lastPointer = 'mouse';
+document.addEventListener('pointerdown', (e) => { _lastPointer = e.pointerType; }, true);
+function closeSelPop() { _selPop?.el.remove(); _selPop = null; }
+document.addEventListener('mousedown', (e) => {
+  if (_selPop && !_selPop.el.contains(e.target)) { const same = e.target === _selPop.sel; closeSelPop(); if (same) { e.preventDefault(); return; } }
+  const sel = e.target;
+  if (e.button !== 0 || _lastPointer !== 'mouse' || sel.tagName !== 'SELECT' || sel.multiple || sel.disabled) return;
+  const host = sel.closest('dialog');
+  if (!host) return;
+  e.preventDefault();
+  sel.focus();
+  const el = document.createElement('div');
+  el.className = 'sel-pop';
+  for (const node of sel.children) {
+    const opts = node.tagName === 'OPTGROUP' ? [...node.children] : [node];
+    if (node.tagName === 'OPTGROUP') { const g = document.createElement('div'); g.className = 'sel-pop-group'; g.textContent = node.label; el.appendChild(g); }
+    for (const o of opts) {
+      if (o.hidden || o.style.display === 'none') continue;
+      const it = document.createElement('div');
+      it.className = 'sel-pop-item' + (o.selected ? ' selected' : '') + (o.disabled ? ' disabled' : '');
+      it.textContent = o.textContent;
+      if (!o.disabled) it.addEventListener('click', () => {
+        closeSelPop();
+        if (sel.value !== o.value) { sel.value = o.value; sel.dispatchEvent(new Event('input', { bubbles: true })); sel.dispatchEvent(new Event('change', { bubbles: true })); }
+      });
+      el.appendChild(it);
+    }
+  }
+  host.appendChild(el);
+  const r = sel.getBoundingClientRect();
+  const below = innerHeight - r.bottom - 8, above = r.top - 8;
+  const down = below >= Math.min(el.scrollHeight, 240) || below >= above;
+  el.style.left = `${Math.max(4, Math.min(r.left, innerWidth - Math.max(r.width, el.offsetWidth) - 4))}px`;
+  el.style.minWidth = `${r.width}px`;
+  el.style.maxHeight = `${Math.max(120, down ? below : above)}px`;
+  el.style.top = down ? `${r.bottom + 2}px` : `${Math.max(4, r.top - 2 - el.offsetHeight)}px`;
+  el.querySelector('.selected')?.scrollIntoView({ block: 'nearest' });
+  _selPop = { el, sel };
+}, true);
+document.addEventListener('keydown', (e) => { if (_selPop) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); } closeSelPop(); } }, true);
+document.addEventListener('scroll', (e) => { if (_selPop && !_selPop.el.contains(e.target)) closeSelPop(); }, true);
+addEventListener('resize', closeSelPop);
+document.addEventListener('close', closeSelPop, true);

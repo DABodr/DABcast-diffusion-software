@@ -1,12 +1,14 @@
 // SLS slide conversion: any picture → JPEG 320x240 for odr-padenc.
 //
 // Covers and logos are often square: fitted into 320x240 they leave side bands. Instead of black,
-// each band takes the main colour (median) of the picture's own edge next to it (left / right, or top /
-// bottom for wide pictures), so a plain background continues seamlessly and a photo gets bands
-// matching its edges. Nothing is cropped. Transparency is flattened on black, as before.
+// each band row takes the colour of the picture's edge on that row, as the per-channel median of
+// the neighbouring rows (±EDGE_WINDOW): a plain background or a vertical gradient continues
+// seamlessly, while a small shape touching the border (a ring, a letter) does not streak the band.
+// Same for top / bottom bands of wide pictures. Nothing is cropped. Transparency is flattened on
+// black, as before.
 //
-// Two ImageMagick calls: resize + flatten to PPM (read by Node to average the edge columns),
-// then composition on the two-colour canvas → JPEG.
+// Two ImageMagick calls: resize + flatten to PPM, then (after Node composed the 320x240 picture)
+// PPM → JPEG.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,44 +37,60 @@ export function parsePpm(buf) {
   return { w, h, data: buf, offset: pos };
 }
 
-const hex = ([r, g, b]) => `#${[r, g, b].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('')}`;
+const EDGE_WINDOW = 60;   // rows (or columns) on each side taken into the running median
 
-// Colour of a column (x) or a row (y) of the image: per-channel median, so the main edge colour
-// wins over a few pixels of a shape touching the border (an average would tint the band).
-function avgLine(img, { x = null, y = null }) {
-  const n = x != null ? img.h : img.w;
-  const ch = [new Uint8Array(n), new Uint8Array(n), new Uint8Array(n)];
+// Pixel (x, y) of a parsed PPM → offset in its buffer
+const at = (img, x, y) => img.offset + (y * img.w + x) * 3;
+
+// Running per-channel median along an edge line of n pixels (pixel i read by get(i) → [r, g, b])
+function runningMedian(n, get, win = EDGE_WINDOW) {
+  const px = Array.from({ length: n }, (_, i) => get(i));
+  const out = new Array(n);
   for (let i = 0; i < n; i++) {
-    const px = x != null ? x : i;
-    const py = y != null ? y : i;
-    const o = img.offset + (py * img.w + px) * 3;
-    ch[0][i] = img.data[o]; ch[1][i] = img.data[o + 1]; ch[2][i] = img.data[o + 2];
+    const lo = Math.max(0, i - win), hi = Math.min(n - 1, i + win);
+    const c = [[], [], []];
+    for (let j = lo; j <= hi; j++) for (let k = 0; k < 3; k++) c[k].push(px[j][k]);
+    out[i] = c.map((v) => v.sort((a, b2) => a - b2)[v.length >> 1]);
   }
-  return ch.map((c) => c.sort()[n >> 1]);
+  return out;
 }
 
-// Canvas arguments for ImageMagick: band colours taken from the picture edges
-export function bandCanvasArgs(img) {
-  if (img.w < SLIDE_W) {
-    const left = hex(avgLine(img, { x: 0 }));
-    const right = hex(avgLine(img, { x: img.w - 1 }));
-    return ['-size', `${SLIDE_W}x${SLIDE_H}`, `xc:${left}`, '-fill', right, '-draw', `rectangle ${SLIDE_W / 2},0 ${SLIDE_W - 1},${SLIDE_H - 1}`];
+// Compose the 320x240 slide (binary PPM) from the fitted picture: picture centred, bands filled
+// with the running median of its edges.
+export function composeSlide(img) {
+  const W = SLIDE_W, H = SLIDE_H;
+  const head = Buffer.from(`P6\n${W} ${H}\n255\n`, 'latin1');
+  const out = Buffer.alloc(W * H * 3);
+  const ox = Math.floor((W - img.w) / 2), oy = Math.floor((H - img.h) / 2);
+  const pix = (x, y) => { const o = at(img, x, y); return [img.data[o], img.data[o + 1], img.data[o + 2]]; };
+  let left = null, right = null, top = null, bottom = null;
+  if (img.w < W) {
+    left = runningMedian(img.h, (y) => pix(0, y));
+    right = runningMedian(img.h, (y) => pix(img.w - 1, y));
+  } else if (img.h < H) {
+    top = runningMedian(img.w, (x) => pix(x, 0));
+    bottom = runningMedian(img.w, (x) => pix(x, img.h - 1));
   }
-  if (img.h < SLIDE_H) {
-    const top = hex(avgLine(img, { y: 0 }));
-    const bottom = hex(avgLine(img, { y: img.h - 1 }));
-    return ['-size', `${SLIDE_W}x${SLIDE_H}`, `xc:${top}`, '-fill', bottom, '-draw', `rectangle 0,${SLIDE_H / 2} ${SLIDE_W - 1},${SLIDE_H - 1}`];
+  for (let y = 0; y < H; y++) {
+    const cy = Math.min(img.h - 1, Math.max(0, y - oy));
+    for (let x = 0; x < W; x++) {
+      const cx = x - ox;
+      let c;
+      if (cx >= 0 && cx < img.w && y - oy >= 0 && y - oy < img.h) c = pix(cx, y - oy);
+      else if (left) c = cx < 0 ? left[cy] : right[cy];
+      else if (top) c = y - oy < 0 ? top[Math.min(img.w - 1, Math.max(0, cx))] : bottom[Math.min(img.w - 1, Math.max(0, cx))];
+      else c = [0, 0, 0];
+      out.set(c, (y * W + x) * 3);
+    }
   }
-  return ['-size', `${SLIDE_W}x${SLIDE_H}`, 'xc:black'];
+  return Buffer.concat([head, out]);
 }
 
 // Throws on failure (callers keep their own fallback / logging).
 export function convertToSlide(srcPath, destPath, { quality = 85, exec = execFileSync } = {}) {
   const ppm = exec('convert', [`${srcPath}[0]`, '-background', 'black', '-alpha', 'remove', '-alpha', 'off',
     '-resize', `${SLIDE_W}x${SLIDE_H}`, '-depth', '8', 'ppm:-'], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 });   // 8-bit: Q16 builds may write 16-bit PPM
-  const img = parsePpm(ppm);
-  exec('convert', [...bandCanvasArgs(img), 'ppm:-', '-gravity', 'center', '-composite', '-quality', String(quality), destPath],
-    { input: ppm, timeout: 10000 });
+  exec('convert', ['ppm:-', '-quality', String(quality), destPath], { input: composeSlide(parsePpm(ppm)), timeout: 10000 });
 }
 
 // Black side bands left by the conversion used before v1.7 (picture centred on black).
@@ -105,9 +123,9 @@ export function removeBlackBands(file, outFile, tmpDir, { exec = execFileSync } 
   const img = parsePpm(exec('convert', [`${file}[0]`, '-depth', '8', 'ppm:-'], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
   const bands = blackBandWidths(img);
   if (!bands) return false;
-  // 2 more pixels on each side: JPEG blended the old black band into the first content columns,
-  // which would give a darkened band colour
-  const inset = 2;
+  // 8 more pixels on each side (one JPEG block): JPEG blended the old black band into the first
+  // content columns, which would give a darkened band colour (2 px was not enough)
+  const inset = 8;
   const w = img.w - bands.left - bands.right - 2 * inset;
   const tmp = path.join(tmpDir, `.bands_${process.pid}_${Date.now()}.png`);
   try {

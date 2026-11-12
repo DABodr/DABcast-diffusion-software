@@ -420,6 +420,21 @@ input:disabled, select:disabled {
 .meta-card { border: 1px solid var(--border); border-radius: 10px; padding: 12px; background: rgba(255,255,255,0.02); display: flex; flex-direction: column; gap: 10px; }
 .meta-card-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 8px; }
 .meta-help { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.45; }
+.field-note { display: block; font-size: 11px; color: var(--muted); margin-top: 3px; line-height: 1.35; }
+.field-note.over, .field-note.err { color: var(--yellow); font-weight: 600; }
+.field-note.ok { color: var(--green); }
+.stream-title { color: #fff; font-weight: 600; }
+.stream-notitle { color: var(--red); font-weight: 600; }
+.url-test { display: flex; gap: 8px; align-items: center; }
+.url-test input { flex: 1; min-width: 0; }
+#f_failover_card { margin-top: 4px; }
+.meta-card[data-fold] > .meta-card-title { cursor: pointer; user-select: none; }
+.meta-card[data-fold] > .meta-card-title::before { content: '▾'; font-size: 12px; width: 10px; }
+.meta-card[data-fold].folded > .meta-card-title::before { content: '▸'; }
+.meta-card[data-fold].folded > :not(.meta-card-title) { display: none !important; }
+.meta-card[data-fold] > .meta-card-title:hover { color: var(--text); }
+.meta-fold-sum { display: none; margin-left: auto; font-weight: 400; letter-spacing: 0; text-transform: none; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+.meta-card.folded .meta-fold-sum { display: inline; }
 .meta-card .json-only:not(.hidden) { display: flex; flex-direction: column; gap: 10px; }
 .meta-full { display: flex; flex-direction: column; gap: 4px; }
 .meta-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
@@ -452,7 +467,7 @@ input:disabled, select:disabled {
 .meta-live-slide.over { color: var(--yellow); }
 .meta-live-label { font-size: 10px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
 .meta-live-dls { font-size: 14px; color: #fff; line-height: 1.35; overflow-wrap: anywhere; }
-.meta-live-dlplus { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.meta-live-dlplus { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: #fff; }
 .meta-live-dlplus .tag { display: inline-block; min-width: 46px; font-size: 10px; font-weight: 700; color: var(--green); }
 .meta-live-status { font-size: 11px; color: var(--muted); line-height: 1.4; border-top: 1px solid var(--border); padding-top: 8px; }
 .meta-live-status.err { color: var(--yellow); }
@@ -786,3 +801,15 @@ input[type="file"]::file-selector-button { background: var(--surface3); color: v
 .buf-tag.pend { background: rgba(52,152,219,.14); color: var(--blue); }
 .mux-stats-grid .buf-tag { margin-left: 0; }
 @media (max-width: 820px) { .buf-tag { display: none; } }
+/* Drop-down list of the dialogs (see _selPop in app.js) */
+.sel-pop { position: fixed; z-index: 1000; overflow-y: auto; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.5); padding: 4px 0; font-size: 13px; color: var(--text); }
+.sel-pop-item { padding: 5px 12px; cursor: pointer; white-space: nowrap; }
+.sel-pop-item:hover { background: rgba(52,152,219,.25); }
+.sel-pop-item.selected { background: var(--blue); color: #fff; }
+.sel-pop-item.disabled { opacity: .4; cursor: default; }
+.sel-pop-group { padding: 6px 10px 2px; font-size: 11px; font-weight: 700; color: var(--muted); }
+/* Counter on the label line (PS8 / PS16): same field spacing as the other blocks */
+.lbl-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.lbl-row .dls-count { display: inline; margin-top: 0; }
+/* PAD help in the free cells beside the PAD field (aligned with the input) */
+.field-note.beside-input { align-self: end; margin: 0 0 10px; }

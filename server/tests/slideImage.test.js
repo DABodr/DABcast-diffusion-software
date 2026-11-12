@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { parsePpm, bandCanvasArgs, convertToSlide, blackBandWidths, removeBlackBands } from '../src/slideImage.js';
+import { parsePpm, composeSlide, convertToSlide, blackBandWidths, removeBlackBands } from '../src/slideImage.js';
 
 // w x h PPM, colour of each pixel given by fn(x, y) → [r, g, b]
 const ppm = (w, h, fn) => {
@@ -24,30 +24,36 @@ describe('slideImage — band colours', () => {
     assert.deepEqual([...img.data.subarray(img.offset, img.offset + 3)], [1, 2, 3]);
   });
 
+  const slidePx = (buf, x, y) => { const img = parsePpm(buf); const o = img.offset + (y * 320 + x) * 3; return [...img.data.subarray(o, o + 3)]; };
+
   it('square picture (240x240): left band = left edge colour, right band = right edge colour', () => {
-    const img = parsePpm(ppm(240, 240, (x) => (x < 120 ? [255, 0, 128] : [0, 64, 255])));
-    const args = bandCanvasArgs(img);
-    assert.ok(args.includes('xc:#ff0080'), args.join(' '));
-    assert.ok(args.includes('#0040ff'), args.join(' '));
-    assert.ok(args.includes('rectangle 160,0 319,239'));
+    const out = composeSlide(parsePpm(ppm(240, 240, (x) => (x < 120 ? [255, 0, 128] : [0, 64, 255]))));
+    assert.deepEqual(slidePx(out, 5, 120), [255, 0, 128]);
+    assert.deepEqual(slidePx(out, 314, 120), [0, 64, 255]);
+    assert.deepEqual(slidePx(out, 160, 120), [0, 64, 255], 'picture centred, not altered');
   });
 
-  it('the main edge colour wins over a shape touching the border (median, not average)', () => {
-    // white edge with a red shape over 30 % of its height
-    const img = parsePpm(ppm(240, 240, (x, y) => (y > 80 && y < 152 ? [255, 0, 0] : [255, 255, 255])));
-    assert.ok(bandCanvasArgs(img).includes('xc:#ffffff'));
+  it('a vertical gradient continues into the bands, row by row (no flat band)', () => {
+    const out = composeSlide(parsePpm(ppm(240, 240, (x, y) => [255, y, 128])));
+    for (const y of [70, 120, 170]) assert.deepEqual(slidePx(out, 3, y), [255, y, 128], `row ${y}`);
+  });
+
+  it('a small shape touching the border does not streak the band (running median)', () => {
+    // white edge with a red shape over 20 % of its height
+    const out = composeSlide(parsePpm(ppm(240, 240, (x, y) => (y > 96 && y < 144 ? [255, 0, 0] : [255, 255, 255]))));
+    assert.deepEqual(slidePx(out, 3, 120), [255, 255, 255]);
   });
 
   it('wide picture (320x100): top / bottom bands from the top / bottom rows', () => {
-    const img = parsePpm(ppm(320, 100, (x, y) => (y < 50 ? [255, 255, 255] : [0, 0, 0])));
-    const args = bandCanvasArgs(img);
-    assert.ok(args.includes('xc:#ffffff'));
-    assert.ok(args.includes('#000000'));
-    assert.ok(args.includes('rectangle 0,120 319,239'));
+    const out = composeSlide(parsePpm(ppm(320, 100, (x, y) => (y < 50 ? [255, 255, 255] : [0, 0, 0]))));
+    assert.deepEqual(slidePx(out, 160, 5), [255, 255, 255]);
+    assert.deepEqual(slidePx(out, 160, 235), [0, 0, 0]);
   });
 
-  it('picture already 320x240: no band', () => {
-    assert.deepEqual(bandCanvasArgs(parsePpm(ppm(320, 240, () => [9, 9, 9]))).slice(-1), ['xc:black']);
+  it('picture already 320x240: unchanged', () => {
+    const out = composeSlide(parsePpm(ppm(320, 240, (x, y) => [x % 256, y, 7])));
+    assert.deepEqual(slidePx(out, 0, 0), [0, 0, 7]);
+    assert.deepEqual(slidePx(out, 319, 239), [63, 239, 7]);
   });
 });
 
