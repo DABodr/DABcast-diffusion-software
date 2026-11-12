@@ -32,7 +32,7 @@
       <button id="btnPlayer" class="btn" title="Listen to a service of the multiplex in this browser">Player</button>
       <button id="btnTelegram" class="btn" title="Telegram notifications">Telegram</button>
       <button id="btnAbout" class="btn" title="System information">Sys. info</button>
-      <button id="btnAuth" class="btn btn-about hide-mobile" title="Account and password">&#128274;</button>
+      <button id="btnAuth" class="btn btn-about hide-mobile" title="Settings: account, password and web port" aria-label="Settings">&#9881;</button>
       <button id="btnSignOut" class="btn btn-about" title="Sign out" aria-label="Sign out">&#x23FB;</button>
       <button id="btnLegal" class="btn btn-about" title="About DABcast: credits and license">?</button>
       <button id="btnStop" class="btn btn-danger">Stop</button>
@@ -966,31 +966,49 @@
     <form method="dialog" class="modal-body">
       <div class="modal-head">
         <div>
-          <div class="modal-title">Change credentials</div>
-          <div class="modal-sub">Update login and password</div>
+          <div class="modal-title">Settings</div>
+          <div class="modal-sub">Account, password and web interface port</div>
         </div>
-        <button class="icon" value="cancel" aria-label="Close">&#10005;</button>
+        <button type="button" class="icon" data-action="auth-cancel" aria-label="Close">&#10005;</button>
       </div>
-      <div class="alert hidden" id="authError"></div>
-      <div class="grid2">
-        <label>
-          <span>Username</span>
-          <input id="a_user" required />
-        </label>
-        <label>
-          <span>New password</span>
-          <input id="a_pass" type="password" required minlength="10" />
-        </label>
-        <label>
-          <span>Confirm password</span>
-          <input id="a_pass2" type="password" required minlength="10" />
-        </label>
+      <div class="meta-card">
+        <div class="meta-card-title">Account</div>
+        <div class="alert hidden" id="authError"></div>
+        <div class="grid2">
+          <label>
+            <span>Username</span>
+            <input id="a_user" required />
+          </label>
+          <label>
+            <span>New password</span>
+            <input id="a_pass" type="password" required minlength="10" />
+          </label>
+          <label>
+            <span>Confirm password</span>
+            <input id="a_pass2" type="password" required minlength="10" />
+          </label>
+          <div class="settings-btn-cell">
+            <button type="button" class="btn btn-success" id="btnAuthSave">Save account</button>
+          </div>
+        </div>
+      </div>
+      <div class="meta-card" id="webPortCard">
+        <div class="meta-card-title">Web server</div>
+        <div class="grid2">
+          <label>
+            <span class="lbl-row">Web interface port<span class="dls-count" id="webPortNow"></span></span>
+            <input id="s_port" type="number" min="1024" max="65535" />
+          </label>
+          <div class="settings-btn-cell">
+            <button type="button" class="btn btn-success" id="btnPortSave">Save &amp; restart</button>
+          </div>
+        </div>
+        <p class="meta-help" id="webPortMsg">Save &amp; restart saves the port and restarts DABcast: the interface reopens at the new port. ON AIR, the multiplex is cut for about 10 s (autoStart puts it back on air).</p>
       </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-danger" id="btnLogout">Sign out</button>
         <div class="spacer"></div>
-        <button type="button" class="btn" data-action="auth-cancel">Cancel</button>
-        <button type="button" class="btn btn-success" id="btnAuthSave">Save</button>
+        <button type="button" class="btn" data-action="auth-cancel">Close</button>
       </div>
     </form>
   </dialog>

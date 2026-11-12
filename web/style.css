@@ -828,3 +828,6 @@ input.just-filled { border-color: var(--green) !important; box-shadow: 0 0 0 3px
    "…" (full text on hover). Compact view: one line. */
 .table:not(.compact) td.col-dls .dls-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .table.compact td.col-dls .dls-text { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; white-space: normal; max-width: none; }
+/* Settings dialog (⚙) */
+#dlgAuth .meta-card { margin-top: 12px; }
+.settings-btn-cell { display: flex; align-items: end; gap: 8px; }

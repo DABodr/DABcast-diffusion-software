@@ -447,6 +447,68 @@ app.patch('/api/settings', (req, res) => {
   }
 });
 
+// Web UI port (Settings ⚙ › Web server). Saved in settings.json, applied at the next start;
+// PORT in the environment (/etc/default/dabcast) wins over it.
+const RESERVED_WEB_PORTS = new Set([8080, 9099]);   // lighttpd on the target systems, audio probe sink
+function portsInUseByChain() {
+  const used = new Map();   // port -> what uses it
+  const walk = (obj, where) => {
+    for (const [k, v] of Object.entries(obj || {})) {
+      if (v && typeof v === 'object') walk(v, `${where}.${k}`);
+      else if (/port$/i.test(k) && Number.isInteger(Number(v)) && Number(v) > 0) used.set(Number(v), `${where}.${k}`);
+      else if (typeof v === 'string') { const m = /:(\d{2,5})$/.exec(v); if (m) used.set(Number(m[1]), `${where}.${k}`); }
+    }
+  };
+  walk(settings.dabmux, 'dabmux');
+  for (const svc of state.preset?.services || []) {
+    const port = svc.network?.ediOutputTcp?.port;
+    if (port) used.set(Number(port), `input port of ${svc.identity?.ps8 || svc.id}`);
+  }
+  return used;
+}
+function portIsFree(port, host) {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once('error', () => resolve(false));
+    srv.listen(port, host, () => srv.close(() => resolve(true)));
+  });
+}
+app.get('/api/settings/web', (req, res) => {
+  res.json({
+    port: listenPort,                                  // port this server listens on now
+    savedPort: Number(settings.port) || 9090,          // port for the next start
+    envPort: process.env.PORT ? Number(process.env.PORT) : null,
+    canRestart: Boolean(process.env.INVOCATION_ID),   // set by systemd
+    muxRunning: state.muxRunning,
+  });
+});
+app.post('/api/settings/web', async (req, res) => {
+  try {
+    const port = Number(req.body?.port);
+    if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Port must be a number between 1024 and 65535');
+    if (process.env.PORT) throw new Error(`PORT=${process.env.PORT} is set in /etc/default/dabcast: change it there`);
+    if (RESERVED_WEB_PORTS.has(port)) throw new Error(`Port ${port} is reserved (${port === 8080 ? 'lighttpd' : 'audio probe'})`);
+    const chain = portsInUseByChain().get(port);
+    if (chain) throw new Error(`Port ${port} is used by the broadcast chain (${chain})`);
+    if (port !== listenPort && !(await portIsFree(port, listenHost))) throw new Error(`Port ${port} is already in use on this machine`);
+    if (req.body?.dryRun) return res.json({ ok: true, checked: port });   // check only (before the confirmation)
+    settings.port = port;
+    writeJson(settingsPath, settings);
+    logger.line('web', `Web UI port set to ${port} (applies at the next start)`);
+    res.json({ ok: true, savedPort: port, restartRequired: port !== listenPort });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
+});
+// Restart DABcast (to apply the port): exits with an error code, systemd (Restart=on-failure)
+// starts it again ~5 s later. ODR processes are cleaned up and autoStart puts the mux back on air.
+app.post('/api/system/restart', (req, res) => {
+  if (!process.env.INVOCATION_ID) return res.status(400).json({ error: 'Not running as the dabcast systemd service: restart it by hand' });
+  logger.line('web', `Restart requested from the web UI (port ${settings.port || 9090} at the next start)`, 'WARN');
+  res.json({ ok: true, port: Number(settings.port) || 9090 });
+  setTimeout(() => process.exit(75), 500);   // non-zero: systemd restarts the service
+});
+
 // Telegram log notifications. The token is stored separately from settings.json
 // and is never returned by the API or included in configuration exports.
 app.get('/api/telegram', (req, res) => {

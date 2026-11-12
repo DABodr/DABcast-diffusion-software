@@ -2423,14 +2423,88 @@ function showAuth() {
   $('#a_pass2').value = '';
   $('#authError').classList.add('hidden');
   dlg.showModal();
+  loadWebPort();
 }
 
+// Settings › Web server: port of the web interface (applied at the next DABcast start)
+let WEB_PORT = null;   // last /api/settings/web answer
+function webPortMsg(text, cls = '') {
+  const el = $('#webPortMsg');
+  el.textContent = text;
+  el.className = `meta-help${cls ? ` json-status ${cls}` : ''}`;
+}
+async function loadWebPort() {
+  WEB_PORT = null;
+  try {
+    WEB_PORT = await api('/api/settings/web');
+    $('#s_port').value = WEB_PORT.savedPort;
+    $('#webPortNow').textContent = `now ${WEB_PORT.port}`;
+    const locked = Boolean(WEB_PORT.envPort);
+    $('#s_port').disabled = locked;
+    $('#btnPortSave').disabled = locked;
+    $('#btnPortSave').textContent = WEB_PORT.canRestart ? 'Save & restart' : 'Save';
+    if (locked) webPortMsg(`PORT=${WEB_PORT.envPort} is set in /etc/default/dabcast: change it there, then sudo systemctl restart dabcast.`, 'err');
+    else if (!WEB_PORT.canRestart) webPortMsg('DABcast does not run as the systemd service here: the port is saved, restart DABcast by hand to apply it.');
+    else webPortMsg('Save & restart saves the port and restarts DABcast: the interface reopens at the new port. ON AIR, the multiplex is cut for about 10 s (autoStart puts it back on air).');
+  } catch (err) {
+    webPortMsg(err.message || String(err), 'err');
+  }
+}
+// Save & restart: confirm (port change + mux cut), save, restart, then open the new address
+$('#btnPortSave')?.addEventListener('click', async () => {
+  if (!WEB_PORT) return;   // settings not loaded yet
+  const port = Number($('#s_port').value);
+  const cur = WEB_PORT.port;
+  if (port === cur) {   // current port: nothing to restart (also cancels a port saved earlier without restart)
+    try { if (WEB_PORT?.savedPort !== cur) await api('/api/settings/web', { method: 'POST', body: JSON.stringify({ port }) }); } catch (err) { webPortMsg(err.message || String(err), 'err'); return; }
+    WEB_PORT = { ...WEB_PORT, savedPort: cur };
+    webPortMsg(`DABcast already uses port ${cur}.`, 'ok');
+    return;
+  }
+  const url = `${location.protocol}//${location.hostname}:${port}/`;
+  // check the port first (range, broadcast chain, already in use): an error shows here, before any question
+  try {
+    await api('/api/settings/web', { method: 'POST', body: JSON.stringify({ port, dryRun: true }) });
+  } catch (err) {
+    webPortMsg(err.message || String(err), 'err');
+    return;
+  }
+  if (WEB_PORT?.canRestart && !confirm(`Change the web interface port from ${cur} to ${port} and restart DABcast now?\n\n`
+    + `• The interface reopens at ${url} (update your bookmarks).\n`
+    + (STATE?.muxRunning
+      ? '• ON AIR: the multiplex is cut and ALL services go off air for about 10 s; autoStart puts it back on air.'
+      : '• The multiplex is off air: no broadcast is interrupted.'))) return;
+  try {
+    await api('/api/settings/web', { method: 'POST', body: JSON.stringify({ port }) });
+  } catch (err) {
+    webPortMsg(err.message || String(err), 'err');
+    return;
+  }
+  if (!WEB_PORT?.canRestart) { webPortMsg(`Port ${port} saved — restart DABcast to apply it.`, 'ok'); return; }
+  try {
+    clearInterval(refreshTimer);
+    await api('/api/system/restart', { method: 'POST', body: '{}' });
+  } catch (err) {
+    webPortMsg(err.message || String(err), 'err');
+    return;
+  }
+  // wait for the new server, then open it (the session cookie is not tied to the port)
+  $('#btnPortSave').disabled = true;
+  webPortMsg(`Restarting… the interface reopens at ${url}`, 'ok');
+  const t0 = Date.now();
+  const tryOpen = async () => {
+    try { await fetch(`${url}login.html`, { mode: 'no-cors', cache: 'no-store' }); location.href = url; return; } catch { /* not up yet */ }
+    if (Date.now() - t0 < 60000) setTimeout(tryOpen, 2000);
+    else webPortMsg(`DABcast did not answer at ${url} — check the service (sudo systemctl status dabcast).`, 'err');
+  };
+  setTimeout(tryOpen, 6000);
+});
 $('#btnAuth').addEventListener('click', showAuth);
 $('#btnPwdBanner')?.addEventListener('click', showAuth);
 
-$('#dlgAuth').querySelector('[data-action="auth-cancel"]').addEventListener('click', () => {
+$('#dlgAuth').querySelectorAll('[data-action="auth-cancel"]').forEach((b) => b.addEventListener('click', () => {
   $('#dlgAuth').close();
-});
+}));
 
 $('#btnAuthSave').addEventListener('click', async () => {
   const errEl = $('#authError');
