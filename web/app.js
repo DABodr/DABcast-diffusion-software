@@ -1641,12 +1641,8 @@ function netField(o, i, key, label, attrs = '') {
 function renderNetOutputs() {
   const box = $('#netOutputs');
   if (!box) return;
-  // PFT / FEC only concerns EDI outputs: hidden when the list has none (EasyDAB / ETI only)
-  const hasEdi = NET_OUTPUTS.some((o) => o.type === 'edi-udp' || o.type === 'edi-tcp');
-  document.querySelectorAll('.net-edi-only').forEach((el) => el.classList.toggle('hidden', !hasEdi));
-  // TIST offset: only read by EDI transmitters and the EasyDAB V2 (ZMQ with metadata)
-  const usesTist = hasEdi || NET_OUTPUTS.some((o) => o.type === 'zmq' && o.allowMetadata);
-  document.querySelectorAll('.net-tist-only').forEach((el) => el.classList.toggle('hidden', !usesTist));
+  // PFT / FEC and the TIST offset are ONE value each in odr-dabmux: shown (and kept in sync) in
+  // the blocks of the outputs that use them — EDI for PFT / FEC, EDI and EasyDAB V2 for TIST
   if (!NET_OUTPUTS.length) { box.innerHTML = '<div class="muted net-empty">No output yet: choose a type and press + Add.</div>'; return; }
   box.innerHTML = NET_OUTPUTS.map((o, i) => {
     const mc = o.type === 'edi-udp' && /^(22[4-9]|23\d)\./.test(o.destination || '');
@@ -1662,7 +1658,18 @@ function renderNetOutputs() {
       fields = netField(o, i, 'ip', 'Listen IP', 'placeholder="0.0.0.0" class="net-ip"') + netField(o, i, 'port', 'Port', 'type="number" min="1024" max="65535"')
         + (o.type === 'zmq' ? `<label class="check-row net-inline"><input type="checkbox" data-net="${i}" data-key="allowMetadata" ${o.allowMetadata ? 'checked' : ''} /> metadata (EasyDAB V2)</label>` : '');
     }
-    const help = o.type === 'edi-udp' ? NET_HELP['edi-udp'] : `${NET_HELP[o.type]} Address: ${serverHost()}:${o.port}`;
+    const isEdi = o.type === 'edi-udp' || o.type === 'edi-tcp';
+    if (isEdi) {
+      fields += `<label class="check-row net-inline" title="Shared by all EDI outputs"><input type="checkbox" data-shared="pft" ${$('#m_net_pft').checked ? 'checked' : ''} /> PFT / FEC</label>`
+        + `<label class="net-inline${$('#m_net_pft').checked ? '' : ' hidden'}" data-shared-row="fec"><span>FEC</span><input type="number" min="0" max="5" step="1" data-shared="fec" value="${esc($('#m_net_fec').value)}" /></label>`;
+    }
+    if (isEdi || (o.type === 'zmq' && o.allowMetadata)) {
+      fields += `<label class="net-inline"><span>TIST offset (s)</span><input type="number" min="0" max="60" step="any" data-shared="tist" value="${esc($('#m_net_tist').value)}" /></label>`;
+    }
+    const shared = isEdi
+      ? ' PFT / FEC and the TIST offset are shared by all outputs that use them (one value per multiplex in odr-dabmux).'
+      : (o.type === 'zmq' && o.allowMetadata ? ' TIST offset: buffer delay read by the EasyDAB V2 (2 s), shared by all outputs that use it.' : '');
+    const help = (o.type === 'edi-udp' ? NET_HELP['edi-udp'] : `${NET_HELP[o.type]} Address: ${serverHost()}:${o.port}`) + shared;
     return `<div class="net-row${o.enabled ? '' : ' off'}">
       <div class="net-row-head">
         <label class="check-row" title="ON = fed by the multiplex"><input type="checkbox" data-net="${i}" data-key="enabled" ${o.enabled ? 'checked' : ''} /></label>
@@ -1679,13 +1686,27 @@ function renderNetOutputs() {
 }
 // edits in the list → NET_OUTPUTS (numbers kept as numbers)
 $('#netOutputs')?.addEventListener('input', (e) => {
+  const sh = e.target.closest('[data-shared]');
+  if (sh) {   // shared value: master field + the same field in every other block
+    const key = sh.dataset.shared;
+    const master = { pft: '#m_net_pft', fec: '#m_net_fec', tist: '#m_net_tist' }[key];
+    if (key === 'pft') $(master).checked = sh.checked; else $(master).value = sh.value;
+    document.querySelectorAll(`[data-shared="${key}"]`).forEach((x) => { if (x !== sh) { if (key === 'pft') x.checked = sh.checked; else x.value = sh.value; } });
+    if (key === 'pft') document.querySelectorAll('[data-shared-row="fec"]').forEach((r) => r.classList.toggle('hidden', !sh.checked));
+    updateMuxRestartWarn();
+    return;
+  }
   const el = e.target.closest('[data-net]');
   if (!el) return;
   const o = NET_OUTPUTS[Number(el.dataset.net)];
   const k = el.dataset.key;
   o[k] = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value);
   if (k === 'enabled') el.closest('.net-row').classList.toggle('off', !el.checked);
-  if (k === 'allowMetadata') { renderNetOutputs(); return updateMuxRestartWarn(); }
+  if (k === 'allowMetadata') {   // EasyDAB V2: buffer delay of 2 s suggested when none is set
+    if (el.checked && !(Number($('#m_net_tist').value) > 0)) $('#m_net_tist').value = 2;
+    renderNetOutputs();
+    return updateMuxRestartWarn();
+  }
   if (k === 'destination' || k === 'port') {   // multicast fields / help address follow
     const pos = el.selectionStart;
     renderNetOutputs();
@@ -1703,7 +1724,6 @@ $('#netOutputs')?.addEventListener('click', (e) => {
   updateMuxRestartWarn();
 });
 $('#netAdd')?.addEventListener('click', () => netAdd($('#netAddType').value));
-['m_net_pft', 'm_net_fec', 'm_net_tist'].forEach((id) => document.getElementById(id)?.addEventListener('input', updateMuxRestartWarn));
 // connection state of each output (read-only, every 5 s while the dialog is open ON AIR)
 async function refreshNetStatus() {
   if (!dlgMux.open || ($('#m_txmode').value || '') !== 'NETWORK') return;
@@ -1925,7 +1945,7 @@ async function saveMuxSettings() {
         outputs: netCollect(),
         ediOptions: { pft: $('#m_net_pft').checked, fec: Number($('#m_net_fec').value) },
         // hidden (no output reads timestamps) = 0: never an offset the user cannot see
-        tistOffsetSec: document.getElementById('m_net_tist').closest('label').classList.contains('hidden') ? 0 : (Number($('#m_net_tist').value) || 0),
+        tistOffsetSec: NET_OUTPUTS.some((o) => o.type === 'edi-udp' || o.type === 'edi-tcp' || (o.type === 'zmq' && o.allowMetadata)) ? (Number($('#m_net_tist').value) || 0) : 0,
       } : {}),
       easyDabOutput: {
         ip: $('#m_easydab_ip').value.trim(),

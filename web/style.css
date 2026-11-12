@@ -855,4 +855,4 @@ input.just-filled { border-color: var(--green) !important; box-shadow: 0 0 0 3px
 .net-common .check-row { padding-bottom: 6px; font-size: 12px; }
 .net-empty { padding: 6px 2px; font-size: 12px; }
 /* hidden must win over the display rules of the outputs block (.net-inline is display: flex) */
-#netOutputsBox .hidden { display: none !important; }
+#netOutputsBox .hidden, #netOutputsBox.hidden { display: none !important; }
