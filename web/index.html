@@ -132,7 +132,7 @@
           <div class="modal-title" id="dlgTitle">Service</div>
           <div class="modal-sub" id="dlgLockHint"></div>
         </div>
-        <button class="icon" value="cancel" aria-label="Close">✕</button>
+        <button type="button" class="icon" data-action="svc-cancel" aria-label="Close">✕</button>
       </div>
       <div class="alert hidden" id="svcError"></div>
       <div class="alert alert-warn hidden" id="dlgRestartWarn">⚠ These changes require a multiplex restart: on save, ALL services go off air for a few seconds.</div>
@@ -470,10 +470,13 @@
             <!-- 1. Where the titles come from -->
             <div class="meta-card" data-fold="source">
               <div class="meta-card-title" role="button" tabindex="0" aria-expanded="true">Titles source <span class="meta-fold-sum" id="metaSumSource"></span></div>
+              <div class="meta-mode-row">
               <div class="seg" id="metaModeSeg" role="radiogroup" aria-label="Metadata mode">
                 <button type="button" data-mode="STREAM" role="radio">Stream (ICY)</button>
                 <button type="button" data-mode="JSON" role="radio">JSON API</button>
                 <button type="button" data-mode="NONE" role="radio">Manual text</button>
+              </div>
+              <button type="button" class="btn btn-sm btn-success" id="btnMetaApply" title="Save the metadata settings now and keep this window open (no audio restart)">Validate</button>
               </div>
               <select id="f_meta_mode" class="hidden" aria-hidden="true" tabindex="-1">
                 <option value="STREAM">Stream (ICY)</option>
@@ -485,22 +488,25 @@
               <div class="json-only">
                 <label class="meta-full">
                   <span>JSON URL</span>
-                  <input id="f_json_url" placeholder="https://api.example.com/nowplaying" />
+                  <span class="url-test">
+                    <input id="f_json_url" placeholder="https://api.example.com/nowplaying" />
+                    <button type="button" class="btn btn-sm btn-primary" id="btnDetectJson" title="Read the JSON and fill in the artist / title / cover keys">Detect keys</button>
+                  </span>
                 </label>
                 <div class="meta-grid2">
                   <label>
                     <span>Artist key</span>
-                    <input id="f_json_artist" placeholder="artist" value="artist" />
+                    <input id="f_json_artist" placeholder="e.g. artist" />
                   </label>
                   <label>
                     <span>Title key</span>
-                    <input id="f_json_title" placeholder="title" value="title" />
+                    <input id="f_json_title" placeholder="e.g. title" />
                   </label>
                 </div>
                 <div class="meta-grid4">
                   <label class="meta-span3">
                     <span>Cover URL key <small class="muted">(a|b = b if a is empty)</small></span>
-                    <input id="f_json_sls" placeholder="slide" value="slide" />
+                    <input id="f_json_sls" placeholder="e.g. cover" />
                   </label>
                   <label>
                     <span>Refresh (s)</span>
@@ -510,7 +516,7 @@
                 <div class="row meta-tests">
                   <button type="button" class="btn btn-sm" id="btnTestJson">Test JSON</button>
                   <button type="button" class="btn btn-sm" id="btnTestCover">Test cover</button>
-                  <span class="muted" id="jsonTestStatus"></span>
+                  <span class="json-status" id="jsonTestStatus"></span>
                 </div>
                 <div id="coverPreviewBox" style="display:none;">
                   <img id="coverPreviewImg" alt="Cover preview" style="width: 160px; height: 120px; object-fit: contain; background: #000; border-radius: 8px;" />
