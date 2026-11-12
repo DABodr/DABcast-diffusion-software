@@ -306,13 +306,14 @@ function repairSlides() {
 }
 repairSlides();
 
-// One-time (marker mot/.slide-bands-v2), before autoStart: logos converted before v1.7 have black
+// One-time (marker mot/.slide-bands-v3), before autoStart: logos converted before v1.7 have black
 // side bands baked in. Re-convert them with bands in their own edge colours: from the original
 // kept in mot/<PI>/original/ when there is one, else by cutting the black bands off the slide
 // (previous file kept in original/ as bands_<name>). Logos with a genuinely black background are
 // left as they are (see blackBandWidths). Covers are re-converted at every track anyway.
 function regenerateBandedLogos() {
-  const marker = path.join(dataMot, '.slide-bands-v2');
+  // v3: v2 (DABcast 1.7.1) cut only 2 px past the old bands, leaving a dull band on some logos
+  const marker = path.join(dataMot, '.slide-bands-v3');
   if (!fs.existsSync(dataMot) || fs.existsSync(marker)) return;
   let done = 0;
   for (const pi of fs.readdirSync(dataMot)) {
@@ -330,9 +331,12 @@ function regenerateBandedLogos() {
           fs.renameSync(out, file);
           logger.line('sls', `${pi}/${f}: re-converted from the original (bands in the picture's colours)`);
         } else {
-          if (!removeBlackBands(file, out, motDir)) continue;
+          // already de-banded by v2: start again from the banded file it kept, not from its output
+          const banded = path.join(motDir, 'original', `bands_${f}`);
+          const from = fs.existsSync(banded) ? banded : file;
+          if (!removeBlackBands(from, out, motDir)) continue;
           ensureDir(path.join(motDir, 'original'));
-          fs.copyFileSync(file, path.join(motDir, 'original', `bands_${f}`));
+          if (from === file) fs.copyFileSync(file, banded);
           fs.renameSync(out, file);
           logger.line('sls', `${pi}/${f}: black side bands replaced by the picture's colours (previous file in mot/${pi}/original/bands_${f})`);
         }
