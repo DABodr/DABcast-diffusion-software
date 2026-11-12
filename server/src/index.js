@@ -1155,11 +1155,29 @@ function hexIp6(h) {
   for (let i = 0; i < 32; i += 8) { const w = h.slice(i, i + 8).match(/../g).reverse().join(''); words.push(w.slice(0, 4), w.slice(4)); }
   return words.map((w) => parseInt(w, 16).toString(16)).join(':');
 }
+// /proc files report a size of 0: read them chunk by chunk until EOF. fs.promises.readFile of
+// Node 18 (the runtime of the packaged binary) stops after the first page (~4 kB, ~27 sockets),
+// so a transmitter connection further in the table was never seen.
+async function readProcFile(file) {
+  const fh = await fs.promises.open(file, 'r');
+  try {
+    const chunks = [];
+    const buf = Buffer.alloc(65536);
+    for (;;) {
+      const { bytesRead } = await fh.read(buf, 0, buf.length, null);
+      if (!bytesRead) break;
+      chunks.push(Buffer.from(buf.subarray(0, bytesRead)));
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  } finally {
+    await fh.close();
+  }
+}
 async function establishedPeers() {
   const peers = new Map();   // local port -> [remote ip]
   for (const [file, toIp] of [['/proc/net/tcp', hexIp4], ['/proc/net/tcp6', hexIp6]]) {
     let text = '';
-    try { text = await fs.promises.readFile(file, 'utf8'); } catch { continue; }
+    try { text = await readProcFile(file); } catch { continue; }
     for (const line of text.split('\n').slice(1)) {
       const f = line.trim().split(/\s+/);
       if (f.length < 4 || f[3] !== '01') continue;   // 01 = ESTABLISHED

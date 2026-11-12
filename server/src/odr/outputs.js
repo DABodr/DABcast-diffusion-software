@@ -94,7 +94,7 @@ export function validateOutputs(list, { reserved = new Map(), ediOptions = norma
   }
   if (!list.some((o) => o.enabled)) errors.push('At least one output must be ON');
   if (list.filter((o) => o.enabled && o.type === 'zmq' && o.allowMetadata).length > 1) {
-    errors.push('Only one ZMQ output can send metadata (EasyDAB V2): untick "metadata" on the others');
+    errors.push('Only one ZMQ output can send timestamps (metadata): untick it on the others');
   }
   if (!(Number.isInteger(ediOptions.fec) && ediOptions.fec >= 0 && ediOptions.fec <= 5)) errors.push('EDI FEC must be 0-5');
   return errors;
@@ -111,7 +111,7 @@ export function buildOutputLines(list, { monitorIp = '0.0.0.0', monitorPort = 99
   // one-line outputs: "out_" prefix so that an id never collides with edi / zeromq / throttle / dablin
   for (const o of on.filter((x) => x.type === 'zmq')) {
     if (o.allowMetadata) {
-      // new ZMQ format: metadata (EDI time, UTC offset) for EasyDAB V2 — needs leap-second info, like EDI
+      // new ZMQ format: metadata (EDI time, UTC offset) read by the EasyDAB — needs leap-second info, like EDI
       lines.push('    zeromq {');
       lines.push(`        endpoint "tcp://${o.ip === '0.0.0.0' ? '*' : o.ip}:${o.port}"`);
       lines.push('        allowmetadata true');

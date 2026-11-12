@@ -1593,7 +1593,7 @@ const NET_TYPE_LABEL = { 'edi-udp': 'EDI/UDP', 'edi-tcp': 'EDI/TCP', zmq: 'ZMQ',
 const NET_HELP = {
   'edi-udp': 'DABcast sends EDI to the transmitter: set its EDI input to UDP, port below (multicast: join the group). Use PFT / FEC.',
   'edi-tcp': 'The transmitter, a digris-edi-tcp-converter or a remote odr-dabmod connects to this server on this port (EDI over TCP).',
-  zmq: 'The EasyDAB (or ODR-DabMod) connects to this server on this port (ZMQ client).',
+  zmq: 'The EasyDAB V2 (or ODR-DabMod) connects to this server on this port (ZMQ client).',
   'eti-tcp': 'The receiver connects to this server on this port and reads raw ETI.',
 };
 const serverHost = () => location.hostname || 'this server';
@@ -1622,14 +1622,12 @@ function netAdd(kind) {
     'edi-udp': () => ({ type: 'edi-udp', name: 'Modulator', destination: '', port: 12000, sourcePort: netNextPort(13000), source: '', ttl: 1 }),
     'edi-udp-mc': () => ({ type: 'edi-udp', name: 'Multicast', destination: '239.20.10.1', port: 12000, sourcePort: netNextPort(13000), source: '', ttl: 1 }),
     'edi-tcp': () => ({ type: 'edi-tcp', name: 'EDI/TCP', port: netNextPort(13000) }),
-    zmq: () => ({ type: 'zmq', name: 'EasyDAB', ip: '0.0.0.0', port: netNextPort(18081), allowMetadata: false }),
-    'zmq-v2': () => ({ type: 'zmq', name: 'EasyDAB V2', ip: '0.0.0.0', port: netNextPort(18081), allowMetadata: true }),
+    zmq: () => ({ type: 'zmq', name: 'EasyDAB V2', ip: '0.0.0.0', port: netNextPort(18081), allowMetadata: false }),
     'eti-tcp': () => ({ type: 'eti-tcp', name: 'ETI/TCP', ip: '0.0.0.0', port: netNextPort(9902) }),
   };
   const o = { enabled: true, ...presets[kind]() };
   o.id = netNewId(o.type);
   if (kind === 'edi-udp' || kind === 'edi-udp-mc') $('#m_net_pft').checked = true;                 // usual for UDP
-  if (kind === 'zmq-v2' && !(Number($('#m_net_tist').value) > 0)) $('#m_net_tist').value = 2;   // EasyDAB V2 buffer
   NET_OUTPUTS.push(o);
   renderNetOutputs();
   updateMuxRestartWarn();
@@ -1642,7 +1640,7 @@ function renderNetOutputs() {
   const box = $('#netOutputs');
   if (!box) return;
   // PFT / FEC and the TIST offset are ONE value each in odr-dabmux: shown (and kept in sync) in
-  // the blocks of the outputs that use them — EDI for PFT / FEC, EDI and EasyDAB V2 for TIST
+  // the blocks of the outputs that use them — EDI for PFT / FEC, EDI and EasyDAB with timestamps for TIST
   if (!NET_OUTPUTS.length) { box.innerHTML = '<div class="muted net-empty">No output yet: choose a type and press + Add.</div>'; return; }
   box.innerHTML = NET_OUTPUTS.map((o, i) => {
     const mc = o.type === 'edi-udp' && /^(22[4-9]|23\d)\./.test(o.destination || '');
@@ -1656,7 +1654,7 @@ function renderNetOutputs() {
       fields = netField(o, i, 'port', 'Listen port', 'type="number" min="1024" max="65535"');
     } else {
       fields = netField(o, i, 'ip', 'Listen IP', 'placeholder="0.0.0.0" class="net-ip"') + netField(o, i, 'port', 'Port', 'type="number" min="1024" max="65535"')
-        + (o.type === 'zmq' ? `<label class="check-row net-inline"><input type="checkbox" data-net="${i}" data-key="allowMetadata" ${o.allowMetadata ? 'checked' : ''} /> metadata (EasyDAB V2)</label>` : '');
+        + (o.type === 'zmq' ? `<label class="check-row net-inline"><input type="checkbox" data-net="${i}" data-key="allowMetadata" ${o.allowMetadata ? 'checked' : ''} /> send timestamps (metadata)</label>` : '');
     }
     const isEdi = o.type === 'edi-udp' || o.type === 'edi-tcp';
     if (isEdi) {
@@ -1668,7 +1666,7 @@ function renderNetOutputs() {
     }
     const shared = isEdi
       ? ' PFT / FEC and the TIST offset are shared by all outputs that use them (one value per multiplex in odr-dabmux).'
-      : (o.type === 'zmq' && o.allowMetadata ? ' TIST offset: buffer delay read by the EasyDAB V2 (2 s), shared by all outputs that use it.' : '');
+      : (o.type === 'zmq' && o.allowMetadata ? ' TIST offset: buffer delay read by the EasyDAB V2 when timestamps are sent (2 s), shared by all outputs that use it.' : '');
     const help = (o.type === 'edi-udp' ? NET_HELP['edi-udp'] : `${NET_HELP[o.type]} Address: ${serverHost()}:${o.port}`) + shared;
     return `<div class="net-row${o.enabled ? '' : ' off'}">
       <div class="net-row-head">
@@ -1702,7 +1700,7 @@ $('#netOutputs')?.addEventListener('input', (e) => {
   const k = el.dataset.key;
   o[k] = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value);
   if (k === 'enabled') el.closest('.net-row').classList.toggle('off', !el.checked);
-  if (k === 'allowMetadata') {   // EasyDAB V2: buffer delay of 2 s suggested when none is set
+  if (k === 'allowMetadata') {   // EasyDAB with timestamps: buffer delay of 2 s suggested when none is set
     if (el.checked && !(Number($('#m_net_tist').value) > 0)) $('#m_net_tist').value = 2;
     renderNetOutputs();
     return updateMuxRestartWarn();

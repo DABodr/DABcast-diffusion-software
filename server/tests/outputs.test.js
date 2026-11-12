@@ -57,7 +57,7 @@ describe('outputs — validation', () => {
 
   it('only one ZMQ output with metadata (zeromq block name must be unique in dabmux)', () => {
     const l = normalizeOutputs([{ name: 'A', type: 'zmq', port: 18081, allowMetadata: true }, { name: 'B', type: 'zmq', port: 18082, allowMetadata: true }]);
-    assert.match(validateOutputs(l).join(), /Only one ZMQ output can send metadata/);
+    assert.match(validateOutputs(l).join(), /Only one ZMQ output can send timestamps/);
   });
 
   it('at least one output ON; an OFF output does not reserve its port', () => {
