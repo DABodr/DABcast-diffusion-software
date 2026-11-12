@@ -20,6 +20,7 @@ import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import { convertToSlide as convertSlideImage, removeBlackBands } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
+import { resetPassword, resolveDataDir } from './resetPassword.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
@@ -49,6 +50,19 @@ const webDir = path.resolve(appDir, 'web');
 const dataDir = process.env.DABCAST_DATA_DIR
   ? path.resolve(process.env.DABCAST_DATA_DIR)
   : path.resolve(appDir, 'data');
+
+// `dabcast --reset-password [username]` (sudo): reset lost credentials, then exit (no server)
+if (process.argv.includes('--reset-password')) {
+  const i = process.argv.indexOf('--reset-password');
+  const user = process.argv[i + 1] && !process.argv[i + 1].startsWith('-') ? process.argv[i + 1] : null;
+  try {
+    console.log(resetPassword(resolveDataDir(path.resolve(appDir, 'data'), { installed: isPkg }), user));
+    process.exit(0);
+  } catch (err) {
+    console.error(`Error: ${err.message}`);
+    process.exit(1);
+  }
+}
 ensureDir(dataDir);
 ensureDir(path.resolve(dataDir, 'presets'));
 ensureDir(path.resolve(dataDir, 'logs'));
@@ -619,7 +633,12 @@ app.get('/api/export/service/:id', (req, res) => {
 app.get('/api/export/all-services', (req, res) => {
   // Set response headers for ZIP download
   res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', 'attachment; filename="all-services.zip"');
+  // all-services-<ensemble label>.zip (same naming as the configuration export of the web UI)
+  const muxName = String(state.settings?.ensemble?.label || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '')
+    || String(state.preset?.id || 'dabcast').replace(/[^A-Za-z0-9_-]+/g, '_');
+  res.setHeader('Content-Disposition', `attachment; filename="all-services-${muxName}.zip"`);
 
   // Create ZIP archive
   const archive = archiver('zip', { zlib: { level: 9 } });

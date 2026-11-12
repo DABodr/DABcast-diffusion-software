@@ -388,6 +388,13 @@ function readConfigFile(file) {
   });
 }
 
+// PTY cell of the services table: name from the dialog's PTY list ("10 - Pop Music" → "Pop Music")
+function ptyCell(pty) {
+  const n = Number.isInteger(Number(pty)) ? Number(pty) : 10;
+  const full = document.querySelector(`#f_pty option[value="${n}"]`)?.textContent || String(n);
+  const name = full.replace(/^\d+\s*-\s*/, '');
+  return `<span title="PTY ${esc(full)}">${esc(name)}</span>`;
+}
 function streamDot(isActive, hasUri, isOnAir, isWarn = false) {
   if (!hasUri) return '';
   const cls = isActive ? (isWarn ? 'dot warn' : 'dot ok') : (isOnAir ? 'dot err' : 'dot');
@@ -412,7 +419,12 @@ function muxPeakLevels(inp) {
 
 // Audio levels assistant: odr-dabmux input peaks sampled every 5 s (maybeFetchMuxStats) while this
 // page is open, over a sliding window. Display + suggestion only — a gain is saved on an explicit click.
-const LEVEL_WINDOW_MS = 5 * 60 * 1000;
+let LEVEL_WINDOW_MS = 5 * 60 * 1000;   // analysis window, chosen in the dialog (5 / 15 / 30 min)
+try { LEVEL_WINDOW_MS = (Number(localStorage.getItem('dabcast.levelWindowMin')) || 5) * 60000; } catch { /* ignore */ }
+// Highest peak allowed before encoding: AAC (and SBR even more) raises the decoded peaks by 1-3 dB,
+// so a source peaking at -1 dBFS can clip in the receiver (crackles). -3 dBFS keeps that margin.
+const LEVEL_MAX_PEAK_DB = -3;
+const LEVEL_MIN_OVER = 3;   // fewer samples than this above the margin = isolated peaks
 const LEVEL_MIN_SAMPLES = 12;     // ≈ 1 min of audio before suggesting a gain
 const LEVEL_SILENCE_DB = -40;     // quiet passages / silence are not counted
 const _levelSamples = new Map();  // svc id -> { key, list: [{ t, db }] }
@@ -428,7 +440,11 @@ function recordLevels(st) {
     if (svc.runtime?.pendingRestart?.includes('gainDb')) { _levelSamples.delete(id); continue; }
     const key = levelKey(svc);
     let rec = _levelSamples.get(id);
-    if (!rec || rec.key !== key) { rec = { key, list: [] }; _levelSamples.set(id, rec); }
+    if (!rec || rec.key !== key) { rec = { key, list: [], clips: [] }; _levelSamples.set(id, rec); }
+    // odr-audioenc clip indicator ('!' of its level meter) seen at this sample: encoder input saturated
+    const al = svc.runtime?.audioLevels;
+    if (al?.clipLeft || al?.clipRight) rec.clips.push(now);
+    while (rec.clips.length && now - rec.clips[0] > LEVEL_WINDOW_MS) rec.clips.shift();
     const db = Math.max(Number(inp.peakLeft), Number(inp.peakRight));
     // slow peak = dabmux maximum over a longer window: the 5 s samples alone miss the real peaks
     const slow = Math.max(Number(inp.peakLeftSlow), Number(inp.peakRightSlow));
@@ -443,14 +459,21 @@ function levelStats(svc) {
   const v = list.map((x) => x.db).sort((a, b) => a - b);
   const pct = (q) => v[Math.min(v.length - 1, Math.floor(q * v.length))];
   const max = Math.max(v[v.length - 1], ...list.map((x) => x.slow));
-  return { n: v.length, median: pct(0.5), p95: pct(0.95), max, minutes: (list[list.length - 1].t - list[0].t) / 60000 };
+  const over = v.filter((db) => db > LEVEL_MAX_PEAK_DB).length;   // 5 s samples above the margin
+  return { n: v.length, median: pct(0.5), p95: pct(0.95), max, over, minutes: (list[list.length - 1].t - list[0].t) / 60000, clips: rec.clips?.length || 0 };
 }
 // New gain (dB) that brings the typical peak to the target. The highest peak measured (slow peak
-// included) must stay at or below -1 dBFS: a clipping service always gets a reduction.
+// included) must stay at or below LEVEL_MAX_PEAK_DB (-3 dBFS, margin for the AAC overshoot), and
+// a service whose encoder reported clipping always gets at least -2 dB.
 // A boost is limited to +6 dB per step (measure again after applying).
 const LEVEL_MAX_BOOST_DB = 6;
 function suggestGain(curGain, st, target) {
-  let delta = Math.min(target - st.median, -1 - st.max, LEVEL_MAX_BOOST_DB);
+  // isolated peaks (no encoder clipping, fewer than LEVEL_MIN_OVER samples above the margin): they
+  // forbid a boost but do not force a reduction (a quiet station is not made quieter for one peak)
+  const isolated = !st.clips && (st.over ?? 0) < LEVEL_MIN_OVER;
+  const headroom = isolated ? Math.max(0, LEVEL_MAX_PEAK_DB - st.max) : LEVEL_MAX_PEAK_DB - st.max;
+  let delta = Math.min(target - st.median, headroom, LEVEL_MAX_BOOST_DB);
+  if (st.clips) delta = Math.min(delta, -2);
   // clipping (peaks flattened at 0 dBFS): the real level is unknown → remove the whole added boost
   if (st.max > -1 && curGain > 0) delta = Math.min(delta, -curGain);
   if (Math.abs(delta) < 1) return null;   // close enough
@@ -740,7 +763,7 @@ function render() {
   const viewHint = $('#svcViewHint');
   if (viewHint) viewHint.textContent = viewActive ? 'Drag & drop reordering disabled while sorted or filtered' : '';
   if (!services.length) {
-    svcTableBody.innerHTML = `<tr><td class="muted" colspan="17">No service found.</td></tr>`;
+    svcTableBody.innerHTML = `<tr><td class="muted" colspan="18">No service found.</td></tr>`;
     return;
   }
 
@@ -795,6 +818,7 @@ function render() {
       ['', badge(status) + (STATE.muxRunning ? bufTag(MUX_STATS?.inputs?.[svc.id]) + pendingTag(svc.runtime) : '')],
       ['', `<div class="ps"${ps8Title ? ` title="${esc(ps8Title)}"` : ''}>${esc(ps8)}</div><div class="muted">${esc(ps16)}</div>`],
       ['col-pid hide-mobile', esc(svc.id)],
+      ['col-pty hide-mobile', ptyCell(svc.identity?.pty)],
       ['col-bitrate', `${svc.dab.bitrateKbps} kbps`],
       ['col-cu', `${svc.cu ?? ''}`],
       ['col-prot', esc(String(svc.dab.protectionLevel ?? 3))],
@@ -817,7 +841,7 @@ function render() {
       ['row-actions col-actions', `<button class="btn btn-mini svc-toggle ${svc.enabled === false ? 'off' : 'on'}" data-act="toggle" data-id="${svc.id}" title="${svc.enabled === false ? 'Service OFF (not in the multiplex) — click to put it back on air' : 'Service ON — click to take it off the multiplex'}">${svc.enabled === false ? 'OFF' : 'ON'}</button><button class="btn btn-mini" data-act="edit" data-id="${svc.id}">Edit</button><button class="btn btn-mini" data-act="del" data-id="${svc.id}">Del</button>`],
     ];
 
-    const SLS_COL = 15;
+    const SLS_COL = 16;
 
     if (isNew) {
       tr.innerHTML = cells.map(([cls, html]) => `<td${cls ? ` class="${cls}"` : ''}>${html}</td>`).join('');
@@ -909,8 +933,11 @@ async function _refreshSlideList(svcId, svcKey, trackKey, force = false, airFile
   let rot = slideRotation.get(svcId);
   if (!force && rot && rot.key === trackKey) return; // already up-to-date
   try {
-    const files = airFiles ? [...airFiles] : await api(`/api/mot/${svcKey}/slides`);
+    let files = airFiles ? [...airFiles] : await api(`/api/mot/${svcKey}/slides`);
     if (!Array.isArray(files)) return;
+    // Not on air (mux stopped or service OFF): logos only — the last track cover stays in slide/
+    // after a stop but is not sent any more
+    if (!airFiles && files.some((f) => f !== 'cover.jpg')) files = files.filter((f) => f !== 'cover.jpg');
     // Preserve current index if forcing refresh (logo added/deleted)
     const currentIndex = force && rot ? rot.index : 0;
     slideRotation.set(svcId, { files, index: currentIndex, key: trackKey, svcKey });
@@ -936,7 +963,7 @@ function _showSlide(svcId) {
   if (!rot || !rot.files.length) return;
   const tr = svcTableBody.querySelector(`tr[data-service-id="${svcId}"]`);
   if (!tr) return;
-  const td = tr.children[15];
+  const td = tr.children[16];   // SLS column
   const img = td?.querySelector('img');
   if (!img) return;
   const file = rot.files[rot.index % rot.files.length];
@@ -2082,18 +2109,19 @@ function renderLevels() {
       const g = suggestGain(gain, st, LEVEL_TARGET);
       if (g === null) {
         sug = LEVEL_TARGET - st.median >= 1
-          ? '<span class="buf-tag ok">OK</span> <span class="lv-note">below target, but peaks already near -1 dBFS</span>'
+          ? `<span class="buf-tag ok">OK</span> <span class="lv-note">below target, but peaks already near ${LEVEL_MAX_PEAK_DB} dBFS</span>`
           : '<span class="buf-tag ok">OK</span>';
       }
       else {
         _levelSuggestions.push({ id: svc.id, name: svc.identity?.ps8 || svc.id, from: gain, to: g });
-        sug = `<b>${g} dB</b> <span class="lv-note">(${g > gain ? '+' : '−'}${Math.abs(g - gain)})</span>`;
+        sug = `<b>${g} dB</b> <span class="lv-note">(${g > gain ? '+' : '−'}${Math.abs(g - gain)})${st.clips ? ' — encoder clipping' : st.max > LEVEL_MAX_PEAK_DB ? ' — too close to 0 dBFS' : ''}</span>`;
         act = `<button type="button" class="btn btn-sm" data-act="lv-apply" data-id="${esc(svc.id)}" data-gain="${g}">Apply</button>`;
       }
     }
     const meas = st.n ? `${fmtDb(st.median)}` : '—';
     const tip = st.n ? `${st.n} samples over ${st.minutes.toFixed(1)} min · 95% of peaks below ${fmtDb(st.p95)} dBFS · highest peak ${fmtDb(st.max)} dBFS` : 'no audio measured yet';
-    return `<tr><td>${name}</td><td class="num" title="${esc(tip)}">${meas}</td><td class="num${st.n && st.max > -1 ? ' lv-clip' : ''}">${st.n ? fmtDb(st.max) : '—'}</td>`
+    const clip = st.clips ? ` <span class="buf-tag err" title="odr-audioenc reported clipping ${st.clips}× in the window: crackles likely">CLIP ×${st.clips}</span>` : '';
+    return `<tr><td>${name}</td><td class="num" title="${esc(tip)}">${meas}</td><td class="num${st.n && (st.max > LEVEL_MAX_PEAK_DB || st.clips) ? ' lv-clip' : ''}">${st.n ? fmtDb(st.max) : '—'}${clip}</td>`
       + `<td class="num">${direct ? '—' : `${gain} dB`}</td><td>${sug}</td><td class="lv-act">${act}</td></tr>`;
   }).join('');
   box.innerHTML = `<table class="lv-table"><thead><tr><th>Service</th><th class="num">Typical peak</th><th class="num">Max</th><th class="num">Gain</th><th>Suggestion</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
@@ -2102,6 +2130,7 @@ function renderLevels() {
 function openLevels() {
   if (!dlgLevels) return;
   $('#lvTarget').value = String(LEVEL_TARGET);
+  $('#lvWindow').value = String(LEVEL_WINDOW_MS / 60000);
   renderLevels();
   dlgLevels.showModal();
 }
@@ -2110,6 +2139,11 @@ $('#statsRow')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.
 $('#lvTarget')?.addEventListener('change', (e) => {
   LEVEL_TARGET = Number(e.target.value) || -6;
   try { localStorage.setItem('dabcast.levelTarget', String(LEVEL_TARGET)); } catch { /* ignore */ }
+  renderLevels();
+});
+$('#lvWindow')?.addEventListener('change', (e) => {
+  LEVEL_WINDOW_MS = (Number(e.target.value) || 5) * 60000;   // longer window: older samples are kept from now on
+  try { localStorage.setItem('dabcast.levelWindowMin', String(LEVEL_WINDOW_MS / 60000)); } catch { /* ignore */ }
   renderLevels();
 });
 $('#btnLevels')?.addEventListener('click', openLevels);
@@ -3348,7 +3382,7 @@ $('#btnExportAllServices')?.addEventListener('click', async () => {
     // Download ZIP file directly from endpoint
     const link = document.createElement('a');
     link.href = '/api/export/all-services';
-    link.download = 'all-services.zip';
+    link.download = `all-services-${configExportBaseName({ settings: STATE?.settings, preset: STATE?.preset })}.zip`;   // e.g. all-services-DABcast_WebUI.zip
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

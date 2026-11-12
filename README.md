@@ -397,7 +397,20 @@ An alert banner prompts the user to change the default password. Sensitive endpo
 
 #### Password reset
 
-If credentials are lost, use the reset script:
+If credentials are lost, on an installed server (.deb package):
+
+```bash
+# Factory password 'dabcast' (username kept); a new password is required at the next sign-in
+sudo /opt/dabcast/bin/dabcast --reset-password
+# Same, with a new username
+sudo /opt/dabcast/bin/dabcast --reset-password myuser
+# Apply it (briefly interrupts the broadcast; autoStart puts the multiplex back on air)
+sudo systemctl restart dabcast
+```
+
+The command writes `settings.json` in the service data directory (`DABCAST_DATA_DIR`, else `/etc/default/dabcast`, else `/var/lib/dabcast`) and keeps the file owner.
+
+From a source checkout, the reset script is also available:
 
 ```bash
 # Reset to default values (admin / dabcast)
