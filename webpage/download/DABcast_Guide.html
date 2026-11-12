@@ -581,8 +581,7 @@ or the web port, or to sign out.</p>
 <p>Choose <em>Network outputs</em>, then add one output per transmitter with the menu and <strong>+ Add</strong>. All outputs carry exactly the same multiplex; each one has its own name and ON/OFF switch. When you first choose this mode, the list starts with what your current mode was sending (e.g. your EasyDAB on the same port), so nothing changes for the transmitter.</p>
 <table>
   <tr><th>Output</th><th>Who connects</th><th>What to set on the transmitter</th></tr>
-  <tr><td><strong>ZMQ — EasyDAB</strong></td><td>The EasyDAB connects to DABcast</td><td>Mux address = this server, port of the output (18081 by default)</td></tr>
-  <tr><td><strong>ZMQ + metadata — EasyDAB V2</strong></td><td>The EasyDAB V2 connects to DABcast</td><td>Same; DABcast adds time information and suggests a TIST offset of 2 s. Only one such output per multiplex.</td></tr>
+  <tr><td><strong>ZMQ — EasyDAB V2</strong></td><td>The EasyDAB V2 connects to DABcast</td><td>Mux address = this server, port of the output (18081 by default). Optional <em>send timestamps (metadata)</em>: DABcast adds the transmission time of each frame and suggests a TIST offset of 2 s (needs Internet access at start-up for the leap-second list). Off by default: the EasyDAB V2 works with or without it. Only one ZMQ output can send timestamps.</td></tr>
   <tr><td><strong>EDI/UDP — commercial modulator</strong></td><td>DABcast sends to the modulator</td><td>EDI input in UDP, on the port of the output; enter the modulator's IP address in DABcast. PFT / FEC is turned on.</td></tr>
   <tr><td><strong>EDI/UDP multicast</strong></td><td>DABcast sends to a group</td><td>Several transmitters join the multicast group (e.g. 239.20.10.1) on the same network; set the TTL for routed networks</td></tr>
   <tr><td><strong>EDI/TCP</strong></td><td>The transmitter, a converter or a remote odr-dabmod connects to DABcast</td><td>EDI source = this server, port of the output (13000 by default)</td></tr>
@@ -596,7 +595,7 @@ or the web port, or to sign out.</p>
 <h2>PFT / FEC and TIST offset</h2>
 <ul>
   <li><strong>PFT / FEC</strong> (EDI outputs): splits each frame into packets and adds repair packets, so that the transmitter can rebuild what the network lost. Usual for EDI over UDP (FEC 2 is a good default); useless over TCP, which resends lost data itself. Not shown for EasyDAB.</li>
-  <li><strong>TIST offset</strong> (EDI and EasyDAB V2): every frame carries the time at which it must be transmitted; the offset delays that time so that the transmitter can fill its buffer, and it keeps synchronised transmitters (SFN) aligned. A plain EasyDAB does not read it: the field is not shown and the offset is 0.</li>
+  <li><strong>TIST offset</strong> (EDI, and EasyDAB V2 when timestamps are sent): every frame carries the time at which it must be transmitted; the offset delays that time so that the transmitter can fill its buffer, and it keeps synchronised transmitters (SFN) aligned. Without timestamps, the EasyDAB V2 does not read it: the field is not shown and the offset is 0.</li>
 </ul>
 <p>odr-dabmux has <strong>one</strong> value of each for the whole multiplex: the fields are shown in the blocks of the outputs that use them and stay in sync. A different delay per site is set on the site itself (transmitter or converter, below).</p>
 
