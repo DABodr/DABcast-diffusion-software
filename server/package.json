@@ -1,6 +1,7 @@
 {
   "name": "dabweb",
   "version": "1.7.4",
+  "license": "AGPL-3.0-or-later",
   "private": true,
   "type": "module",
   "main": "src/index.js",
