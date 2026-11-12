@@ -4,7 +4,7 @@ Modern web interface for managing DAB/DAB+ multiplexes with ODR-mmbTools.
 
 Version: **1.3.1**
 
-> *Free to use. Free to modify. Not for resale.*
+> *Free software — GNU AGPL v3.*
 
 ![DABcast screenshot](webpage/screenshot.png)
 
@@ -567,21 +567,26 @@ development installation, or in the `THIRD_PARTY_NOTICES` file when present.
 
 ## License
 
-Copyright © 2026 DABodr. All rights reserved.
+Copyright © 2026 Aurélien Picart (DABodr)
 
-DABcast is **source-available** software — free to use, free to modify,
-and free to redistribute, but **not for resale**.
+DABcast is free software: you can redistribute it and/or modify it under the
+terms of the **GNU Affero General Public License** as published by the Free
+Software Foundation, either **version 3** of the License, or (at your option)
+any later version.
+
+DABcast is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
 
 **In brief:**
-- ✅ Use freely, personally and professionally
-- ✅ Read, study, and modify the source code
-- ✅ Create and distribute Derivative Works, free of charge
-- ❌ Sell or charge for access to DABcast or any Derivative Work
-- ❌ Remove the non-resale restriction when redistributing
+- ✅ Use freely, personally and professionally — commercial broadcasters included
+- ✅ Read, study and modify the source code
+- ✅ Redistribute DABcast, modified or not
+- ⚖️ A modified version that you distribute **or make available over a network** (for example a hosted
+  DABcast used by others) must be released under the AGPL v3 too, with its complete source code
+- ⚖️ Copyright and license notices must be preserved
 
-Attribution and modification notices must be preserved in all distributions.
-
-> *Free to use. Free to modify. Not for resale.*
+Versions published up to 1.7.4 were released under the former *DABcast Source-Available License 1.0*.
 
 See the [`LICENSE`](LICENSE) file for the complete terms.
 
@@ -589,6 +594,8 @@ See the [`LICENSE`](LICENSE) file for the complete terms.
 
 ## 🔗 Useful links
 
+- **Bug reports, questions and suggestions: [GitHub Issues](https://github.com/DABodr/DABcast-diffusion-software/issues)**
+- ☕ **Support the project: [Buy me a coffee](https://buymeacoffee.com/dabodr)** — DABcast stays free, donations help keep it improving
 - [ODR-mmbTools](https://www.opendigitalradio.org/)
 - [ETSI EN 300 401 (DAB standard)](https://www.etsi.org/deliver/etsi_en/300400_300499/300401/)
 - [Dablin](https://github.com/Opendigitalradio/dablin)
