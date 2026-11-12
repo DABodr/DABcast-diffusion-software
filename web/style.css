@@ -406,7 +406,7 @@ input:disabled, select:disabled {
 .pl-info { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .pl-dlplus { margin-top: 10px; font-size: 14px; color: var(--text); }
 .pl-dlplus b { color: #fff; }
-.pl-dlplus .pl-tag { display: inline-block; font-size: 10px; font-weight: 700; color: var(--green); border: 1px solid var(--green); border-radius: 4px; padding: 0 4px; margin-right: 6px; vertical-align: 1px; }
+.pl-dlplus .pl-tag, .meta-live-dlp-on .pl-tag { display: inline-block; font-size: 10px; font-weight: 700; color: var(--green); border: 1px solid var(--green); border-radius: 4px; padding: 0 4px; margin-right: 6px; vertical-align: 1px; }
 .pl-dls { margin-top: 6px; font-size: 13px; color: var(--muted); line-height: 1.4; overflow-wrap: anywhere; }
 .pl-slide-info { margin-top: 8px; font-size: 12px; color: var(--muted); }
 .pl-slide-info.over { color: var(--yellow); }
@@ -813,3 +813,11 @@ input[type="file"]::file-selector-button { background: var(--surface3); color: v
 .lbl-row .dls-count { display: inline; margin-top: 0; }
 /* PAD help in the free cells beside the PAD field (aligned with the input) */
 .field-note.beside-input { align-self: end; margin: 0 0 10px; }
+.meta-mode-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.meta-live-dlp-on { display: flex; margin-bottom: 2px; }
+/* Detect keys: field just filled in */
+input.just-filled { border-color: var(--green) !important; box-shadow: 0 0 0 3px rgba(46, 204, 113, .25); }
+.json-status { color: var(--muted); font-size: 12px; }
+.json-status.ok { color: var(--green); font-weight: 600; }
+.json-status.err { color: var(--red); font-weight: 600; }
+.json-status .json-val { color: #fff; }

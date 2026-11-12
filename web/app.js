@@ -1107,9 +1107,11 @@ function openDialogFor(service) {
   // JSON mode fields
   $('#f_json_url').value = service?.metadata?.url || '';
   $('#f_json_interval').value = service?.metadata?.intervalSec ?? 10;
-  $('#f_json_artist').value = service?.metadata?.artistKey || 'artist';
-  $('#f_json_title').value = service?.metadata?.titleKey || 'title';
-  $('#f_json_sls').value = service?.metadata?.slsKey || 'slide';
+  // new service: keys empty (grey 'e.g.' hint; empty = default key on save) until typed or detected
+  // a key saved empty stays empty; a key never saved (old preset) shows the default
+  $('#f_json_artist').value = service ? (service.metadata?.artistKey ?? 'artist') : '';
+  $('#f_json_title').value = service ? (service.metadata?.titleKey ?? 'title') : '';
+  $('#f_json_sls').value = service ? (service.metadata?.slsKey ?? 'slide') : '';
   $('#f_json_start').value = service?.metadata?.startKey || '';
   $('#f_json_duration').value = service?.metadata?.durationKey || '';
   $('#f_json_trackmax').value = service?.metadata?.trackMaxMin ?? 8;
@@ -1117,7 +1119,9 @@ function openDialogFor(service) {
   $('#f_dlplus_enabled').value = service?.dlplus?.enabled !== false ? 'yes' : 'no';
   $('#f_json_default_dls').value = service?.metadata?.defaultDlsAllowed !== false ? 'yes' : 'no';
   $('#jsonTestStatus').textContent = '';
+  $('#jsonTestStatus').className = 'json-status';
   const cpb = $('#coverPreviewBox'); if (cpb) cpb.style.display = 'none';
+  $('#btnMetaApply')?.classList.toggle('hidden', !editingId);   // new service: saved by OK only
   updateMetaModeVisibility();
   renderMetaLive();
   applyMetaFold();
@@ -1187,6 +1191,8 @@ function openDialogFor(service) {
     return h;
   }));
   panels.forEach((p) => { p.style.minHeight = `${tallest}px`; });
+  svcSnapshot = new Map();
+  snapshotSvcForm();
 }
 
 function setActiveTab(tab) {
@@ -1665,7 +1671,7 @@ function renderMetaLive() {
   dlsEl.textContent = dls || '(empty)';
   if (rt.dlplusActive && dls.includes(' - ')) {
     const i = dls.indexOf(' - ');
-    dlpEl.innerHTML = `<div><span class="tag">ARTIST</span>${esc(dls.slice(0, i))}</div><div><span class="tag">TITLE</span>${esc(dls.slice(i + 3))}</div>`;
+    dlpEl.innerHTML = `<div class="meta-live-dlp-on"><span class="pl-tag" title="DL+ active: artist and title tags sent with the DLS">DL+</span></div><div><span class="tag">ARTIST</span>${esc(dls.slice(0, i))}</div><div><span class="tag">TITLE</span>${esc(dls.slice(i + 3))}</div>`;
   } else dlpEl.innerHTML = dls ? '<div class="muted">DL+: not sent (no “Artist - Title”)</div>' : '';
   // last update
   const ms = rt.metaStatus;
@@ -2780,9 +2786,23 @@ $('#f_codec')?.addEventListener('change', () => {
 $('#m_txmode')?.addEventListener('change', updateTxModeVisibility);
 $('#f_meta_mode')?.addEventListener('change', updateMetaModeVisibility);
 
+// Unsaved changes: Cancel / ✕ / Escape ask before closing the service dialog
+let svcSnapshot = new Map();
+const svcFields = () => [...$('#svcForm').querySelectorAll('input[id], select[id], textarea[id]')].filter((e) => e.type !== 'file');
+const svcFieldValue = (e) => (e.type === 'checkbox' ? String(e.checked) : e.value);
+function snapshotSvcForm(ids) {
+  for (const e of svcFields()) if (!ids || ids.includes(e.id)) svcSnapshot.set(e.id, svcFieldValue(e));
+}
+function svcFormChanged() {
+  return svcFields().some((e) => svcSnapshot.has(e.id) && svcSnapshot.get(e.id) !== svcFieldValue(e));
+}
+function confirmDiscardSvc() {
+  return !svcFormChanged() || confirm('Discard the unsaved changes?');
+}
 document.querySelectorAll('[data-action="svc-cancel"]').forEach((btn) => {
-  btn.addEventListener('click', () => dlg.close());
+  btn.addEventListener('click', () => { if (confirmDiscardSvc()) dlg.close(); });
 });
+dlg.addEventListener('cancel', (e) => { if (!confirmDiscardSvc()) e.preventDefault(); });
 document.querySelectorAll('[data-action="mux-cancel"]').forEach((btn) => {
   btn.addEventListener('click', () => dlgMux.close());
 });
@@ -2935,10 +2955,44 @@ async function testSlsUrl() {
 
 $('#btnTestSls').addEventListener('click', () => testSlsUrl().catch((e) => alert(e.message || String(e))));
 
+// 'Label: value' of the JSON test results: label in the status colour, value (from the API) in white
+const jsonPart = (label, value) => `${label}: <span class="json-val">${esc(value)}</span>`;
+// 'Detect keys': the server reads the JSON and suggests the keys; they are filled in (not saved)
+$('#btnDetectJson')?.addEventListener('click', async () => {
+  const statusEl = $('#jsonTestStatus');
+  const url = $('#f_json_url').value.trim();
+  statusEl.className = 'json-status';
+  if (!url) { statusEl.textContent = 'JSON URL required'; return; }
+  statusEl.textContent = 'Reading the JSON…';
+  try {
+    const r = await api('/api/metadata/detect/json', { method: 'POST', body: JSON.stringify({ url }) });
+    if (!r?.ok) { statusEl.className = 'json-status err'; statusEl.textContent = `⚠ ${r?.error || 'Failed'}`; return; }
+    // fill in (even an unchanged value flashes green, so it is visible that the field was checked);
+    // a key not found leaves artist / title as they are, and empties the cover key
+    const set = (id, v, clearIfMissing = false) => {
+      const el = $(id);
+      if (!v && !clearIfMissing) return;
+      if (el.value !== (v || '')) { el.value = v || ''; el.dispatchEvent(new Event('input', { bubbles: true })); }
+      el.classList.remove('just-filled'); void el.offsetWidth; el.classList.add('just-filled');
+      setTimeout(() => el.classList.remove('just-filled'), 2000);
+    };
+    set('#f_json_artist', r.artistKey);
+    set('#f_json_title', r.titleKey);
+    set('#f_json_sls', r.slsKey, true);
+    const found = [r.artistKey && jsonPart('Artist', r.artist), r.titleKey && jsonPart('Title', r.title), r.slsKey && jsonPart('Cover', 'found')].filter(Boolean);
+    const missing = [!r.artistKey && 'artist', !r.titleKey && 'title', !r.slsKey && 'cover'].filter(Boolean);
+    statusEl.className = found.length ? 'json-status ok' : 'json-status err';
+    statusEl.innerHTML = (found.length ? `✓ ${found.join(' | ')}` : '⚠ No artist / title / cover key found')
+      + (missing.length && found.length ? ` · not found: ${missing.join(', ')}` : '') + (found.length ? ' — check, then Validate or OK' : '');
+  } catch (err) {
+    statusEl.textContent = `⚠ ${err.message || err}`;
+  }
+});
 $('#btnTestJson')?.addEventListener('click', async () => {
   const statusEl = $('#jsonTestStatus');
   const url = $('#f_json_url').value.trim();
-  if (!url) { if (statusEl) statusEl.textContent = 'URL manquante'; return; }
+  if (statusEl) statusEl.className = 'json-status';
+  if (!url) { if (statusEl) statusEl.textContent = 'JSON URL required'; return; }
   if (statusEl) statusEl.textContent = 'Test...';
   try {
     const res = await api('/api/metadata/test/json', {
@@ -2952,15 +3006,17 @@ $('#btnTestJson')?.addEventListener('click', async () => {
     });
     if (res?.ok) {
       const parts = [];
-      if (res.artist) parts.push(`Artist: ${res.artist}`);
-      if (res.title) parts.push(`Title: ${res.title}`);
-      if (res.coverUrl) parts.push('Cover: OK');
-      statusEl.textContent = parts.length ? parts.join(' | ') : 'OK (empty)';
+      if (res.artist) parts.push(jsonPart('Artist', res.artist));
+      if (res.title) parts.push(jsonPart('Title', res.title));
+      if (res.coverUrl) parts.push(jsonPart('Cover', 'OK'));
+      statusEl.className = `json-status ${res.artist || res.title ? 'ok' : 'err'}`;
+      statusEl.innerHTML = parts.length ? `✓ ${parts.join(' | ')}` : '⚠ Nothing found with these keys';
     } else {
-      statusEl.textContent = res?.error || 'Failed';
+      statusEl.className = 'json-status err';
+      statusEl.textContent = `⚠ ${res?.error || 'Failed'}`;
     }
   } catch (err) {
-    if (statusEl) statusEl.textContent = 'Error';
+    if (statusEl) { statusEl.className = 'json-status err'; statusEl.textContent = '⚠ Error'; }
     alert(err.message || String(err));
   }
 });
@@ -2971,11 +3027,13 @@ $('#btnTestCover')?.addEventListener('click', async () => {
   const previewImg = $('#coverPreviewImg');
   const previewInfo = $('#coverPreviewInfo');
   if (previewBox) previewBox.style.display = 'none';
+  if (statusEl) statusEl.className = 'json-status';
 
   // Step 1: get cover URL from JSON
   const url = $('#f_json_url').value.trim();
-  if (!url) { if (statusEl) statusEl.textContent = 'JSON URL manquante'; return; }
-  if (statusEl) statusEl.textContent = 'Fetching JSON...';
+  const say = (cls, txt) => { if (statusEl) { statusEl.className = `json-status ${cls}`; statusEl.textContent = txt; } };
+  if (!url) { say('err', '⚠ JSON URL required'); return; }
+  say('', 'Fetching JSON...');
   try {
     const jsonRes = await api('/api/metadata/test/json', {
       method: 'POST',
@@ -2987,26 +3045,26 @@ $('#btnTestCover')?.addEventListener('click', async () => {
       })
     });
     if (!jsonRes?.ok || !jsonRes.coverUrl) {
-      if (statusEl) statusEl.textContent = jsonRes?.coverUrl ? 'Error' : 'No cover URL in JSON';
+      say('err', jsonRes?.ok ? '⚠ No cover URL in the JSON with this key' : `⚠ ${jsonRes?.error || 'JSON error'}`);
       return;
     }
     // Step 2: test cover download via backend proxy
-    if (statusEl) statusEl.textContent = 'Downloading cover...';
+    say('', 'Downloading cover...');
     const slsRes = await api('/api/metadata/test/sls', {
       method: 'POST',
       body: JSON.stringify({ url: jsonRes.coverUrl })
     });
     if (slsRes?.ok && slsRes.dataUrl) {
       const kb = slsRes.bytes ? `${Math.round(slsRes.bytes / 1024)} KB` : '';
-      if (statusEl) statusEl.textContent = `Cover OK ${kb} (${slsRes.contentType || 'image'})`;
+      say('ok', `✓ Cover OK ${kb} (${slsRes.contentType || 'image'})`);
       if (previewImg) previewImg.src = slsRes.dataUrl;
       if (previewBox) previewBox.style.display = 'flex';
       if (previewInfo) previewInfo.textContent = `${jsonRes.coverUrl.slice(0, 60)}...`;
     } else {
-      if (statusEl) statusEl.textContent = `Cover FAIL: ${slsRes?.error || 'download error'}`;
+      say('err', `⚠ Cover FAIL: ${slsRes?.error || 'download error'}`);
     }
   } catch (err) {
-    if (statusEl) statusEl.textContent = 'Error';
+    say('err', '⚠ Error');
     alert(err.message || String(err));
   }
 });
@@ -3087,6 +3145,51 @@ svcTableBody.addEventListener('click', async (e) => {
   }
 });
 
+const META_FIELD_IDS = ['f_meta_mode', 'f_default_dls', 'f_sls_url', 'f_json_url', 'f_json_interval', 'f_json_artist', 'f_json_title', 'f_json_sls', 'f_json_start', 'f_json_duration', 'f_json_trackmax', 'f_json_logoevery', 'f_json_default_dls', 'f_dlplus_enabled'];
+// Metadata part of the service payload (used by OK and by the Metadata 'Validate' button)
+function metaPayload() {
+  return {
+    metadata: {
+      mode: $('#f_meta_mode').value,
+      defaultDls: $('#f_default_dls').value.trim() || null,
+      slsUrl: $('#f_sls_url').value.trim() || null,
+      url: $('#f_json_url').value.trim() || null,
+      intervalSec: Number($('#f_json_interval').value || 10),
+      // empty = default key on the server (artist / title / slide), kept empty so the field reopens empty
+      artistKey: $('#f_json_artist').value.trim(),
+      titleKey: $('#f_json_title').value.trim(),
+      slsKey: $('#f_json_sls').value.trim(),
+      startKey: $('#f_json_start').value.trim() || null,
+      durationKey: $('#f_json_duration').value.trim() || null,
+      trackMaxMin: Math.max(0, Math.min(60, Math.round(Number($('#f_json_trackmax').value)))) || 0,
+      logoEverySec: $('#f_json_logoevery').value === '' ? 40 : Math.max(0, Math.min(3600, Math.round(Number($('#f_json_logoevery').value)))) || 0,
+      dlsIncluded: true,
+      defaultDlsAllowed: $('#f_json_default_dls').value === 'yes'
+    },
+    dlplus: {
+      enabled: $('#f_dlplus_enabled').value !== 'no'
+    }
+  };
+}
+
+// Metadata 'Validate': saves only the metadata (no encoder restart, applied at the next
+// metadata tick ≤ 1 s) and keeps the dialog open so the result shows in "On air now"
+$('#btnMetaApply')?.addEventListener('click', async (e) => {
+  if (!editingId) return;
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    await api(`/api/services/${editingId}`, { method: 'PATCH', body: JSON.stringify(metaPayload()) });
+    snapshotSvcForm(META_FIELD_IDS);   // these are saved now: no 'unsaved changes' prompt for them
+    await refresh();
+    btn.textContent = '✓ Applied';
+  } catch (err) {
+    btn.textContent = 'Error';
+    alert(err.message || String(err));
+  }
+  setTimeout(() => { btn.textContent = 'Validate'; btn.disabled = false; }, 1500);
+});
+
 $('#svcForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   showServiceError('');
@@ -3140,25 +3243,7 @@ $('#svcForm').addEventListener('submit', async (e) => {
       switchToBackupOnSilence: $('#f_switch').value === '1',
       returnToMainAfterSec: Number($('#f_return').value || 60)
     },
-    metadata: {
-      mode: $('#f_meta_mode').value,
-      defaultDls: $('#f_default_dls').value.trim() || null,
-      slsUrl: $('#f_sls_url').value.trim() || null,
-      url: $('#f_json_url').value.trim() || null,
-      intervalSec: Number($('#f_json_interval').value || 10),
-      artistKey: $('#f_json_artist').value.trim() || 'artist',
-      titleKey: $('#f_json_title').value.trim() || 'title',
-      slsKey: $('#f_json_sls').value.trim() || 'slide',
-      startKey: $('#f_json_start').value.trim() || null,
-      durationKey: $('#f_json_duration').value.trim() || null,
-      trackMaxMin: Math.max(0, Math.min(60, Math.round(Number($('#f_json_trackmax').value)))) || 0,
-      logoEverySec: $('#f_json_logoevery').value === '' ? 40 : Math.max(0, Math.min(3600, Math.round(Number($('#f_json_logoevery').value)))) || 0,
-      dlsIncluded: true,
-      defaultDlsAllowed: $('#f_json_default_dls').value === 'yes'
-    },
-    dlplus: {
-      enabled: $('#f_dlplus_enabled').value !== 'no'
-    }
+    ...metaPayload()
   };
 
   // ZMQ/EDI direct: input port chosen by the user (empty on a new service = automatic)
