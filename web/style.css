@@ -856,3 +856,51 @@ input.just-filled { border-color: var(--green) !important; box-shadow: 0 0 0 3px
 .net-empty { padding: 6px 2px; font-size: 12px; }
 /* hidden must win over the display rules of the outputs block (.net-inline is display: flex) */
 #netOutputsBox .hidden, #netOutputsBox.hidden { display: none !important; }
+/* Check HackRF result */
+.hackrf-check-row { display: flex; align-items: center; gap: 10px; }
+.hackrf-check-row.hidden { display: none; }
+.hackrf-check-result.ok { color: var(--green); }
+.hackrf-check-result.err { color: var(--yellow); font-weight: 600; }
+.net-fields .hackrf-check-result { flex-basis: 100%; }
+/* Multiplex panel above the services: summary line + settings unfolded in place */
+.mux-panel { margin-bottom: 14px; }
+.mux-summary { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; padding: 6px 14px; min-height: 34px; cursor: pointer; user-select: none; }
+.mux-summary:hover .mux-sum-title { color: var(--text); }
+.mux-sum-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.mux-sum-title::before { content: '▸ '; }
+.mux-panel.open .mux-sum-title::before { content: '▾ '; }
+.mux-sum-ens { font-weight: 600; color: var(--text); font-size: 13px; }
+.mux-sum-tx { display: flex; flex-wrap: wrap; gap: 6px; }
+.mux-pill { display: inline-flex; align-items: center; gap: 6px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); font-size: 12px; color: var(--text); }
+.mux-pill i { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.mux-pill.ok i { background: var(--green); }
+.mux-pill.warn i { background: var(--yellow); }
+.mux-pill.warn { border-color: rgba(241, 196, 15, .5); }
+dialog.mux-inline { position: static; display: none; width: 100%; max-width: none; margin: 0; padding: 0; border: 0; border-top: 1px solid var(--border); background: transparent; color: inherit; }
+dialog.mux-inline[open] { display: block; }
+.mux-form { padding: 12px 14px 14px; }
+/* Multiplex panel: ensemble fields and control ports on one line each, sized to their content */
+.mux-row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; }
+.mux-row label { flex: 0 0 auto; }
+.mux-row #m_ens_id { width: 90px; }
+.mux-row #m_ecc { width: 84px; }
+.mux-row #m_short { width: 130px; }
+.mux-row #m_label { width: 210px; }
+.mux-row #m_mgmt, .mux-row #m_telnet { width: 110px; }
+.mux-row .check-row { padding-bottom: 8px; }
+/* Services header: hint on the title line (one line less) */
+.card-title-row { display: flex; align-items: baseline; gap: 6px 14px; flex-wrap: wrap; }
+.card-title-row .card-hint { margin-top: 0; }
+/* Services header: compact Import / Export and + Add service (lower header line) */
+.card-head #ioMenu > summary, .card-head #btnAdd { padding: 4px 11px; font-size: 12px; line-height: 1.3; }
+/* Services toolbar: search, sort and Full / Compact at the height of the header buttons (26 px) */
+.svc-toolbar { padding-top: 6px; padding-bottom: 6px; }
+.svc-toolbar .svc-search { padding: 4px 10px; font-size: 12.5px; }
+.svc-toolbar .svc-sort select { padding: 3px 8px; }
+.svc-toolbar .seg-btn { padding: 4px 11px; line-height: 1.3; }
+/* Top stat cards: more compact (they were taller than their content needs) */
+.stat-card { padding: 7px 10px; }
+.stat-val { font-size: 18px; line-height: 1.15; }
+.stat-val-sm { line-height: 1.5; }
+.stat-bar { height: 4px; margin: 2px 0 1px; }
+.stat-sub { margin-top: 1px; }

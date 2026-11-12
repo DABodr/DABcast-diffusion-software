@@ -25,7 +25,6 @@
     </div>
 
     <div class="actions">
-      <button id="btnMux" class="btn">Multiplex</button>
       <button id="btnLevels" class="btn" title="Audio levels and gain suggestions">Levels</button>
       <button id="btnLogs" class="btn">Logs</button>
       <button id="btnDablin" class="btn">Dablin</button>
@@ -50,11 +49,191 @@
   </div>
   <div class="stats-row" id="statsRow"></div>
   <main class="main">
+    <!-- Multiplex: summary always visible (ensemble + transmitters, live), settings unfolded below -->
+    <div class="card mux-panel" id="muxPanel">
+      <div class="mux-summary" id="muxSummary" role="button" tabindex="0" aria-controls="dlgMux" title="Show / hide the multiplex settings">
+        <span class="mux-sum-title">Multiplex &amp; modulator</span>
+        <span class="mux-sum-ens" id="muxSumEns"></span>
+        <span class="mux-sum-tx" id="muxSumTx"></span>
+      </div>
+    <dialog id="dlgMux" class="mux-inline">
+      <form method="dialog" class="mux-form" id="muxForm">
+        <div class="alert hidden" id="muxError"></div>
+        <div class="alert alert-warn hidden" id="muxRestartWarn">⚠ These changes require a multiplex restart: on save, ALL services go off air for a few seconds.</div>
+        <div class="grid">
+          <div class="mux-row span2">
+            <label>
+              <span>Ensemble ID</span>
+              <input id="m_ens_id" maxlength="4" placeholder="F401" />
+            </label>
+            <label>
+              <span>ECC</span>
+              <select id="m_ecc">
+                <optgroup label="Europe">
+                  <option value="E0" data-full="E0 - Germany, Belgium, Italy, Andorra">E0</option>
+                  <option value="E1" data-full="E1 - France, Switzerland, Denmark, Luxembourg, UK, Gibraltar">E1</option>
+                  <option value="E2" data-full="E2 - Vatican, Spain">E2</option>
+                  <option value="E3" data-full="E3">E3</option>
+                  <option value="E4" data-full="E4">E4</option>
+                </optgroup>
+                <optgroup label="Americas">
+                  <option value="A0" data-full="A0">A0</option>
+                  <option value="A1" data-full="A1">A1</option>
+                  <option value="A2" data-full="A2">A2</option>
+                  <option value="A3" data-full="A3">A3</option>
+                  <option value="A4" data-full="A4">A4</option>
+                  <option value="A5" data-full="A5">A5</option>
+                  <option value="A6" data-full="A6">A6</option>
+                  <option value="A7" data-full="A7">A7</option>
+                </optgroup>
+                <optgroup label="Africa / Middle East">
+                  <option value="D0" data-full="D0">D0</option>
+                  <option value="D1" data-full="D1">D1</option>
+                  <option value="D2" data-full="D2">D2</option>
+                  <option value="D3" data-full="D3">D3</option>
+                </optgroup>
+                <optgroup label="Asia / Pacific">
+                  <option value="F0" data-full="F0">F0</option>
+                  <option value="F1" data-full="F1">F1</option>
+                  <option value="F2" data-full="F2">F2</option>
+                  <option value="F3" data-full="F3">F3</option>
+                </optgroup>
+              </select>
+            </label>
+            <label>
+              <span>Short label (PS8)</span>
+              <input id="m_short" maxlength="8" />
+            </label>
+            <label>
+              <span>Label (PS16)</span>
+              <input id="m_label" maxlength="16" />
+            </label>
+          </div>
+          <!-- TX mode: always "Network outputs" (legacy modes converted into outputs when the dialog opens) -->
+          <label class="hidden">
+            <span>TX mode</span>
+            <select id="m_txmode">
+              <option value="NETWORK">Network outputs (one or several transmitters)</option>
+              <option value="EASYDAB">EASYDAB (ZMQ out)</option>
+              <option value="EDI">EDI (TCP out)</option>
+              <option value="HACKRF">HackRF</option>
+            </select>
+          </label>
+          <label class="easydab-only">
+            <span>EasyDAB IP</span>
+            <input id="m_easydab_ip" placeholder="0.0.0.0" />
+          </label>
+          <label class="easydab-only">
+            <span>EasyDAB Port</span>
+            <input id="m_easydab_port" type="number" min="1024" max="65535" />
+          </label>
+          <label class="edi-only">
+            <span>EDI listen port</span>
+            <input id="m_edi_port" type="number" min="1024" max="65535" />
+          </label>
+          <label class="edi-only check-row">
+            <input type="checkbox" id="m_edi_pft" />
+            Enable PFT (GatesAir compatibility)
+          </label>
+          <label class="edi-only">
+            <span>EDI FEC (recoverable fragments)</span>
+            <input id="m_edi_fec" type="number" min="0" max="5" step="1" />
+          </label>
+          <label class="edi-only">
+            <span>EDI TIST offset (seconds)</span>
+            <input id="m_edi_tist_offset" type="number" min="0" max="60" step="0.001" />
+          </label>
+          <div class="network-only span2" id="netOutputsBox">
+            <div class="net-head">
+              <span class="net-title">Transmitter outputs</span>
+              <span class="muted net-sub">each output feeds one transmitter, modulator or converter</span>
+              <div class="spacer"></div>
+              <select id="netAddType" aria-label="Type of the output to add">
+                <option value="edi-udp">EDI/UDP — commercial modulator (mux sends)</option>
+                <option value="edi-udp-mc">EDI/UDP multicast — several transmitters</option>
+                <option value="edi-tcp">EDI/TCP — transmitter / converter connects</option>
+                <option value="zmq">ZMQ — EasyDAB V2</option>
+                <option value="eti-tcp">ETI/TCP — raw ETI</option>
+                <option value="hackrf">HackRF — local SDR on this server</option>
+              </select>
+              <button type="button" class="btn btn-sm btn-primary" id="netAdd">+ Add</button>
+            </div>
+            <div id="netOutputs"></div>
+            <!-- shared values (one per multiplex in odr-dabmux): edited in the output blocks that use them -->
+            <div class="hidden" aria-hidden="true">
+              <input type="checkbox" id="m_net_pft" />
+              <input id="m_net_fec" type="number" />
+              <input id="m_net_tist" type="number" />
+            </div>
+            <p class="meta-help">The ETI monitoring output (Player / Dablin) is always kept, whatever the outputs.</p>
+          </div>
+          <label class="hackrf-only">
+            <span>DAB Block</span>
+            <select id="m_hackrf_block"></select>
+          </label>
+          <label class="hackrf-only">
+            <span>TX Gain (0-47)</span>
+            <input id="m_hackrf_txgain" type="number" min="0" max="47" />
+          </label>
+          <label class="hackrf-only">
+            <span>Max frames queued</span>
+            <input id="m_hackrf_maxframes" type="number" min="1" max="2000" />
+          </label>
+          <label class="hackrf-only">
+            <span>Gain mode</span>
+            <select id="m_hackrf_gainmode">
+              <option value="0">0 - FIX</option>
+              <option value="1">1 - MAX</option>
+              <option value="2">2 - VAR</option>
+            </select>
+          </label>
+          <label class="hackrf-only">
+            <span>Digital gain</span>
+            <input id="m_hackrf_diggain" type="number" min="0" max="10" step="0.1" />
+          </label>
+          <label class="hackrf-only">
+            <span>Sample rate</span>
+            <select id="m_hackrf_rate">
+              <option value="2048000">2.048 MHz</option>
+              <option value="4096000">4.096 MHz</option>
+            </select>
+          </label>
+          <div class="hackrf-only hackrf-check-row span2">
+            <button type="button" class="btn btn-sm" data-hackrf-check>Check HackRF</button>
+            <span class="net-help hackrf-check-result">Reads the board with hackrf_info (never transmits).</span>
+          </div>
+          <div class="mux-row span2">
+            <label>
+              <span>Management port</span>
+              <input id="m_mgmt" type="number" min="1024" max="65535" />
+            </label>
+            <label>
+              <span>Telnet port</span>
+              <input id="m_telnet" type="number" min="1024" max="65535" />
+            </label>
+            <label class="check-row">
+              <input type="checkbox" id="m_autostart" />
+              Start multiplex at startup
+            </label>
+          </div>
+        </div>
+
+        <div class="modal-foot">
+          <div class="muted" id="muxLockHint"></div>
+          <div class="spacer"></div>
+          <button type="button" class="btn" data-action="mux-cancel">Cancel</button>
+          <button class="btn btn-success" id="btnMuxSave" value="default">Save</button>
+        </div>
+      </form>
+    </dialog>
+    </div>
     <div class="card">
       <div class="card-head">
         <div>
-          <div class="card-title">Services</div>
-          <div class="card-hint hide-mobile">Double-click a row to edit · press / to search · ON/OFF puts a service on or off air.</div>
+          <div class="card-title-row">
+            <div class="card-title">Services</div>
+            <div class="card-hint hide-mobile">Double-click a row to edit · press / to search · ON/OFF puts a service on or off air.</div>
+          </div>
           <div class="card-hint" id="capHint"></div>
         </div>
         <div class="row">
@@ -666,175 +845,7 @@
     </form>
   </dialog>
 
-  <dialog id="dlgMux" class="modal">
-    <form method="dialog" class="modal-body" id="muxForm">
-      <div class="modal-head">
-        <div>
-          <div class="modal-title">Multiplex</div>
-          <div class="modal-sub">Ensemble and output settings</div>
-        </div>
-        <button class="icon" value="cancel" aria-label="Close">✕</button>
-      </div>
 
-      <div class="alert hidden" id="muxError"></div>
-      <div class="alert alert-warn hidden" id="muxRestartWarn">⚠ These changes require a multiplex restart: on save, ALL services go off air for a few seconds.</div>
-      <div class="grid">
-        <label>
-          <span>Ensemble ID (hex)</span>
-          <input id="m_ens_id" maxlength="4" placeholder="F401" />
-        </label>
-        <label>
-          <span>ECC</span>
-          <select id="m_ecc">
-            <optgroup label="Europe">
-              <option value="E0">E0 - Germany, Belgium, Italy, Andorra</option>
-              <option value="E1">E1 - France, Switzerland, Denmark, Luxembourg, UK, Gibraltar</option>
-              <option value="E2">E2 - Vatican, Spain</option>
-              <option value="E3">E3</option>
-              <option value="E4">E4</option>
-            </optgroup>
-            <optgroup label="Americas">
-              <option value="A0">A0</option>
-              <option value="A1">A1</option>
-              <option value="A2">A2</option>
-              <option value="A3">A3</option>
-              <option value="A4">A4</option>
-              <option value="A5">A5</option>
-              <option value="A6">A6</option>
-              <option value="A7">A7</option>
-            </optgroup>
-            <optgroup label="Africa / Middle East">
-              <option value="D0">D0</option>
-              <option value="D1">D1</option>
-              <option value="D2">D2</option>
-              <option value="D3">D3</option>
-            </optgroup>
-            <optgroup label="Asia / Pacific">
-              <option value="F0">F0</option>
-              <option value="F1">F1</option>
-              <option value="F2">F2</option>
-              <option value="F3">F3</option>
-            </optgroup>
-          </select>
-        </label>
-        <label>
-          <span>Shortlabel (PS8)</span>
-          <input id="m_short" maxlength="8" />
-        </label>
-        <label>
-          <span>Label (PS16)</span>
-          <input id="m_label" maxlength="16" />
-        </label>
-        <label>
-          <span>TX mode</span>
-          <select id="m_txmode">
-            <option value="NETWORK">Network outputs (one or several transmitters)</option>
-            <option value="EASYDAB">EASYDAB (ZMQ out)</option>
-            <option value="EDI">EDI (TCP out)</option>
-            <option value="USRP1">USRP1 (stdout ETI)</option>
-            <option value="HACKRF">HackRF</option>
-          </select>
-        </label>
-        <label class="easydab-only">
-          <span>EasyDAB IP</span>
-          <input id="m_easydab_ip" placeholder="0.0.0.0" />
-        </label>
-        <label class="easydab-only">
-          <span>EasyDAB Port</span>
-          <input id="m_easydab_port" type="number" min="1024" max="65535" />
-        </label>
-        <label class="edi-only">
-          <span>EDI listen port</span>
-          <input id="m_edi_port" type="number" min="1024" max="65535" />
-        </label>
-        <label class="edi-only check-row">
-          <input type="checkbox" id="m_edi_pft" />
-          Enable PFT (GatesAir compatibility)
-        </label>
-        <label class="edi-only">
-          <span>EDI FEC (recoverable fragments)</span>
-          <input id="m_edi_fec" type="number" min="0" max="5" step="1" />
-        </label>
-        <label class="edi-only">
-          <span>EDI TIST offset (seconds)</span>
-          <input id="m_edi_tist_offset" type="number" min="0" max="60" step="0.001" />
-        </label>
-        <div class="network-only span2" id="netOutputsBox">
-          <div class="net-head">
-            <span class="net-title">Transmitter outputs</span>
-            <span class="muted net-sub">each output feeds one transmitter, modulator or converter</span>
-            <div class="spacer"></div>
-            <select id="netAddType" aria-label="Type of the output to add">
-              <option value="edi-udp">EDI/UDP — commercial modulator (mux sends)</option>
-              <option value="edi-udp-mc">EDI/UDP multicast — several transmitters</option>
-              <option value="edi-tcp">EDI/TCP — transmitter / converter connects</option>
-              <option value="zmq">ZMQ — EasyDAB V2</option>
-              <option value="eti-tcp">ETI/TCP — raw ETI</option>
-            </select>
-            <button type="button" class="btn btn-sm btn-primary" id="netAdd">+ Add</button>
-          </div>
-          <div id="netOutputs"></div>
-          <!-- shared values (one per multiplex in odr-dabmux): edited in the output blocks that use them -->
-          <div class="hidden" aria-hidden="true">
-            <input type="checkbox" id="m_net_pft" />
-            <input id="m_net_fec" type="number" />
-            <input id="m_net_tist" type="number" />
-          </div>
-          <p class="meta-help">The ETI monitoring output (Player / Dablin) is always kept, whatever the outputs.</p>
-        </div>
-        <label class="hackrf-only">
-          <span>DAB Block</span>
-          <select id="m_hackrf_block"></select>
-        </label>
-        <label class="hackrf-only">
-          <span>TX Gain (0-47)</span>
-          <input id="m_hackrf_txgain" type="number" min="0" max="47" />
-        </label>
-        <label class="hackrf-only">
-          <span>Max frames queued</span>
-          <input id="m_hackrf_maxframes" type="number" min="1" max="2000" />
-        </label>
-        <label class="hackrf-only">
-          <span>Gain mode</span>
-          <select id="m_hackrf_gainmode">
-            <option value="0">0 - FIX</option>
-            <option value="1">1 - MAX</option>
-            <option value="2">2 - VAR</option>
-          </select>
-        </label>
-        <label class="hackrf-only">
-          <span>Digital gain</span>
-          <input id="m_hackrf_diggain" type="number" min="0" max="10" step="0.1" />
-        </label>
-        <label class="hackrf-only">
-          <span>Sample rate</span>
-          <select id="m_hackrf_rate">
-            <option value="2048000">2.048 MHz</option>
-            <option value="4096000">4.096 MHz</option>
-          </select>
-        </label>
-        <label>
-          <span>Management port</span>
-          <input id="m_mgmt" type="number" min="1024" max="65535" />
-        </label>
-        <label>
-          <span>Telnet port</span>
-          <input id="m_telnet" type="number" min="1024" max="65535" />
-        </label>
-        <label class="check-row grid-col2">
-          <input type="checkbox" id="m_autostart" />
-          Start multiplex at startup
-        </label>
-      </div>
-
-      <div class="modal-foot">
-        <div class="muted" id="muxLockHint"></div>
-        <div class="spacer"></div>
-        <button type="button" class="btn" data-action="mux-cancel">Cancel</button>
-        <button class="btn btn-success" id="btnMuxSave" value="default">Save</button>
-      </div>
-    </form>
-  </dialog>
 
   <dialog id="dlgLevels" class="modal">
     <form method="dialog" class="modal-body modal-levels">
