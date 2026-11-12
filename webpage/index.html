@@ -185,7 +185,12 @@
 
         <div class="install-block">
           <div class="install-label">Quick install</div>
-          <pre><code>sudo dpkg -i dabcast_1.7.4_amd64.deb
+          <pre><code># 1. Install the ODR-mmbTools first (odr-audioenc, odr-padenc, odr-dabmux…)
+chmod +x install-tools.sh
+sudo ./install-tools.sh
+
+# 2. Then install DABcast (arm64 package on a Raspberry Pi)
+sudo dpkg -i dabcast_1.7.4_amd64.deb
 sudo systemctl enable --now dabcast
 # Open http://&lt;server-ip&gt;:9090
 # Default login: admin / dabcast  — change the password on first login</code></pre>

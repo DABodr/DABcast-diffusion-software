@@ -824,3 +824,7 @@ input.just-filled { border-color: var(--green) !important; box-shadow: 0 0 0 3px
 /* Services table: PTY column, Main / Bkp dots tightened */
 .table td.col-pty { color: var(--muted); font-size: 11.5px; white-space: nowrap; max-width: 110px; overflow: hidden; text-overflow: ellipsis; }
 .table th.col-main, .table td.col-main, .table th.col-bkp, .table td.col-bkp { padding-left: 3px; padding-right: 3px; text-align: center; }
+/* DLS cell: a long DLS (or a long word / URL) never widens the table: at most 2 lines, cut with
+   "…" (full text on hover). Compact view: one line. */
+.table:not(.compact) td.col-dls .dls-text { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.table.compact td.col-dls .dls-text { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; white-space: normal; max-width: none; }

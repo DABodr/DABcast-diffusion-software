@@ -321,9 +321,9 @@ print_section "Installing ImageMagick..."
 apt-get install -y imagemagick
 which convert && convert --version | head -1
 
-# Install monitoring tools
+# Install monitoring tools (dablin + ffmpeg are also used by the web Player)
 print_section "Installing monitoring tools..."
-install_optional dablin socat wmctrl xdotool
+install_optional dablin socat wmctrl xdotool ffmpeg
 
 # Install HackRF support (optional)
 print_section "Installing HackRF support..."
@@ -368,6 +368,10 @@ fi
 
 if command_exists dablin; then
   echo -e "${GREEN}✓${NC} Dablin: $(which dablin)"
+fi
+
+if command_exists ffmpeg; then
+  echo -e "${GREEN}✓${NC} ffmpeg (web Player): $(which ffmpeg)"
 fi
 
 echo
