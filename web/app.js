@@ -1641,6 +1641,9 @@ function netField(o, i, key, label, attrs = '') {
 function renderNetOutputs() {
   const box = $('#netOutputs');
   if (!box) return;
+  // PFT / FEC only concerns EDI outputs: hidden when the list has none (EasyDAB / ETI only)
+  const hasEdi = NET_OUTPUTS.some((o) => o.type === 'edi-udp' || o.type === 'edi-tcp');
+  document.querySelectorAll('.net-edi-only').forEach((el) => el.classList.toggle('hidden', !hasEdi));
   if (!NET_OUTPUTS.length) { box.innerHTML = '<div class="muted net-empty">No output yet: choose a type and press + Add.</div>'; return; }
   box.innerHTML = NET_OUTPUTS.map((o, i) => {
     const mc = o.type === 'edi-udp' && /^(22[4-9]|23\d)\./.test(o.destination || '');
