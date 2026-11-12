@@ -582,14 +582,14 @@ function sysCard(card) {
   const cls = cpu === null ? '' : cpu < 70 ? 'cap-ok' : cpu < 90 ? 'cap-warn' : 'cap-bad';
   const gb = (mb) => (mb / 1024).toFixed(1);
   const memUsed = L.memTotalMb && L.memAvailableMb != null ? L.memTotalMb - L.memAvailableMb : null;
-  const memTxt = memUsed !== null ? `RAM ${gb(memUsed)}/${gb(L.memTotalMb)} GB` : 'RAM —';
+  const memTxt = memUsed !== null ? `RAM ${gb(memUsed)}/${gb(L.memTotalMb)} G` : 'RAM —';
   const dk = L.disk;
   const diskCls = !dk ? '' : (dk.usedPct >= 95 || dk.freeGb < 2) ? 'sys-bad' : dk.usedPct >= 90 ? 'sys-warn' : '';
-  const diskTxt = dk ? `<span class="${diskCls}">Disk ${dk.freeGb} GB free</span>` : 'Disk —';
+  const diskTxt = dk ? `<span class="${diskCls}">Disk ${dk.freeGb} G free</span>` : 'Disk —';
   const tip = `CPU ${cpu ?? '—'} % (${L.cores} cores) · RAM used ${memUsed ?? '—'} / ${L.memTotalMb ?? '—'} MB · `
     + (L.disk ? `Disk (data dir) ${L.disk.usedPct} % used, ${L.disk.freeGb} / ${L.disk.totalGb} GB free` : 'Disk —');
   return card('System', cpu === null ? '—' : `${Math.round(cpu)} % <span class="stat-unit">CPU</span>`,
-    `<div class="stat-bar"><div class="stat-bar-fill ${cls}" style="width:${Math.min(cpu ?? 0, 100)}%"></div></div>${memTxt}<br>${diskTxt}`,
+    `<div class="stat-bar"><div class="stat-bar-fill ${cls}" style="width:${Math.min(cpu ?? 0, 100)}%"></div></div>${memTxt} · ${diskTxt}`,   // one line (full figures in the tooltip)
     cls, tip);
 }
 function renderStats(cap) {
@@ -610,10 +610,12 @@ function renderStats(cap) {
   const capCls = ratio < 0.8 ? 'cap-ok' : ratio <= 1.0 ? 'cap-warn' : 'cap-bad';
   const ens = STATE.settings.ensemble || {};
   const tx = STATE.settings.dabmux?.txMode || 'EASYDAB';
-  const block = STATE.settings.dabmux?.hackrf?.dabBlock || '7A';
-  const muxSub = tx === 'HACKRF'
+  // a HackRF on this server: its channel and frequency; otherwise the ECC (the TX mode said nothing useful)
+  const hkOut = tx === 'NETWORK' ? (STATE.settings.dabmux?.outputs || []).find((o) => o.type === 'hackrf' && o.enabled !== false) : null;
+  const block = hkOut ? hkOut.dabBlock : tx === 'HACKRF' ? (STATE.settings.dabmux?.hackrf?.dabBlock || '7A') : null;
+  const muxSub = block
     ? `${esc(block)} · ${((DAB_FREQ_TABLE[block] || 0) / 1e6).toFixed(3)} MHz`
-    : `TX: ${esc(tx)}`;
+    : `ECC ${esc(String(ens.eccHex || '').replace(/^0x/i, ''))}`;
   const bufInputs = STATE.muxRunning && MUX_STATS?.inputs ? Object.values(MUX_STATS.inputs) : [];
   // healthy = Streaming, or Unstable with no recent underrun (dabmux keeps "Unstable" long after start-up)
   const settled = bufInputs.filter((i) => !(i.starting && i.state !== 'Streaming'));
@@ -645,6 +647,7 @@ function renderStats(cap) {
 }
 
 function render() {
+  renderMuxSummary();
   if (!STATE) return;
   if (dlgPlayer?.open) renderPlayer();
   if (dlg?.open) renderMetaLive();
@@ -687,8 +690,13 @@ function render() {
       ? `EDI TCP: ${STATE.settings.dabmux.ediTcpListenPort}`
       : (tx === 'HACKRF')
         ? `Block: ${STATE.settings.dabmux.hackrf?.dabBlock || '7A'} (${((DAB_FREQ_TABLE[STATE.settings.dabmux.hackrf?.dabBlock || '7A'] || 0) / 1e6).toFixed(3)} MHz)`
-        : 'USRP1';
-  $('#muxSubtitle').textContent = `${ip} | TX: ${tx} | ${out}`;
+        : (tx === 'NETWORK')
+          ? (() => {   // the active transmitter outputs, by name
+            const on = (STATE.settings.dabmux.outputs || []).filter((o) => o.enabled !== false);
+            return on.length ? `${on.length} transmitter${on.length > 1 ? 's' : ''}: ${on.map((o) => o.name).join(', ')}` : 'no transmitter output';
+          })()
+          : 'USRP1';   // legacy mode, no longer offered (still started for an old configuration)
+  $('#muxSubtitle').textContent = `${ip} | ${out}`;
 
   // capacity hint (CU)
   const cap = STATE.preset.capacity || { totalCu: 0, maxCu: 864 };
@@ -1521,11 +1529,14 @@ function openMuxDialog() {
   // ensemble (afficher sans préfixe 0x)
   $('#m_ens_id').value = (STATE.settings.ensemble.idHex || '').replace(/^0x/i, '');
   $('#m_ecc').value = (STATE.settings.ensemble.eccHex || '').replace(/^0x/i, '');
+  updateEccTitle();
   $('#m_label').value = STATE.settings.ensemble.label || '';
   $('#m_short').value = STATE.settings.ensemble.shortlabel || '';
 
   // ports / tx
-  $('#m_txmode').value = (STATE.settings.dabmux.txMode || 'EASYDAB');
+  // TX mode is always "Network outputs" now: a legacy mode (EASYDAB / EDI / HACKRF) is shown as the
+  // equivalent outputs (see netOutputsFromLegacy). Nothing changes on the server until Save.
+  $('#m_txmode').value = 'NETWORK';
   $('#m_easydab_ip').value = STATE.settings.dabmux.easyDabOutput?.ip || '0.0.0.0';
   $('#m_easydab_port').value = STATE.settings.dabmux.easyDabOutput?.port || 18081;
   $('#m_edi_port').value = STATE.settings.dabmux.ediTcpListenPort || 13000;
@@ -1536,10 +1547,12 @@ function openMuxDialog() {
   $('#m_telnet').value = STATE.settings.dabmux.telnetPort || 12721;
   $('#m_autostart').checked = STATE.settings.autoStart ?? false;
   // NETWORK mode: outputs list (empty = pre-filled from the current mode when NETWORK is chosen)
-  NET_OUTPUTS = (STATE.settings.dabmux.outputs || []).map((o) => ({ ...o }));
+  const savedNetwork = String(STATE.settings.dabmux.txMode || '').toUpperCase() === 'NETWORK';
+  NET_OUTPUTS = savedNetwork ? (STATE.settings.dabmux.outputs || []).map((o) => ({ ...o })) : [];
   $('#m_net_pft').checked = STATE.settings.dabmux.ediOptions?.pft === true;
   $('#m_net_fec').value = STATE.settings.dabmux.ediOptions?.fec ?? 2;
   $('#m_net_tist').value = STATE.settings.dabmux.tistOffsetSec ?? 0;
+  if (!savedNetwork) NET_OUTPUTS = netOutputsFromLegacy();   // what the legacy mode sends today, as outputs
   renderNetOutputs();
 
   // HackRF fields
@@ -1571,9 +1584,54 @@ function openMuxDialog() {
   updateMuxRestartWarn();
 
   updateTxModeVisibility();
-  dlgMux.showModal();
+  // shown in the page (Multiplex panel above the services), not as a modal window
+  dlgMux.show();
+  $('#muxPanel')?.classList.add('open');
   netStartStatus();
 }
+// ECC field shows the code only (E1): the countries are in its tooltip and in the drop-down list
+function updateEccTitle() {
+  const sel = $('#m_ecc');
+  if (sel) sel.title = sel.selectedOptions[0]?.dataset.full || sel.value;
+}
+$('#m_ecc')?.addEventListener('change', updateEccTitle);
+// Multiplex panel: the summary line (ensemble + transmitters) unfolds / folds the settings
+function toggleMuxPanel(scroll = false) {
+  if (dlgMux.open) { dlgMux.close(); return; }
+  if (STATE?.mustChangePassword) return;   // like the other settings: locked until the default password is changed
+  openMuxDialog();
+  if (scroll) $('#muxPanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+dlgMux.addEventListener('close', () => $('#muxPanel')?.classList.remove('open'));
+$('#muxSummary')?.addEventListener('click', (e) => { if (!e.target.closest('button')) toggleMuxPanel(); });
+$('#muxSummary')?.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleMuxPanel(); } });
+
+// Summary line: ensemble + one pill per transmitter output with its live state (every 5 s)
+let MUX_OUT = null;   // last /api/mux/outputs answer
+async function pollMuxOutputs() {
+  try { MUX_OUT = await api('/api/mux/outputs'); } catch { /* best effort */ }
+  renderMuxSummary();
+}
+function muxOutState(o, running) {
+  if (!running) return ['', 'off air'];
+  if (o.enabled === false) return ['', 'OFF'];
+  if (o.type === 'edi-udp') return ['ok', `sending to ${o.destination}:${o.port}`];
+  if (o.type === 'hackrf') return o.local?.dabmod && o.local?.hackrf ? ['ok', `transmitting on ${o.dabBlock}`] : ['warn', 'HackRF chain stopped'];
+  return o.connected?.length ? ['ok', `${o.connected.length} connected: ${o.connected.join(', ')}`] : ['warn', 'no transmitter connected'];
+}
+function renderMuxSummary() {
+  const ens = STATE?.settings?.ensemble;
+  const el = $('#muxSumEns');
+  if (el && ens) el.textContent = `${ens.label || ''} · ${ens.idHex || ''} · ECC ${String(ens.eccHex || '').replace(/^0x/i, '')}`;
+  const tx = $('#muxSumTx');
+  if (!tx) return;
+  const outs = MUX_OUT?.outputs || [];
+  tx.innerHTML = outs.length
+    ? outs.map((o) => { const [cls, txt] = muxOutState(o, MUX_OUT.running); return `<span class="mux-pill ${cls}" title="${esc(txt)}"><i></i>${esc(o.name)}</span>`; }).join('')
+    : '<span class="muted">no transmitter output — click to add one</span>';
+}
+pollMuxOutputs();
+setInterval(pollMuxOutputs, 5000);
 
 function updateTxModeVisibility() {
   const mode = ($('#m_txmode')?.value || 'EASYDAB').toUpperCase();
@@ -1589,12 +1647,13 @@ function updateTxModeVisibility() {
 // ── Multiplex dialog: transmitter outputs of the NETWORK mode (server: odr/outputs.js) ──
 let NET_OUTPUTS = [];          // outputs being edited (saved as settings.dabmux.outputs)
 let netStatusTimer = null;     // connection state polling while the dialog is open
-const NET_TYPE_LABEL = { 'edi-udp': 'EDI/UDP', 'edi-tcp': 'EDI/TCP', zmq: 'ZMQ', 'eti-tcp': 'ETI/TCP' };
+const NET_TYPE_LABEL = { 'edi-udp': 'EDI/UDP', 'edi-tcp': 'EDI/TCP', zmq: 'ZMQ', 'eti-tcp': 'ETI/TCP', hackrf: 'HackRF' };
 const NET_HELP = {
   'edi-udp': 'DABcast sends EDI to the transmitter: set its EDI input to UDP, port below (multicast: join the group). Use PFT / FEC.',
   'edi-tcp': 'The transmitter, a digris-edi-tcp-converter or a remote odr-dabmod connects to this server on this port (EDI over TCP).',
   zmq: 'The EasyDAB V2 (or ODR-DabMod) connects to this server on this port (ZMQ client).',
   'eti-tcp': 'The receiver connects to this server on this port and reads raw ETI.',
+  hackrf: 'HackRF plugged into this server: odr-dabmod modulates (through the internal EDI port) and hackrf_transfer transmits — same chain and settings as the HackRF TX mode. Only one HackRF output.',
 };
 const serverHost = () => location.hostname || 'this server';
 function netNextPort(from) {
@@ -1613,9 +1672,18 @@ function netNewId(type) {
 function netOutputsFromLegacy() {
   const dm = STATE.settings.dabmux || {};
   const was = String(dm.txMode || 'EASYDAB').toUpperCase();
-  if (was === 'EDI') return [{ id: 'edi', name: 'EDI', enabled: true, type: 'edi-tcp', port: Number($('#m_edi_port').value) || 13000 }];
-  if (was === 'EASYDAB') return [{ id: 'easydab', name: 'EasyDAB', enabled: true, type: 'zmq', ip: $('#m_easydab_ip').value.trim() || '0.0.0.0', port: Number($('#m_easydab_port').value) || 18081, allowMetadata: false }];
-  return [];
+  if (was === 'EDI') {   // same port, same PFT / FEC and TIST offset (GatesAir profile)
+    $('#m_net_pft').checked = dm.ediPftEnabled === true;
+    $('#m_net_fec').value = dm.ediFec ?? 2;
+    $('#m_net_tist').value = dm.ediTistOffsetSec ?? 0;
+    return [{ id: 'edi', name: 'EDI', enabled: true, type: 'edi-tcp', port: Number(dm.ediTcpListenPort) || 13000 }];
+  }
+  if (was === 'EASYDAB') return [{ id: 'easydab', name: 'EasyDAB V2', enabled: true, type: 'zmq', ip: dm.easyDabOutput?.ip || '0.0.0.0', port: Number(dm.easyDabOutput?.port) || 18081, allowMetadata: false }];
+  if (was === 'HACKRF') {   // same chain: odr-dabmod on the same internal EDI port, same settings
+    const hk = dm.hackrf || {};
+    return [{ id: 'hackrf', name: 'HackRF', enabled: true, type: 'hackrf', port: Number(dm.ediTcpListenPort) || 13000, dabBlock: hk.dabBlock || '7A', txGain: hk.txGain ?? 47, maxFramesQueued: hk.maxFramesQueued ?? 580, gainmode: hk.gainmode ?? 2, digitalGain: hk.digitalGain ?? 1, rate: hk.rate || 4096000 }];
+  }
+  return [];   // USRP1 (no longer offered): add an output
 }
 function netAdd(kind) {
   const presets = {
@@ -1624,6 +1692,7 @@ function netAdd(kind) {
     'edi-tcp': () => ({ type: 'edi-tcp', name: 'EDI/TCP', port: netNextPort(13000) }),
     zmq: () => ({ type: 'zmq', name: 'EasyDAB V2', ip: '0.0.0.0', port: netNextPort(18081), allowMetadata: false }),
     'eti-tcp': () => ({ type: 'eti-tcp', name: 'ETI/TCP', ip: '0.0.0.0', port: netNextPort(9902) }),
+    hackrf: () => ({ type: 'hackrf', name: 'HackRF', port: netNextPort(13090), dabBlock: '7A', txGain: 47, maxFramesQueued: 580, gainmode: 2, digitalGain: 1, rate: 4096000 }),
   };
   const o = { enabled: true, ...presets[kind]() };
   o.id = netNewId(o.type);
@@ -1652,6 +1721,19 @@ function renderNetOutputs() {
         + (mc ? netField(o, i, 'source', 'Interface IP', 'placeholder="this server" class="net-ip"') + netField(o, i, 'ttl', 'TTL', 'type="number" min="1" max="255"') : '');
     } else if (o.type === 'edi-tcp') {
       fields = netField(o, i, 'port', 'Listen port', 'type="number" min="1024" max="65535"');
+    } else if (o.type === 'hackrf') {
+      // same choices as the HackRF fields of the HACKRF TX mode
+      const sel = (key, label, optionsHtml) => `<label class="net-inline"><span>${label}</span><select data-net="${i}" data-key="${key}">${optionsHtml}</select></label>`;
+      const blocks = Object.keys(DAB_FREQ_TABLE).map((ch) => `<option value="${ch}"${ch === o.dabBlock ? ' selected' : ''}>${ch} (${(DAB_FREQ_TABLE[ch] / 1e6).toFixed(3)} MHz)</option>`).join('');
+      const fromSel = (id, v) => [...document.querySelectorAll(`#${id} option`)].map((op) => `<option value="${op.value}"${String(op.value) === String(v) ? ' selected' : ''}>${esc(op.textContent)}</option>`).join('');
+      fields = sel('dabBlock', 'DAB block', blocks)
+        + netField(o, i, 'txGain', 'TX gain (0-47)', 'type="number" min="0" max="47"')
+        + sel('gainmode', 'Gain mode', fromSel('m_hackrf_gainmode', o.gainmode))
+        + netField(o, i, 'digitalGain', 'Digital gain', 'type="number" min="0" max="10" step="0.1"')
+        + sel('rate', 'Sample rate', fromSel('m_hackrf_rate', o.rate))
+        + netField(o, i, 'maxFramesQueued', 'Max frames queued', 'type="number" min="1" max="2000"')
+        + netField(o, i, 'port', 'Internal EDI port', 'type="number" min="1024" max="65535"')
+        + `<span class="net-inline"><button type="button" class="btn btn-sm" data-hackrf-check>Check HackRF</button></span><span class="net-help hackrf-check-result"></span>`;
     } else {
       fields = netField(o, i, 'ip', 'Listen IP', 'placeholder="0.0.0.0" class="net-ip"') + netField(o, i, 'port', 'Port', 'type="number" min="1024" max="65535"')
         + (o.type === 'zmq' ? `<label class="check-row net-inline"><input type="checkbox" data-net="${i}" data-key="allowMetadata" ${o.allowMetadata ? 'checked' : ''} /> send timestamps (metadata)</label>` : '');
@@ -1667,7 +1749,7 @@ function renderNetOutputs() {
     const shared = isEdi
       ? ' PFT / FEC and the TIST offset are shared by all outputs that use them (one value per multiplex in odr-dabmux).'
       : (o.type === 'zmq' && o.allowMetadata ? ' TIST offset: buffer delay read by the EasyDAB V2 when timestamps are sent (2 s), shared by all outputs that use it.' : '');
-    const help = (o.type === 'edi-udp' ? NET_HELP['edi-udp'] : `${NET_HELP[o.type]} Address: ${serverHost()}:${o.port}`) + shared;
+    const help = (o.type === 'edi-udp' || o.type === 'hackrf' ? NET_HELP[o.type] : `${NET_HELP[o.type]} Address: ${serverHost()}:${o.port}`) + shared;
     return `<div class="net-row${o.enabled ? '' : ' off'}">
       <div class="net-row-head">
         <label class="check-row" title="ON = fed by the multiplex"><input type="checkbox" data-net="${i}" data-key="enabled" ${o.enabled ? 'checked' : ''} /></label>
@@ -1722,6 +1804,23 @@ $('#netOutputs')?.addEventListener('click', (e) => {
   updateMuxRestartWarn();
 });
 $('#netAdd')?.addEventListener('click', () => netAdd($('#netAddType').value));
+// 'Check HackRF': hackrf_info on the server (read-only, never transmits)
+async function checkHackrf(resultEl) {
+  resultEl.className = 'net-help hackrf-check-result';
+  resultEl.textContent = 'Checking…';
+  try {
+    const r = await api('/api/hackrf/check', { method: 'POST', body: '{}' });
+    resultEl.textContent = `${r.ok ? '✓' : '⚠'} ${r.message}`;
+    resultEl.classList.add(r.ok ? 'ok' : 'err');
+  } catch (err) {
+    resultEl.textContent = `⚠ ${err.message || err}`;
+    resultEl.classList.add('err');
+  }
+}
+document.getElementById('dlgMux')?.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-hackrf-check]');
+  if (b) checkHackrf(b.closest('.net-fields, .hackrf-check-row').querySelector('.hackrf-check-result'));
+});
 // connection state of each output (read-only, every 5 s while the dialog is open ON AIR)
 async function refreshNetStatus() {
   if (!dlgMux.open || ($('#m_txmode').value || '') !== 'NETWORK') return;
@@ -1736,6 +1835,11 @@ async function refreshNetStatus() {
     if (!st.running || !saved) txt = st.running ? 'saved settings not applied yet' : 'off air';
     else if (!o.enabled) txt = 'OFF';
     else if (o.type === 'edi-udp') { txt = `sending to ${o.destination}:${o.port}`; cls = 'ok'; }
+    else if (o.type === 'hackrf') {
+      const l = s?.local;
+      if (l?.dabmod && l?.hackrf) { txt = `transmitting on ${o.dabBlock} (odr-dabmod + hackrf_transfer running)`; cls = 'ok'; }
+      else { txt = `chain stopped: odr-dabmod ${l?.dabmod ? 'running' : 'NOT running'}, hackrf_transfer ${l?.hackrf ? 'running' : 'NOT running'} — see Logs`; cls = 'warn'; }
+    }
     else if (!s) txt = 'not applied yet (save to apply)';
     else if (s.connected?.length) { txt = `${s.connected.length} connected: ${s.connected.join(', ')}`; cls = 'ok'; }
     else { txt = 'no transmitter connected'; cls = 'warn'; }
@@ -2991,7 +3095,6 @@ if (btnDablin) {
   }
 }
 
-$('#btnMux').addEventListener('click', openMuxDialog);
 $('#btnAdd').addEventListener('click', () => openDialogFor(null));
 $('#svcSearch')?.addEventListener('input', (e) => { VIEW.q = e.target.value; render(); });
 $('#svcSearch')?.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.target.value = ''; VIEW.q = ''; render(); e.target.blur(); } });
@@ -3760,7 +3863,7 @@ document.addEventListener('mousedown', (e) => {
       if (o.hidden || o.style.display === 'none') continue;
       const it = document.createElement('div');
       it.className = 'sel-pop-item' + (o.selected ? ' selected' : '') + (o.disabled ? ' disabled' : '');
-      it.textContent = o.textContent;
+      it.textContent = o.dataset.full || o.textContent;   // e.g. ECC: short code in the field, countries in the list
       if (!o.disabled) it.addEventListener('click', () => {
         closeSelPop();
         if (sel.value !== o.value) { sel.value = o.value; sel.dispatchEvent(new Event('input', { bubbles: true })); sel.dispatchEvent(new Event('change', { bubbles: true })); }

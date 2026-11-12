@@ -11,7 +11,10 @@ describe('outputs — normalize', () => {
       destination: '192.168.10.20', port: 12000, sourcePort: 13000, source: '', ttl: 1,
     });
     assert.equal(normalizeOutput({ type: 'zmq' }).allowMetadata, false);
-    assert.equal(normalizeOutput({ type: 'bogus' }).type, 'edi-tcp', 'unknown type → EDI/TCP');
+    const u = normalizeOutput({ type: 'bogus', name: 'Future', dabBlock: '5A' });
+    assert.deepEqual([u.type, u.unknown, u.dabBlock], ['bogus', true, '5A'], 'unknown type kept as it is, never turned into EDI/TCP');
+    assert.match(validateOutputs([u]).join(), /unknown output type "bogus"/);
+    assert.doesNotMatch(buildOutputLines([u]).join('\n'), /Future|bogus/, 'not written to the .mux');
     assert.equal(normalizeOutput({ type: 'zmq', id: 'a b/c' }).id, 'a_b_c', 'safe id');
   });
 });
@@ -26,8 +29,9 @@ describe('outputs — from the legacy modes (pre-filled list, nothing converted 
     const l = outputsFromLegacy({ txMode: 'EDI', ediTcpListenPort: 13001 });
     assert.deepEqual([l[0].type, l[0].port], ['edi-tcp', 13001]);
   });
-  it('HACKRF / USRP1 → no network output', () => {
-    assert.deepEqual(outputsFromLegacy({ txMode: 'HACKRF' }), []);
+  it('HACKRF → one HackRF output with the same settings and internal port; USRP1 → none', () => {
+    const l = outputsFromLegacy({ txMode: 'HACKRF', ediTcpListenPort: 13000, hackrf: { dabBlock: '5A', txGain: 30 } });
+    assert.deepEqual([l[0].type, l[0].port, l[0].dabBlock, l[0].txGain, l[0].rate], ['hackrf', 13000, '5A', 30, 4096000]);
     assert.deepEqual(outputsFromLegacy({ txMode: 'USRP1' }), []);
   });
 });
@@ -103,5 +107,27 @@ describe('outputs — .mux lines', () => {
     const t = text([{ id: 'a', type: 'zmq', port: 18081 }, { id: 'b', type: 'edi-udp', destination: '10.0.0.1', enabled: false }]);
     assert.doesNotMatch(t, /edi \{/);
     assert.doesNotMatch(t, /10\.0\.0\.1/);
+  });
+});
+
+describe('outputs — HackRF (local SDR)', () => {
+  it('defaults = the HACKRF mode settings; internal EDI/TCP port for odr-dabmod', () => {
+    const o = normalizeOutput({ type: 'hackrf' });
+    assert.deepEqual([o.port, o.dabBlock, o.txGain, o.maxFramesQueued, o.gainmode, o.digitalGain, o.rate], [13090, '7A', 47, 580, 2, 1, 4096000]);
+    const t = buildOutputLines([o]).join('\n');
+    assert.match(t, /protocol tcp\n {16}listenport 13090\n/);
+  });
+  it('validation: one HackRF ON at most, known DAB block, TX gain 0-47', () => {
+    const two = normalizeOutputs([{ type: 'hackrf', port: 13090 }, { type: 'hackrf', port: 13091 }]);
+    assert.match(validateOutputs(two).join(), /Only one HackRF output/);
+    assert.match(validateOutputs(normalizeOutputs([{ type: 'hackrf', dabBlock: '99Z' }])).join(), /unknown DAB block/);
+    assert.match(validateOutputs(normalizeOutputs([{ type: 'hackrf', txGain: 60 }])).join(), /TX gain/);
+    assert.deepEqual(validateOutputs(normalizeOutputs([{ type: 'hackrf' }, { type: 'zmq', port: 18081 }])), []);
+  });
+  it('PFT never applied for a HackRF alone (field hidden; HACKRF mode feeds odr-dabmod without PFT)', () => {
+    const alone = buildOutputLines(normalizeOutputs([{ type: 'hackrf' }]), { ediOptions: { pft: true, fec: 2 } }).join('\n');
+    assert.match(alone, /enable_pft false/);
+    const withUdp = buildOutputLines(normalizeOutputs([{ type: 'hackrf' }, { type: 'edi-udp', destination: '10.0.0.1' }]), { ediOptions: { pft: true, fec: 2 } }).join('\n');
+    assert.match(withUdp, /enable_pft true\n {8}fec 2/);
   });
 });

@@ -4,19 +4,24 @@
 //   eti-tcp  raw ETI over TCP, dabmux listens
 //   edi-tcp  EDI over TCP, dabmux listens (transmitters / digris-edi-tcp-converter connect to it)
 //   edi-udp  EDI over UDP, dabmux sends to the transmitter (unicast or multicast)
+//   hackrf   local SDR: an internal EDI/TCP output (port) read by odr-dabmod on this machine, which
+//            feeds hackrf_transfer — the chain of the HACKRF mode, same settings (started by appState)
 // PFT / FEC is ONE setting for all EDI outputs (ediOptions): odr-dabmux 5.1.0 reads enable_pft / fec
 // only at the level of the edi block (DabMux.cpp), a per-destination value would be ignored.
 // Only one ZMQ output can carry metadata: its block name "zeromq" must be unique in the config.
 // The legacy modes (EASYDAB / EDI / HACKRF / USRP1) do not use this list and are unchanged.
 // Pure functions: no I/O, used by muxBuilder (config text), the settings route and the UI.
 
-export const OUTPUT_TYPES = ['zmq', 'eti-tcp', 'edi-tcp', 'edi-udp'];
+import { DAB_FREQ_TABLE } from '../defaults.js';
+
+export const OUTPUT_TYPES = ['zmq', 'eti-tcp', 'edi-tcp', 'edi-udp', 'hackrf'];
 
 const DEFAULTS = {
   zmq: { ip: '0.0.0.0', port: 18081, allowMetadata: false },
   'eti-tcp': { ip: '0.0.0.0', port: 9902 },
   'edi-tcp': { port: 13000 },
   'edi-udp': { destination: '', port: 12000, sourcePort: 13000, source: '', ttl: 1 },
+  hackrf: { port: 13090, dabBlock: '7A', txGain: 47, maxFramesQueued: 580, gainmode: 2, digitalGain: 1, rate: 4096000 },
 };
 
 const isPort = (p) => Number.isInteger(p) && p >= 1 && p <= 65535;
@@ -25,7 +30,12 @@ const isMulticast = (s) => isIpv4(s) && Number(s.split('.')[0]) >= 224 && Number
 
 // One output with its defaults, unknown fields dropped, numbers coerced. Never throws.
 export function normalizeOutput(o, index = 0) {
-  const type = OUTPUT_TYPES.includes(o?.type) ? o.type : 'edi-tcp';
+  // an unknown type is KEPT as it is (with its fields) and refused by validateOutputs: never turned
+  // silently into another type (an older DABcast once saved a HackRF output as an EDI/TCP one)
+  if (!OUTPUT_TYPES.includes(o?.type)) {
+    return { ...o, id: String(o?.id || `out${index + 1}`), name: String(o?.name ?? '').trim() || `Output ${index + 1}`, enabled: o?.enabled !== false, type: String(o?.type ?? ''), unknown: true };
+  }
+  const type = o.type;
   const d = DEFAULTS[type];
   const out = {
     id: String(o?.id || `out${index + 1}`).replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 32) || `out${index + 1}`,
@@ -56,11 +66,17 @@ export function outputsFromLegacy(dabmux = {}) {
   }
   if (mode === 'EASYDAB') {
     return normalizeOutputs([{
-      id: 'easydab', name: 'EasyDAB', type: 'zmq',
+      id: 'easydab', name: 'EasyDAB V2', type: 'zmq',
       ip: dabmux.easyDabOutput?.ip || '0.0.0.0', port: Number(dabmux.easyDabOutput?.port) || 18081,
     }]);
   }
-  return [];   // HACKRF / USRP1: local modulator chain, no network output
+  if (mode === 'HACKRF') {   // same chain: odr-dabmod on the same internal EDI port, same settings
+    const hk = dabmux.hackrf || {};
+    return normalizeOutputs([{ id: 'hackrf', name: 'HackRF', type: 'hackrf', port: Number(dabmux.ediTcpListenPort) || 13000,
+      dabBlock: hk.dabBlock || '7A', txGain: hk.txGain ?? 47, maxFramesQueued: hk.maxFramesQueued ?? 580, gainmode: hk.gainmode ?? 2,
+      digitalGain: hk.digitalGain ?? 1, rate: hk.rate || 4096000 }]);
+  }
+  return [];   // USRP1 (no longer offered): no output
 }
 
 // Errors (array of strings, empty = valid). reserved: Map port -> what uses it (service inputs,
@@ -73,6 +89,7 @@ export function validateOutputs(list, { reserved = new Map(), ediOptions = norma
   const ids = new Set();
   for (const o of list) {
     const label = `"${o.name}"`;
+    if (o.unknown) { errors.push(`${label}: unknown output type "${o.type}" (made by a newer DABcast?) — update DABcast or remove this output`); continue; }
     if (ids.has(o.id)) errors.push(`${label}: duplicate id ${o.id}`);
     ids.add(o.id);
     if (!isPort(o.port)) { errors.push(`${label}: port must be 1-65535`); continue; }
@@ -82,6 +99,11 @@ export function validateOutputs(list, { reserved = new Map(), ediOptions = norma
       if (o.source && !isIpv4(o.source)) errors.push(`${label}: source interface must be an IPv4 address of this machine`);
       if (isMulticast(o.destination) && !(Number.isInteger(o.ttl) && o.ttl >= 1 && o.ttl <= 255)) errors.push(`${label}: multicast TTL must be 1-255`);
       continue;   // dabmux sends: the port is on the transmitter, not on this machine
+    }
+    if (o.type === 'hackrf') {
+      if (!DAB_FREQ_TABLE[o.dabBlock]) errors.push(`${label}: unknown DAB block ${o.dabBlock}`);
+      if (!(Number.isFinite(o.txGain) && o.txGain >= 0 && o.txGain <= 47)) errors.push(`${label}: TX gain must be 0-47`);
+      if (!(Number.isInteger(o.maxFramesQueued) && o.maxFramesQueued >= 1 && o.maxFramesQueued <= 2000)) errors.push(`${label}: max frames queued must be 1-2000`);
     }
     if (o.type === 'zmq' || o.type === 'eti-tcp') {
       if (!isIpv4(o.ip)) errors.push(`${label}: listen address must be an IPv4 address (0.0.0.0 = all interfaces)`);
@@ -93,6 +115,7 @@ export function validateOutputs(list, { reserved = new Map(), ediOptions = norma
     }
   }
   if (!list.some((o) => o.enabled)) errors.push('At least one output must be ON');
+  if (list.filter((o) => o.enabled && o.type === 'hackrf').length > 1) errors.push('Only one HackRF output can be ON (one local device)');
   if (list.filter((o) => o.enabled && o.type === 'zmq' && o.allowMetadata).length > 1) {
     errors.push('Only one ZMQ output can send timestamps (metadata): untick it on the others');
   }
@@ -106,7 +129,7 @@ export function validateOutputs(list, { reserved = new Map(), ediOptions = norma
 // outputs applies back-pressure).
 export function buildOutputLines(list, { monitorIp = '0.0.0.0', monitorPort = 9901, ediOptions = {} } = {}) {
   const edio = normalizeEdiOptions(ediOptions);
-  const on = normalizeOutputs(list).filter((o) => o.enabled);
+  const on = normalizeOutputs(list).filter((o) => o.enabled && !o.unknown);
   const lines = ['    throttle "simul://"'];
   // one-line outputs: "out_" prefix so that an id never collides with edi / zeromq / throttle / dablin
   for (const o of on.filter((x) => x.type === 'zmq')) {
@@ -123,13 +146,13 @@ export function buildOutputLines(list, { monitorIp = '0.0.0.0', monitorPort = 99
   for (const o of on.filter((x) => x.type === 'eti-tcp')) {
     lines.push(`    out_${o.id} "tcp://${o.ip}:${o.port}"`);
   }
-  const edi = on.filter((x) => x.type === 'edi-tcp' || x.type === 'edi-udp');
+  const edi = on.filter((x) => x.type === 'edi-tcp' || x.type === 'edi-udp' || x.type === 'hackrf');
   if (edi.length) {
     lines.push('    edi {');
     lines.push('        destinations {');
     for (const o of edi) {
       lines.push(`            ${o.id} {`);
-      if (o.type === 'edi-tcp') {
+      if (o.type === 'edi-tcp' || o.type === 'hackrf') {   // hackrf: local odr-dabmod connects here
         lines.push('                protocol tcp');
         lines.push(`                listenport ${o.port}`);
       } else {
@@ -143,12 +166,18 @@ export function buildOutputLines(list, { monitorIp = '0.0.0.0', monitorPort = 99
       lines.push('            }');
     }
     lines.push('        }');
-    // common to every EDI output (see above); PFT is usual for UDP, useless (but harmless) on TCP
-    lines.push(`        enable_pft ${edio.pft ? 'true' : 'false'}`);
-    if (edio.pft) lines.push(`        fec ${edio.fec}`);
+    // common to every EDI output (see above); PFT is usual for UDP, useless (but harmless) on TCP.
+    // Only with a real EDI output: the PFT field is not shown for a HackRF alone, and the HACKRF mode
+    // feeds odr-dabmod without PFT — same here.
+    const pft = edio.pft && edi.some((x) => x.type !== 'hackrf');
+    lines.push(`        enable_pft ${pft ? 'true' : 'false'}`);
+    if (pft) lines.push(`        fec ${edio.fec}`);
     lines.push('    }');
   }
   lines.push(`    dablin "tcp://${monitorIp}:${monitorPort}"`);
   return lines;
 }
 
+
+// The enabled HackRF output of a NETWORK outputs list (normalized), or null
+export const localHackrfOutput = (list) => normalizeOutputs(list).find((o) => o.enabled && o.type === 'hackrf') || null;
