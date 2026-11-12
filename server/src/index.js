@@ -633,7 +633,12 @@ app.get('/api/export/service/:id', (req, res) => {
 app.get('/api/export/all-services', (req, res) => {
   // Set response headers for ZIP download
   res.setHeader('Content-Type', 'application/zip');
-  res.setHeader('Content-Disposition', 'attachment; filename="all-services.zip"');
+  // all-services-<ensemble label>.zip (same naming as the configuration export of the web UI)
+  const muxName = String(state.settings?.ensemble?.label || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '')
+    || String(state.preset?.id || 'dabcast').replace(/[^A-Za-z0-9_-]+/g, '_');
+  res.setHeader('Content-Disposition', `attachment; filename="all-services-${muxName}.zip"`);
 
   // Create ZIP archive
   const archive = archiver('zip', { zlib: { level: 9 } });

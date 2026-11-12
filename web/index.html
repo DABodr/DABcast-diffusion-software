@@ -99,6 +99,7 @@
               <th class="col-status"><span class="hide-mobile">Status</span><span class="show-mobile">Sts</span></th>
               <th>PS8 / PS16</th>
               <th class="col-pid hide-mobile">PID</th>
+              <th class="col-pty hide-mobile">PTY</th>
               <th class="col-bitrate">Bitrate</th>
               <th class="col-cu">CU</th>
               <th class="col-prot">Prot</th>
@@ -816,7 +817,7 @@
       <div class="modal-head">
         <div>
           <div class="modal-title">Audio levels</div>
-          <div class="modal-sub">Peaks measured by odr-dabmux, sliding 5-minute window (measured while this page is open)</div>
+          <div class="modal-sub">Peaks measured by odr-dabmux over a sliding window (measured while this page is open)</div>
         </div>
         <button class="icon" value="cancel" aria-label="Close">✕</button>
       </div>
@@ -829,12 +830,19 @@
             <option value="-12">-12 dBFS (quiet)</option>
           </select>
         </label>
+        <label>Analysis window
+          <select id="lvWindow">
+            <option value="5">5 min</option>
+            <option value="15">15 min</option>
+            <option value="30">30 min</option>
+          </select>
+        </label>
         <button id="lvReset" class="btn btn-sm" type="button">Reset measurement</button>
         <div class="spacer"></div>
         <button id="lvApplyAll" class="btn btn-sm btn-primary" type="button" disabled>Apply all</button>
       </div>
       <div id="lvTable"></div>
-      <p class="hint">Typical peak = median of the peaks (silence ignored). Max = highest peak measured; in red when the audio clips (above -1 dBFS) — the suggestion then always lowers the gain, back to 0 dB at least if a boost was added. A boost is limited to +6 dB per step: apply, then measure again. Peaks are not perceived loudness: two stations with the same peaks can sound different depending on their processing — use the suggestion as a starting point. Apply saves the gain and restarts only that service's encoder (2–3 s gap on that service, the multiplex keeps running).</p>
+      <p class="hint">Typical peak = median of the peaks (silence ignored). Max = highest peak measured; in red above -3 dBFS: AAC encoding raises the decoded peaks by 1-3 dB, so higher peaks can crackle in receivers — the suggestion then lowers the gain, unless they are isolated (fewer than 3 samples above -3 dBFS and no encoder clipping): those only prevent a boost. CLIP = odr-audioenc reported clipping in the window: at least -2 dB is suggested. A longer analysis window (15-30 min, songs + ads + jingles) gives a more reliable suggestion. A boost is limited to +6 dB per step: apply, then measure again. Peaks are not perceived loudness: two stations with the same peaks can sound different depending on their processing — use the suggestion as a starting point. Apply saves the gain and restarts only that service's encoder (2–3 s gap on that service, the multiplex keeps running).</p>
       <div class="modal-actions">
         <div class="spacer"></div>
         <button value="cancel" class="btn">Close</button>
