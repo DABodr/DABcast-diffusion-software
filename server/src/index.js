@@ -21,6 +21,7 @@ import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import { convertToSlide as convertSlideImage, removeBlackBands } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
+import { normalizeOutputs, normalizeEdiOptions, validateOutputs } from './odr/outputs.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
@@ -410,9 +411,36 @@ app.get('/api/settings', (req, res) => {
   res.json({ settings });
 });
 
+// NETWORK mode: ports a listening transmitter output must not take (this machine's other uses)
+function reservedForOutputs(dabmux) {
+  const r = new Map([[8080, 'lighttpd'], [9099, 'the audio probe'], [listenPort, 'the DABcast web interface']]);
+  for (const k of ['managementPort', 'telnetPort']) if (Number(dabmux[k])) r.set(Number(dabmux[k]), `dabmux ${k}`);
+  const zmqEp = /:(\d+)$/.exec(String(dabmux.zmqEndpoint || ''));
+  if (zmqEp) r.set(Number(zmqEp[1]), 'dabmux remote control (ZMQ)');
+  r.set(Number(dabmux.easyDabOutput?.netPort) || 9901, 'the ETI monitoring output (Player / Dablin)');
+  for (const svc of state.preset?.services || []) {
+    const port = Number(svc.network?.ediOutputTcp?.port);
+    if (port) r.set(port, `the input port of ${svc.identity?.ps8 || svc.id}`);
+  }
+  return r;
+}
+
 app.patch('/api/settings', (req, res) => {
   try {
     const patch = req.body || {};
+    // Transmitter outputs (NETWORK mode): normalized and checked BEFORE anything is changed
+    if (patch.dabmux) {
+      const next = { ...settings.dabmux, ...patch.dabmux };
+      if (patch.dabmux.outputs !== undefined) patch.dabmux.outputs = normalizeOutputs(patch.dabmux.outputs);
+      if (patch.dabmux.ediOptions !== undefined) patch.dabmux.ediOptions = normalizeEdiOptions(patch.dabmux.ediOptions);
+      if (String(next.txMode || '').toUpperCase() === 'NETWORK') {
+        const errors = validateOutputs(normalizeOutputs(patch.dabmux.outputs ?? next.outputs), {
+          reserved: reservedForOutputs(next),
+          ediOptions: normalizeEdiOptions(patch.dabmux.ediOptions ?? next.ediOptions),
+        });
+        if (errors.length) throw new Error(`Transmitter outputs: ${errors.join(' · ')}`);
+      }
+    }
 
     if (patch.preset) {
       if (patch.preset.name !== undefined) {
@@ -919,7 +947,7 @@ app.post('/api/dablin/start', (req, res) => {
     // Check TX mode
     const txMode = (settings.dabmux?.txMode || 'EASYDAB').toUpperCase();
 
-    if (txMode === 'EDI' || txMode === 'HACKRF') {
+    if (txMode === 'EDI' || txMode === 'HACKRF' || txMode === 'NETWORK') {
       // DABlin receives the dedicated raw ETI monitoring output. This remains
       // compatible when the transmitter-facing EDI output uses PFT/FEC.
       try {
@@ -1146,7 +1174,7 @@ app.get('/api/mux/stats', async (req, res) => {
 
 // Web player: decodes one service of the running mux from its ETI monitoring output (the same
 // read-only source as the Dablin button) and streams it as MP3. See player.js.
-const PLAYER_TX_MODES = ['EDI', 'HACKRF', 'EASYDAB'];
+const PLAYER_TX_MODES = ['EDI', 'HACKRF', 'EASYDAB', 'NETWORK'];
 app.get('/api/player/info', (req, res) => {
   const txMode = (state.settings?.dabmux?.txMode || 'EASYDAB').toUpperCase();
   res.json({
