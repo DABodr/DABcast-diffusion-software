@@ -88,7 +88,7 @@ export function classifyItemType(raw) {
 // Common field names next to the title, for APIs where no key is configured.
 const SIBLING_NAMES = {
   start: ['start', 'starttime', 'start_time', 'started', 'startedat', 'started_at', 'playedat', 'played_at', 'playtime', 'play_time', 'airtime', 'air_time'],
-  duration: ['duration', 'durationms', 'duration_ms', 'durationseconds', 'duration_seconds', 'length', 'runtime'],
+  duration: ['duration', 'durationms', 'duration_ms', 'durationseconds', 'duration_seconds', 'durationinseconds', 'length', 'runtime'],
   type: ['type', 'kind', 'category', 'itemtype', 'item_type', 'class'],
 };
 // Value of a scalar field named like `kind` in the object holding the title, or the one above it
@@ -1021,6 +1021,28 @@ export class AppState {
     try {
       const res = await fetch(url, { signal: ctrl.signal });
       if (!res.ok) return '';
+      // Server-Sent Events feeds (text/event-stream, e.g. lorfm.com/ws/metas) never end: read up to
+      // the first event carrying data and return that data (the JSON), then close the connection
+      if (/text\/event-stream/i.test(res.headers.get('content-type') || '')) {
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        try {
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true }).replace(/\r/g, '');
+            const events = buf.split('\n\n');
+            for (const ev of events.slice(0, -1)) {   // complete events only
+              const data = ev.split('\n').filter((l) => l.startsWith('data:')).map((l) => l.slice(5).replace(/^ /, ''));
+              if (data.length && data.join('').trim()) return data.join('\n');
+            }
+          }
+        } finally {
+          reader.cancel().catch(() => {});
+        }
+        return '';
+      }
       return await res.text();
     } catch {
       return '';

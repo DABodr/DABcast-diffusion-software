@@ -19,6 +19,7 @@ import { OdrProcessManager } from './odr/processManager.js';
 import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import { convertToSlide as convertSlideImage, removeBlackBands } from './slideImage.js';
+import { detectJsonKeys } from './utils/jsonKeys.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
@@ -1205,6 +1206,21 @@ app.post('/api/metadata/test/json', async (req, res) => {
     res.json({ ok: true, artist, title, coverUrl });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+// 'Detect keys' (Metadata tab, JSON mode): read-only, suggests the artist / title / cover keys
+app.post('/api/metadata/detect/json', async (req, res) => {
+  try {
+    const url = String(req.body?.url || '').trim();
+    if (!/^https?:\/\//i.test(url)) return res.json({ ok: false, error: 'HTTP(S) URL required' });
+    const text = await state._fetchText(url, 5000);
+    if (!text) return res.json({ ok: false, error: 'Empty response' });
+    let data;
+    try { data = JSON.parse(text); } catch { return res.json({ ok: false, error: 'Not JSON (is it the API address, not the web page?)' }); }
+    res.json({ ok: true, ...detectJsonKeys(data) });
+  } catch (e) {
+    res.json({ ok: false, error: String(e.message || e) });
   }
 });
 
