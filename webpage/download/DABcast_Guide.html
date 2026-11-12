@@ -419,8 +419,8 @@
     <td>Save and restore complete multiplex configurations as JSON presets. Import/export individual services or full configurations.</td>
   </tr>
   <tr>
-    <td><strong>Transmission modes</strong></td>
-    <td>EASYDAB (network output), EDI, HackRF and USRP1 RF output modes, and <strong>Network outputs</strong>: several transmitters at once (EDI/UDP, EDI/TCP, ZMQ, ETI), with their connection state.</td>
+    <td><strong>Transmitter outputs</strong></td>
+    <td>One or several transmitters at once, each added as an output: EasyDAB V2 (ZMQ), commercial modulators (EDI/UDP), converters and remote sites (EDI/TCP), raw ETI, and a HackRF plugged into the server — with their connection state.</td>
   </tr>
 </table>
 
@@ -430,8 +430,8 @@
 odr-padenc × N   ──FIFO──► odr-audioenc</pre>
 
 <p>Each radio service (programme) runs its own <code>odr-audioenc</code> and <code>odr-padenc</code>
-instance. All audio streams are fed into a single <code>odr-dabmux</code> instance. In HACKRF or
-USRP1 mode, <code>odr-dabmod</code> generates the RF signal.</p>
+instance. All audio streams are fed into a single <code>odr-dabmux</code> instance. With a HackRF
+(HACKRF mode or HackRF output), <code>odr-dabmod</code> generates the RF signal.</p>
 </div>
 
 <!-- Page 2: System Requirements & Installation -->
@@ -505,7 +505,7 @@ or the web port, or to sign out.</p>
   <li><strong>Ensemble name:</strong> the DAB+ ensemble label broadcast to receivers</li>
   <li><strong>EID:</strong> Ensemble Identifier (hex, e.g. <code>0x1001</code>)</li>
   <li><strong>Frequency:</strong> transmit frequency in MHz (for HACKRF/USRP mode)</li>
-  <li><strong>TX mode:</strong> EASYDAB, EDI, HACKRF, USRP1 or Network outputs — see <em>Transmitter Outputs</em></li>
+  <li><strong>Transmitter outputs:</strong> one or several transmitters — see <em>Transmitter Outputs</em></li>
   <li><strong>Gain:</strong> RF output gain (HACKRF mode)</li>
 </ul>
 
@@ -567,18 +567,11 @@ or the web port, or to sign out.</p>
 <div class="page" id="outputs">
 <h1>Transmitter Outputs</h1>
 
-<p>The <strong>TX mode</strong> of the <strong>Multiplex</strong> dialog says how the multiplex reaches the transmitter(s):</p>
-<table>
-  <tr><th>TX mode</th><th>Use</th></tr>
-  <tr><td><strong>EASYDAB</strong></td><td>One EasyDAB transmitter (ZMQ, port 18081 by default). The simplest choice for a single EasyDAB.</td></tr>
-  <tr><td><strong>EDI</strong></td><td>One transmitter connecting in EDI over TCP (port 13000), optional PFT / FEC and TIST offset (GatesAir profile).</td></tr>
-  <tr><td><strong>Network outputs</strong></td><td><strong>One or several transmitters at the same time</strong>, of any kind: EasyDAB, commercial modulators, converters, remote sites.</td></tr>
-  <tr><td><strong>HACKRF / USRP1</strong></td><td>Modulation on this machine (odr-dabmod) to a local SDR board.</td></tr>
-</table>
-<p>In every mode, a raw ETI copy (port 9901) is kept for the Player and Dablin.</p>
+<p>The <strong>Multiplex</strong> dialog lists the <strong>transmitter outputs</strong>: add one output per transmitter (EasyDAB V2, commercial modulator, converter, remote site, HackRF plugged into this server). They all carry the same multiplex, at the same time.</p>
+<p>Configurations made with a former version (TX mode EASYDAB, EDI or HackRF) are shown as the equivalent output when the dialog opens — same address, port and settings — and only saved that way when you press Save: an updated server keeps broadcasting exactly as before. A raw ETI copy (port 9901) is always kept for the Player and Dablin.</p>
 
-<h2>Network outputs</h2>
-<p>Choose <em>Network outputs</em>, then add one output per transmitter with the menu and <strong>+ Add</strong>. All outputs carry exactly the same multiplex; each one has its own name and ON/OFF switch. When you first choose this mode, the list starts with what your current mode was sending (e.g. your EasyDAB on the same port), so nothing changes for the transmitter.</p>
+<h2>Outputs</h2>
+<p>Add one output per transmitter with the menu and <strong>+ Add</strong>. All outputs carry exactly the same multiplex; each one has its own name and ON/OFF switch.</p>
 <table>
   <tr><th>Output</th><th>Who connects</th><th>What to set on the transmitter</th></tr>
   <tr><td><strong>ZMQ — EasyDAB V2</strong></td><td>The EasyDAB V2 connects to DABcast</td><td>Mux address = this server, port of the output (18081 by default). Optional <em>send timestamps (metadata)</em>: DABcast adds the transmission time of each frame and suggests a TIST offset of 2 s (needs Internet access at start-up for the leap-second list). Off by default: the EasyDAB V2 works with or without it. Only one ZMQ output can send timestamps.</td></tr>
@@ -586,6 +579,7 @@ or the web port, or to sign out.</p>
   <tr><td><strong>EDI/UDP multicast</strong></td><td>DABcast sends to a group</td><td>Several transmitters join the multicast group (e.g. 239.20.10.1) on the same network; set the TTL for routed networks</td></tr>
   <tr><td><strong>EDI/TCP</strong></td><td>The transmitter, a converter or a remote odr-dabmod connects to DABcast</td><td>EDI source = this server, port of the output (13000 by default)</td></tr>
   <tr><td><strong>ETI/TCP</strong></td><td>The receiver connects to DABcast</td><td>Raw ETI over TCP, for equipment that reads ETI</td></tr>
+  <tr><td><strong>HackRF — local SDR</strong></td><td>odr-dabmod on this server (internal EDI port)</td><td>A HackRF plugged into the DABcast server: same chain and settings as the former HackRF mode (DAB block, TX gain, gain mode, digital gain, sample rate). Only one HackRF output; its state shows whether odr-dabmod and hackrf_transfer are running.</td></tr>
 </table>
 <p>Two outputs cannot listen on the same port, and the ports already used by DABcast (service inputs, ETI copy, dabmux control ports, web interface) are refused when you save. ON AIR, an invalid change is refused <em>before</em> the multiplex is stopped.</p>
 

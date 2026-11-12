@@ -299,7 +299,6 @@ The `dabcast.service` file at the root contains commented `Environment=` lines f
   - Raw ETI TCP output on port 9901
 - ✅ **EDI**: Ensemble Distribution Interface over TCP
   - Configurable EDI port (default: 13000)
-- ✅ **USRP1**: raw output to USRP/SDR (stdout)
 - ✅ **HackRF TX**: direct transmission via HackRF One
   - Automatic hackrf_transfer detection
   - TX gain and DAB Band III frequency configuration
@@ -376,7 +375,7 @@ The `data/settings.json` file is automatically generated on first launch with de
 |-----------|-------------|---------|
 | `port` | WebUI port | 9090 |
 | `odrBinDir` | ODR binaries path (if not in PATH) | `""` |
-| `txMode` | Transmission mode (`EASYDAB`, `EDI`, `USRP1`, `HACKRF`) | `EASYDAB` |
+| `txMode` | Transmission mode (`EASYDAB`, `EDI`, `HACKRF`, `NETWORK`; `USRP1` is no longer offered) | `EASYDAB` |
 | `easyDabOutput.port` | ZMQ port for EasyDAB | 18081 |
 | `easyDabOutput.netPort` | TCP port for the raw ETI monitoring stream (Dablin/socat, including EDI mode) | 9901 |
 | `ediTcpListenPort` | EDI-over-TCP port | 13000 |
