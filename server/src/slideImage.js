@@ -8,6 +8,8 @@
 // Two ImageMagick calls: resize + flatten to PPM (read by Node to average the edge columns),
 // then composition on the two-colour canvas → JPEG.
 import { execFileSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export const SLIDE_W = 320;
 export const SLIDE_H = 240;
@@ -71,4 +73,48 @@ export function convertToSlide(srcPath, destPath, { quality = 85, exec = execFil
   const img = parsePpm(ppm);
   exec('convert', [...bandCanvasArgs(img), 'ppm:-', '-gravity', 'center', '-composite', '-quality', String(quality), destPath],
     { input: ppm, timeout: 10000 });
+}
+
+// Black side bands left by the conversion used before v1.7 (picture centred on black).
+// Returns { left, right } widths in pixels, or null when the picture does not have such bands:
+// both sides must be dark over their whole height, about the same width (a fitted picture is
+// centred) and end on a real transition (the first content column is mostly not dark), so a
+// logo with a genuinely black background is left alone.
+export function blackBandWidths(img, { dark = 40, minWidth = 8 } = {}) {
+  const darkRatio = (x) => {
+    let n = 0;
+    for (let y = 0; y < img.h; y++) {
+      const o = img.offset + (y * img.w + x) * 3;
+      if (Math.max(img.data[o], img.data[o + 1], img.data[o + 2]) < dark) n++;
+    }
+    return n / img.h;
+  };
+  let left = 0;
+  while (left < img.w / 2 && darkRatio(left) > 0.98) left++;
+  let right = 0;
+  while (right < img.w / 2 && darkRatio(img.w - 1 - right) > 0.98) right++;
+  if (left < minWidth || right < minWidth || Math.abs(left - right) > 3) return null;
+  if (darkRatio(left) > 0.7 || darkRatio(img.w - 1 - right) > 0.7) return null;
+  return { left, right };
+}
+
+// Re-convert a slide that has black side bands: crop the picture between the bands and convert it
+// again (bands in the edge colours) into `outFile`. Temp file in `tmpDir` (never in the slide dir,
+// whose images go on air). Returns true if `outFile` was written.
+export function removeBlackBands(file, outFile, tmpDir, { exec = execFileSync } = {}) {
+  const img = parsePpm(exec('convert', [`${file}[0]`, '-depth', '8', 'ppm:-'], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
+  const bands = blackBandWidths(img);
+  if (!bands) return false;
+  // 2 more pixels on each side: JPEG blended the old black band into the first content columns,
+  // which would give a darkened band colour
+  const inset = 2;
+  const w = img.w - bands.left - bands.right - 2 * inset;
+  const tmp = path.join(tmpDir, `.bands_${process.pid}_${Date.now()}.png`);
+  try {
+    exec('convert', [`${file}[0]`, '-crop', `${w}x${img.h}+${bands.left + inset}+0`, '+repage', tmp], { timeout: 10000 });
+    convertToSlide(tmp, outFile, { exec });
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
+  return true;
 }

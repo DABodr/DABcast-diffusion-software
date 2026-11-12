@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { parsePpm, bandCanvasArgs, convertToSlide } from '../src/slideImage.js';
+import { parsePpm, bandCanvasArgs, convertToSlide, blackBandWidths, removeBlackBands } from '../src/slideImage.js';
 
 // w x h PPM, colour of each pixel given by fn(x, y) → [r, g, b]
 const ppm = (w, h, fn) => {
@@ -64,6 +64,44 @@ describe('slideImage — conversion (ImageMagick)', { skip: !hasConvert && 'Imag
     const corner = (x) => execFileSync('convert', [dest, '-format', `%[fx:int(255*p{${x},120}.r)] %[fx:int(255*p{${x},120}.g)] %[fx:int(255*p{${x},120}.b)]`, 'info:'], { encoding: 'utf8' })
       .split(' ').map(Number);
     for (const x of [2, 317]) for (const v of corner(x)) assert.ok(v > 240, `pixel ${x},120 should be white, got ${corner(x)}`);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('slideImage — black bands of old slides', () => {
+  const W = 320, H = 240;
+  it('detects the symmetric black bands of a picture fitted on black', () => {
+    const img = parsePpm(ppm(W, H, (x) => (x < 40 || x >= 280 ? [0, 0, 0] : [250, 250, 250])));
+    assert.deepEqual(blackBandWidths(img), { left: 40, right: 40 });
+  });
+
+  it('leaves a logo with a genuinely black background alone (no real transition)', () => {
+    // black square logo with a blue disc, itself fitted on black bands
+    const img = parsePpm(ppm(W, H, (x, y) => ((x - 160) ** 2 + (y - 120) ** 2 < 90 ** 2 ? [0, 120, 220] : [0, 0, 0])));
+    assert.equal(blackBandWidths(img), null);
+  });
+
+  it('ignores asymmetric dark edges and pictures without bands', () => {
+    assert.equal(blackBandWidths(parsePpm(ppm(W, H, (x) => (x < 40 ? [0, 0, 0] : [250, 250, 250])))), null);
+    assert.equal(blackBandWidths(parsePpm(ppm(W, H, () => [250, 250, 250]))), null);
+  });
+});
+
+describe('slideImage — removing black bands (ImageMagick)', { skip: !hasConvert && 'ImageMagick not installed' }, () => {
+  it('re-converts an old banded slide with white sides, temp files outside the slide dir', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-bands-'));
+    const slideDir = path.join(dir, 'slide');
+    fs.mkdirSync(slideDir);
+    const file = path.join(slideDir, 'logo.jpg');
+    // old conversion: 240x240 white logo with a blue disc, centred on black
+    execFileSync('convert', ['-size', '240x240', 'xc:white', '-fill', '#0040ff', '-draw', 'circle 120,120 120,30',
+      '-background', 'black', '-gravity', 'center', '-extent', '320x240', '-quality', '85', file]);
+    const out = path.join(dir, 'new.jpg');
+    assert.equal(removeBlackBands(file, out, dir), true);
+    const px = (x) => execFileSync('convert', [out, '-format', `%[fx:int(255*p{${x},120}.r)] %[fx:int(255*p{${x},120}.g)] %[fx:int(255*p{${x},120}.b)]`, 'info:'], { encoding: 'utf8' }).split(' ').map(Number);
+    for (const x of [3, 316]) for (const v of px(x)) assert.ok(v > 235, `pixel ${x},120 should be white, got ${px(x)}`);
+    assert.deepEqual(fs.readdirSync(slideDir), ['logo.jpg'], 'nothing else written in the slide dir');
+    assert.equal(fs.readdirSync(dir).filter((f) => f.startsWith('.bands_')).length, 0, 'temp file removed');
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

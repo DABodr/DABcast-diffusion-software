@@ -14,7 +14,7 @@ import { TelegramLogNotifier } from './telegramNotifier.js';
 import { OdrProcessManager } from './odr/processManager.js';
 import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
-import { convertToSlide as convertSlideImage } from './slideImage.js';
+import { convertToSlide as convertSlideImage, removeBlackBands } from './slideImage.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
@@ -305,6 +305,48 @@ function repairSlides() {
   }
 }
 repairSlides();
+
+// One-time (marker mot/.slide-bands-v2), before autoStart: logos converted before v1.7 have black
+// side bands baked in. Re-convert them with bands in their own edge colours: from the original
+// kept in mot/<PI>/original/ when there is one, else by cutting the black bands off the slide
+// (previous file kept in original/ as bands_<name>). Logos with a genuinely black background are
+// left as they are (see blackBandWidths). Covers are re-converted at every track anyway.
+function regenerateBandedLogos() {
+  const marker = path.join(dataMot, '.slide-bands-v2');
+  if (!fs.existsSync(dataMot) || fs.existsSync(marker)) return;
+  let done = 0;
+  for (const pi of fs.readdirSync(dataMot)) {
+    const motDir = path.join(dataMot, pi);
+    const slideDir = path.join(motDir, 'slide');
+    let files = [];
+    try { files = fs.readdirSync(slideDir).filter((f) => /^logo(_\d+)?\.jpg$/i.test(f)); } catch { continue; }
+    for (const f of files) {
+      const file = path.join(slideDir, f);
+      const orig = path.join(motDir, 'original', f);
+      const out = path.join(motDir, `.regen_${process.pid}.jpg`);
+      try {
+        if (fs.existsSync(orig)) {
+          if (!convertToSlideFile(orig, out)) continue;
+          fs.renameSync(out, file);
+          logger.line('sls', `${pi}/${f}: re-converted from the original (bands in the picture's colours)`);
+        } else {
+          if (!removeBlackBands(file, out, motDir)) continue;
+          ensureDir(path.join(motDir, 'original'));
+          fs.copyFileSync(file, path.join(motDir, 'original', `bands_${f}`));
+          fs.renameSync(out, file);
+          logger.line('sls', `${pi}/${f}: black side bands replaced by the picture's colours (previous file in mot/${pi}/original/bands_${f})`);
+        }
+        done++;
+      } catch (e) {
+        logger.line('sls', `${pi}/${f}: band regeneration failed: ${e.message}`, 'WARN');
+      } finally {
+        try { fs.unlinkSync(out); } catch { /* moved */ }
+      }
+    }
+  }
+  try { fs.writeFileSync(marker, `done ${new Date().toISOString()} (${done} logo(s))\n`); } catch { /* ignore */ }
+}
+regenerateBandedLogos();
 
 const state = new AppState({ settings, dataDir, logger, processManager: pm });
 
