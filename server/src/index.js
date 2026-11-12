@@ -3,6 +3,10 @@ import morgan from 'morgan';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
+import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
+import tls from 'node:tls';
 import { execSync, execFileSync, spawn } from 'node:child_process';
 import archiver from 'archiver';
 import bcrypt from 'bcryptjs';
@@ -1201,6 +1205,131 @@ app.post('/api/metadata/test/json', async (req, res) => {
     res.json({ ok: true, artist, title, coverUrl });
   } catch (e) {
     res.status(500).json({ ok: false, error: String(e.message || e) });
+  }
+});
+
+// 'Test' button of the service dialog: does this stream URL answer, and what does it announce?
+// Read-only: opens the stream, reads the response headers (ICY name / bitrate), then closes it.
+// node:http with insecureHTTPParser, not fetch(): many Shoutcast/streamABC servers answer with
+// non-standard status lines ('ICY 200 OK', LF-only) that fetch rejects ('fetch failed').
+// ICY title reader: after every `metaint` audio bytes come 1 length byte (×16) and
+// "StreamTitle='…';". Calls done(title) once: the title ('' if empty), or null at the deadline.
+function icyTitleReader(metaint, deadline, done) {
+  let buf = Buffer.alloc(0);
+  let finished = false;
+  const finish = (title) => { if (!finished) { finished = true; clearTimeout(timer); done(title); } };
+  const timer = setTimeout(() => finish(null), Math.max(0, deadline - Date.now() - 300));
+  return {
+    data(c) {
+      if (finished) return;
+      buf = Buffer.concat([buf, c]);
+      if (buf.length <= metaint) return;
+      const len = buf[metaint] * 16;
+      if (buf.length < metaint + 1 + len) return;
+      // ICY titles are UTF-8 or (older servers) ISO-8859-1: fall back when UTF-8 is invalid
+      const raw = buf.subarray(metaint + 1, metaint + 1 + len);
+      let meta = raw.toString('utf8');
+      if (meta.includes('�')) meta = raw.toString('latin1');
+      const m = /StreamTitle='(.*?)';/s.exec(meta);
+      finish(m ? m[1].trim() : '');
+    },
+    end() { finish(null); },
+  };
+}
+
+// Old Shoutcast v1 servers answer 'ICY 200 OK', a status line node:http refuses even with
+// insecureHTTPParser: read the answer over a plain TCP / TLS socket instead.
+function probeStreamRaw(url, deadline) {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const secure = u.protocol === 'https:';
+    const port = Number(u.port) || (secure ? 443 : 80);
+    const sock = secure ? tls.connect({ host: u.hostname, port, servername: u.hostname }) : net.connect({ host: u.hostname, port });
+    const stop = setTimeout(() => sock.destroy(Object.assign(new Error('no answer within 6 s'), { code: 'TIMEOUT' })), Math.max(500, deadline - Date.now()));
+    let head = Buffer.alloc(0), reader = null, result = null;
+    const finish = (title) => { clearTimeout(stop); sock.destroy(); resolve({ ...result, title }); };
+    sock.on(secure ? 'secureConnect' : 'connect', () => {
+      sock.write(`GET ${u.pathname}${u.search} HTTP/1.0\r\nHost: ${u.host}\r\nIcy-MetaData: 1\r\nUser-Agent: DABcast stream test\r\nConnection: close\r\n\r\n`);
+    });
+    sock.on('data', (c) => {
+      if (reader) { reader.data(c); return; }
+      head = Buffer.concat([head, c]);
+      const m = /\r?\n\r?\n/.exec(head.toString('latin1'));
+      if (!m) { if (head.length > 16384) sock.destroy(new Error('invalid answer')); return; }
+      const lines = head.toString('latin1', 0, m.index).split(/\r?\n/);
+      const st = /^(?:ICY|HTTP\/\d(?:\.\d)?)\s+(\d{3})/i.exec(lines[0] || '');
+      if (!st) { sock.destroy(new Error('invalid answer')); return; }
+      const headers = {};
+      for (const l of lines.slice(1)) { const i = l.indexOf(':'); if (i > 0) headers[l.slice(0, i).trim().toLowerCase()] = l.slice(i + 1).trim(); }
+      result = { status: Number(st[1]), headers, url, redirected: false };
+      const metaint = Number(headers['icy-metaint']) || 0;
+      if (!metaint || result.status < 200 || result.status >= 300) { finish(null); return; }
+      reader = icyTitleReader(metaint, deadline, finish);
+      const body = head.subarray(m.index + m[0].length);
+      if (body.length) reader.data(body);
+    });
+    sock.on('end', () => (reader ? reader.end() : result ? finish(null) : null));
+    sock.on('error', (e) => { clearTimeout(stop); if (!result) reject(e); else finish(null); });
+  });
+}
+
+function probeStream(url, redirectsLeft = 5, deadline = Date.now() + 6000) {
+  return new Promise((resolve, reject) => {
+    const mod = url.startsWith('https:') ? https : http;
+    const req = mod.get(url, { headers: { 'Icy-MetaData': '1', 'User-Agent': 'DABcast stream test' }, insecureHTTPParser: true }, (r) => {
+      if (r.statusCode >= 300 && r.statusCode < 400 && r.headers.location && redirectsLeft > 0) {
+        r.destroy();
+        probeStream(new URL(r.headers.location, url).href, redirectsLeft - 1, deadline)
+          .then((x) => resolve({ ...x, redirected: true }), reject);
+        return;
+      }
+      const base = { status: r.statusCode, headers: r.headers, url, redirected: false };
+      const metaint = Number(r.headers['icy-metaint']) || 0;
+      if (!metaint || r.statusCode < 200 || r.statusCode >= 300) {
+        resolve({ ...base, title: null });
+        r.destroy();
+        return;
+      }
+      const reader = icyTitleReader(metaint, deadline, (title) => { resolve({ ...base, title }); r.destroy(); });
+      r.on('data', (c) => reader.data(c));
+      r.on('end', () => reader.end());
+    });
+    req.on('error', (e) => {
+      if (e.code === 'HPE_INVALID_CONSTANT') probeStreamRaw(url, deadline).then(resolve, reject);   // 'ICY 200 OK'
+      else reject(e);
+    });
+    req.setTimeout(Math.max(500, deadline - Date.now()), () => req.destroy(Object.assign(new Error('no answer within 6 s'), { code: 'TIMEOUT' })));
+  });
+}
+app.post('/api/streams/test', async (req, res) => {
+  const url = String(req.body?.url || '').trim();
+  if (!/^https?:\/\//i.test(url)) {
+    return res.json({ ok: null, message: url ? 'Not an HTTP(S) stream: not tested here (checked when the encoder starts)' : 'URL required' });
+  }
+  const t0 = Date.now();
+  try {
+    const r = await probeStream(url);
+    const h = (k) => String(r.headers[k] || '');
+    const type = h('content-type').split(';')[0];
+    const audio = /^audio\/|mpegurl|ogg|aac|mpeg|octet-stream/i.test(type);
+    const parts = [
+      `HTTP ${r.status}`,
+      type || 'no content type',
+      h('icy-br') && `${h('icy-br').split(',')[0].trim()} kbps`,
+      h('icy-name') && `“${h('icy-name')}”`,
+      r.redirected && `via ${new URL(r.url).host}`,
+      `${Date.now() - t0} ms`,
+    ].filter(Boolean);
+    const ok = r.status >= 200 && r.status < 300 && audio;
+    // 503 from Icecast/Shoutcast = all listener slots taken: the stream exists (same rule as the watchdog)
+    const message = ok ? `✓ ${parts.join(' · ')}`
+      : r.status === 503 ? `⚠ ${parts.join(' · ')} — server full (stream exists)`
+      : r.status >= 200 && r.status < 300 ? `⚠ ${parts.join(' · ')} — not an audio stream?`
+      : `✗ ${parts.join(' · ')}`;
+    // ICY title: null = the stream sends no ICY metadata, '' = it sends an empty title
+    res.json({ ok: ok ? true : r.status === 503 ? null : false, message, title: r.title, icyMeta: Boolean(r.headers['icy-metaint']) });
+  } catch (e) {
+    res.json({ ok: false, message: `✗ ${e.code === 'TIMEOUT' ? 'no answer within 6 s' : String(e.code || e.message || e)}` });
   }
 });
 
