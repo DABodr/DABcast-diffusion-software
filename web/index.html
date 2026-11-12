@@ -144,232 +144,245 @@
       </div>
 
       <section class="tabpanel" data-panel="general">
-        <div class="grid3">
-          <label>
-            <span>PI</span>
-            <input id="f_pi" maxlength="4" placeholder="F204" />
-          </label>
-          <label>
-            <span>PS8</span>
-            <input id="f_ps8" maxlength="8" required />
-          </label>
-          <label>
-            <span>PS16</span>
-            <input id="f_ps16" maxlength="16" />
-          </label>
-
-          <label>
-            <span>Language</span>
-            <select id="f_lang">
-              <optgroup label="European languages">
-                <option value="0x00">0x00 - Unknown</option>
-                <option value="0x01">0x01 - Albanian</option>
-                <option value="0x02">0x02 - Breton</option>
-                <option value="0x03">0x03 - Catalan</option>
-                <option value="0x04">0x04 - Croatian</option>
-                <option value="0x05">0x05 - Welsh</option>
-                <option value="0x06">0x06 - Czech</option>
-                <option value="0x07">0x07 - Danish</option>
-                <option value="0x08">0x08 - German</option>
-                <option value="0x09">0x09 - English</option>
-                <option value="0x0A">0x0A - Spanish</option>
-                <option value="0x0B">0x0B - Esperanto</option>
-                <option value="0x0C">0x0C - Estonian</option>
-                <option value="0x0D">0x0D - Basque</option>
-                <option value="0x0E">0x0E - Faroese</option>
-                <option value="0x0F">0x0F - French</option>
-                <option value="0x10">0x10 - Frisian</option>
-                <option value="0x11">0x11 - Irish</option>
-                <option value="0x12">0x12 - Gaelic</option>
-                <option value="0x13">0x13 - Galician</option>
-                <option value="0x14">0x14 - Icelandic</option>
-                <option value="0x15">0x15 - Italian</option>
-                <option value="0x16">0x16 - Lappish</option>
-                <option value="0x17">0x17 - Latin</option>
-                <option value="0x18">0x18 - Latvian</option>
-                <option value="0x19">0x19 - Luxembourgish</option>
-                <option value="0x1A">0x1A - Lithuanian</option>
-                <option value="0x1B">0x1B - Hungarian</option>
-                <option value="0x1C">0x1C - Maltese</option>
-                <option value="0x1D">0x1D - Dutch</option>
-                <option value="0x1E">0x1E - Norwegian</option>
-                <option value="0x1F">0x1F - Occitan</option>
-                <option value="0x20">0x20 - Polish</option>
-                <option value="0x21">0x21 - Portuguese</option>
-                <option value="0x22">0x22 - Romanian</option>
-                <option value="0x23">0x23 - Romansh</option>
-                <option value="0x24">0x24 - Serbian</option>
-                <option value="0x25">0x25 - Slovak</option>
-                <option value="0x26">0x26 - Slovene</option>
-                <option value="0x27">0x27 - Finnish</option>
-                <option value="0x28">0x28 - Swedish</option>
-                <option value="0x29">0x29 - Turkish</option>
-                <option value="0x2A">0x2A - Flemish</option>
-                <option value="0x2B">0x2B - Walloon</option>
-              </optgroup>
-              <optgroup label="Other languages">
-                <option value="0x40">0x40 - Background sound</option>
-                <option value="0x41">0x41 - Zulu</option>
-                <option value="0x42">0x42 - Vietnamese</option>
-                <option value="0x43">0x43 - Uzbek</option>
-                <option value="0x44">0x44 - Urdu</option>
-                <option value="0x45">0x45 - Ukrainian</option>
-                <option value="0x46">0x46 - Thai</option>
-                <option value="0x47">0x47 - Telugu</option>
-                <option value="0x48">0x48 - Tatar</option>
-                <option value="0x49">0x49 - Tamil</option>
-                <option value="0x4A">0x4A - Tadzhik</option>
-                <option value="0x4B">0x4B - Swahili</option>
-                <option value="0x4C">0x4C - Sranan Tongo</option>
-                <option value="0x4D">0x4D - Somali</option>
-                <option value="0x4E">0x4E - Sinhalese</option>
-                <option value="0x4F">0x4F - Shona</option>
-                <option value="0x50">0x50 - Serbo-Croat</option>
-                <option value="0x51">0x51 - Ruthenian</option>
-                <option value="0x52">0x52 - Russian</option>
-                <option value="0x53">0x53 - Quechua</option>
-                <option value="0x54">0x54 - Pushtu</option>
-                <option value="0x55">0x55 - Punjabi</option>
-                <option value="0x56">0x56 - Persian</option>
-                <option value="0x57">0x57 - Papiamento</option>
-                <option value="0x58">0x58 - Oriya</option>
-                <option value="0x59">0x59 - Nepali</option>
-                <option value="0x5A">0x5A - Ndebele</option>
-                <option value="0x5B">0x5B - Marathi</option>
-                <option value="0x5C">0x5C - Moldavian</option>
-                <option value="0x5D">0x5D - Malaysian</option>
-                <option value="0x5E">0x5E - Malagasy</option>
-                <option value="0x5F">0x5F - Macedonian</option>
-                <option value="0x60">0x60 - Laotian</option>
-                <option value="0x61">0x61 - Korean</option>
-                <option value="0x62">0x62 - Khmer</option>
-                <option value="0x63">0x63 - Kazakh</option>
-                <option value="0x64">0x64 - Kannada</option>
-                <option value="0x65">0x65 - Japanese</option>
-                <option value="0x66">0x66 - Indonesian</option>
-                <option value="0x67">0x67 - Hindi</option>
-                <option value="0x68">0x68 - Hebrew</option>
-                <option value="0x69">0x69 - Hausa</option>
-                <option value="0x6A">0x6A - Gurani</option>
-                <option value="0x6B">0x6B - Gujurati</option>
-                <option value="0x6C">0x6C - Greek</option>
-                <option value="0x6D">0x6D - Georgian</option>
-                <option value="0x6E">0x6E - Fulani</option>
-                <option value="0x6F">0x6F - Dari</option>
-                <option value="0x70">0x70 - Churash</option>
-                <option value="0x71">0x71 - Chinese</option>
-                <option value="0x72">0x72 - Burmese</option>
-                <option value="0x73">0x73 - Bulgarian</option>
-                <option value="0x74">0x74 - Bengali</option>
-                <option value="0x75">0x75 - Belorussian</option>
-                <option value="0x76">0x76 - Bambora</option>
-                <option value="0x77">0x77 - Azerbaijani</option>
-                <option value="0x78">0x78 - Assamese</option>
-                <option value="0x79">0x79 - Armenian</option>
-                <option value="0x7A">0x7A - Arabic</option>
-                <option value="0x7B">0x7B - Amharic</option>
-              </optgroup>
-            </select>
-          </label>
-          <label>
-            <span>PTY</span>
-            <select id="f_pty">
-              <option value="0">0 - None</option>
-              <option value="1">1 - News</option>
-              <option value="2">2 - Current Affairs</option>
-              <option value="3">3 - Information</option>
-              <option value="4">4 - Sport</option>
-              <option value="5">5 - Education</option>
-              <option value="6">6 - Drama</option>
-              <option value="7">7 - Culture</option>
-              <option value="8">8 - Science</option>
-              <option value="9">9 - Varied</option>
-              <option value="10">10 - Pop Music</option>
-              <option value="11">11 - Rock Music</option>
-              <option value="12">12 - Easy Listening</option>
-              <option value="13">13 - Light Classical</option>
-              <option value="14">14 - Serious Classical</option>
-              <option value="15">15 - Other Music</option>
-              <option value="16">16 - Weather</option>
-              <option value="17">17 - Finance</option>
-              <option value="18">18 - Children's</option>
-              <option value="19">19 - Social Affairs</option>
-              <option value="20">20 - Religion</option>
-              <option value="21">21 - Phone In</option>
-              <option value="22">22 - Travel</option>
-              <option value="23">23 - Leisure</option>
-              <option value="24">24 - Jazz Music</option>
-              <option value="25">25 - Country Music</option>
-              <option value="26">26 - National Music</option>
-              <option value="27">27 - Oldies Music</option>
-              <option value="28">28 - Folk Music</option>
-              <option value="29">29 - Documentary</option>
-            </select>
-          </label>
-          <label>
-            <span>Protection EEP-A</span>
-            <select id="f_prot">
-              <option value="1">1</option>
-              <option value="2">2</option>
-              <option value="3">3</option>
-              <option value="4">4</option>
-            </select>
-          </label>
-
-          <label>
-            <span>Bitrate (kbps)</span>
-            <select id="f_bitrate"></select>
-          </label>
-          <label>
-            <span>Sample rate</span>
-            <select id="f_sr">
-              <option value="48000">48 kHz</option>
-              <option value="32000">32 kHz</option>
-            </select>
-          </label>
-          <label>
-            <span>Channels</span>
-            <select id="f_ch">
-              <option value="2">Stereo</option>
-              <option value="1">Mono</option>
-            </select>
-          </label>
-
-          <label>
-            <span>CU (estim.)</span>
-            <input id="f_cu" disabled />
-          </label>
-          <label>
-            <span>Codec</span>
-            <select id="f_codec">
-              <option value="HE-AAC v1 (SBR)">HE-AAC v1 (SBR)</option>
-              <option value="HE-AAC v2 (PS)">HE-AAC v2 (PS)</option>
-              <option value="AAC-LC">AAC-LC</option>
-            </select>
-          </label>
-
-          <label>
-            <span>Metadata PAD size</span>
-            <input id="f_padsize" type="number" min="4" max="196" step="1" />
-          </label>
-          <label>
-            <span>ZMQ buffer</span>
-            <input id="f_zbuf" type="number" min="0" max="4000" />
-          </label>
-          <label>
-            <span>ZMQ prebuffer</span>
-            <input id="f_zpre" type="number" min="0" max="4000" />
-          </label>
-          <label>
-            <span>Encoder buffer (ms)</span>
-            <input id="f_encbuf" type="number" min="0" max="2000" />
-          </label>
+        <div class="meta-main">
+          <div class="meta-card">
+            <div class="meta-card-title">Identity</div>
+            <div class="grid3">
+              <label>
+                <span class="lbl-row">PI<span class="dls-count" id="piHint"></span></span>
+                <input id="f_pi" maxlength="4" placeholder="F204" />
+              </label>
+              <label>
+                <span class="lbl-row">PS8<span class="dls-count" id="ps8Count"></span></span>
+                <input id="f_ps8" maxlength="8" required />
+              </label>
+              <label>
+                <span class="lbl-row">PS16<span class="dls-count" id="ps16Count"></span></span>
+                <input id="f_ps16" maxlength="16" />
+              </label>
+              <label>
+                <span>Language</span>
+                <select id="f_lang">
+                  <optgroup label="European languages">
+                    <option value="0x00">0x00 - Unknown</option>
+                    <option value="0x01">0x01 - Albanian</option>
+                    <option value="0x02">0x02 - Breton</option>
+                    <option value="0x03">0x03 - Catalan</option>
+                    <option value="0x04">0x04 - Croatian</option>
+                    <option value="0x05">0x05 - Welsh</option>
+                    <option value="0x06">0x06 - Czech</option>
+                    <option value="0x07">0x07 - Danish</option>
+                    <option value="0x08">0x08 - German</option>
+                    <option value="0x09">0x09 - English</option>
+                    <option value="0x0A">0x0A - Spanish</option>
+                    <option value="0x0B">0x0B - Esperanto</option>
+                    <option value="0x0C">0x0C - Estonian</option>
+                    <option value="0x0D">0x0D - Basque</option>
+                    <option value="0x0E">0x0E - Faroese</option>
+                    <option value="0x0F">0x0F - French</option>
+                    <option value="0x10">0x10 - Frisian</option>
+                    <option value="0x11">0x11 - Irish</option>
+                    <option value="0x12">0x12 - Gaelic</option>
+                    <option value="0x13">0x13 - Galician</option>
+                    <option value="0x14">0x14 - Icelandic</option>
+                    <option value="0x15">0x15 - Italian</option>
+                    <option value="0x16">0x16 - Lappish</option>
+                    <option value="0x17">0x17 - Latin</option>
+                    <option value="0x18">0x18 - Latvian</option>
+                    <option value="0x19">0x19 - Luxembourgish</option>
+                    <option value="0x1A">0x1A - Lithuanian</option>
+                    <option value="0x1B">0x1B - Hungarian</option>
+                    <option value="0x1C">0x1C - Maltese</option>
+                    <option value="0x1D">0x1D - Dutch</option>
+                    <option value="0x1E">0x1E - Norwegian</option>
+                    <option value="0x1F">0x1F - Occitan</option>
+                    <option value="0x20">0x20 - Polish</option>
+                    <option value="0x21">0x21 - Portuguese</option>
+                    <option value="0x22">0x22 - Romanian</option>
+                    <option value="0x23">0x23 - Romansh</option>
+                    <option value="0x24">0x24 - Serbian</option>
+                    <option value="0x25">0x25 - Slovak</option>
+                    <option value="0x26">0x26 - Slovene</option>
+                    <option value="0x27">0x27 - Finnish</option>
+                    <option value="0x28">0x28 - Swedish</option>
+                    <option value="0x29">0x29 - Turkish</option>
+                    <option value="0x2A">0x2A - Flemish</option>
+                    <option value="0x2B">0x2B - Walloon</option>
+                  </optgroup>
+                  <optgroup label="Other languages">
+                    <option value="0x40">0x40 - Background sound</option>
+                    <option value="0x41">0x41 - Zulu</option>
+                    <option value="0x42">0x42 - Vietnamese</option>
+                    <option value="0x43">0x43 - Uzbek</option>
+                    <option value="0x44">0x44 - Urdu</option>
+                    <option value="0x45">0x45 - Ukrainian</option>
+                    <option value="0x46">0x46 - Thai</option>
+                    <option value="0x47">0x47 - Telugu</option>
+                    <option value="0x48">0x48 - Tatar</option>
+                    <option value="0x49">0x49 - Tamil</option>
+                    <option value="0x4A">0x4A - Tadzhik</option>
+                    <option value="0x4B">0x4B - Swahili</option>
+                    <option value="0x4C">0x4C - Sranan Tongo</option>
+                    <option value="0x4D">0x4D - Somali</option>
+                    <option value="0x4E">0x4E - Sinhalese</option>
+                    <option value="0x4F">0x4F - Shona</option>
+                    <option value="0x50">0x50 - Serbo-Croat</option>
+                    <option value="0x51">0x51 - Ruthenian</option>
+                    <option value="0x52">0x52 - Russian</option>
+                    <option value="0x53">0x53 - Quechua</option>
+                    <option value="0x54">0x54 - Pushtu</option>
+                    <option value="0x55">0x55 - Punjabi</option>
+                    <option value="0x56">0x56 - Persian</option>
+                    <option value="0x57">0x57 - Papiamento</option>
+                    <option value="0x58">0x58 - Oriya</option>
+                    <option value="0x59">0x59 - Nepali</option>
+                    <option value="0x5A">0x5A - Ndebele</option>
+                    <option value="0x5B">0x5B - Marathi</option>
+                    <option value="0x5C">0x5C - Moldavian</option>
+                    <option value="0x5D">0x5D - Malaysian</option>
+                    <option value="0x5E">0x5E - Malagasy</option>
+                    <option value="0x5F">0x5F - Macedonian</option>
+                    <option value="0x60">0x60 - Laotian</option>
+                    <option value="0x61">0x61 - Korean</option>
+                    <option value="0x62">0x62 - Khmer</option>
+                    <option value="0x63">0x63 - Kazakh</option>
+                    <option value="0x64">0x64 - Kannada</option>
+                    <option value="0x65">0x65 - Japanese</option>
+                    <option value="0x66">0x66 - Indonesian</option>
+                    <option value="0x67">0x67 - Hindi</option>
+                    <option value="0x68">0x68 - Hebrew</option>
+                    <option value="0x69">0x69 - Hausa</option>
+                    <option value="0x6A">0x6A - Gurani</option>
+                    <option value="0x6B">0x6B - Gujurati</option>
+                    <option value="0x6C">0x6C - Greek</option>
+                    <option value="0x6D">0x6D - Georgian</option>
+                    <option value="0x6E">0x6E - Fulani</option>
+                    <option value="0x6F">0x6F - Dari</option>
+                    <option value="0x70">0x70 - Churash</option>
+                    <option value="0x71">0x71 - Chinese</option>
+                    <option value="0x72">0x72 - Burmese</option>
+                    <option value="0x73">0x73 - Bulgarian</option>
+                    <option value="0x74">0x74 - Bengali</option>
+                    <option value="0x75">0x75 - Belorussian</option>
+                    <option value="0x76">0x76 - Bambora</option>
+                    <option value="0x77">0x77 - Azerbaijani</option>
+                    <option value="0x78">0x78 - Assamese</option>
+                    <option value="0x79">0x79 - Armenian</option>
+                    <option value="0x7A">0x7A - Arabic</option>
+                    <option value="0x7B">0x7B - Amharic</option>
+                  </optgroup>
+                </select>
+              </label>
+              <label>
+                <span>PTY</span>
+                <select id="f_pty">
+                  <option value="0">0 - None</option>
+                  <option value="1">1 - News</option>
+                  <option value="2">2 - Current Affairs</option>
+                  <option value="3">3 - Information</option>
+                  <option value="4">4 - Sport</option>
+                  <option value="5">5 - Education</option>
+                  <option value="6">6 - Drama</option>
+                  <option value="7">7 - Culture</option>
+                  <option value="8">8 - Science</option>
+                  <option value="9">9 - Varied</option>
+                  <option value="10">10 - Pop Music</option>
+                  <option value="11">11 - Rock Music</option>
+                  <option value="12">12 - Easy Listening</option>
+                  <option value="13">13 - Light Classical</option>
+                  <option value="14">14 - Serious Classical</option>
+                  <option value="15">15 - Other Music</option>
+                  <option value="16">16 - Weather</option>
+                  <option value="17">17 - Finance</option>
+                  <option value="18">18 - Children's</option>
+                  <option value="19">19 - Social Affairs</option>
+                  <option value="20">20 - Religion</option>
+                  <option value="21">21 - Phone In</option>
+                  <option value="22">22 - Travel</option>
+                  <option value="23">23 - Leisure</option>
+                  <option value="24">24 - Jazz Music</option>
+                  <option value="25">25 - Country Music</option>
+                  <option value="26">26 - National Music</option>
+                  <option value="27">27 - Oldies Music</option>
+                  <option value="28">28 - Folk Music</option>
+                  <option value="29">29 - Documentary</option>
+                </select>
+              </label>
+            </div>
+          </div>
+          <div class="meta-card">
+            <div class="meta-card-title">DAB coding</div>
+            <div class="grid3">
+              <label>
+                <span>Bitrate (kbps)</span>
+                <select id="f_bitrate"></select>
+              </label>
+              <label>
+                <span>Codec</span>
+                <select id="f_codec">
+                  <option value="HE-AAC v1 (SBR)">HE-AAC v1 (SBR)</option>
+                  <option value="HE-AAC v2 (PS)">HE-AAC v2 (PS)</option>
+                  <option value="AAC-LC">AAC-LC</option>
+                </select>
+              </label>
+              <label>
+                <span>Protection EEP-A</span>
+                <select id="f_prot">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                </select>
+              </label>
+              <label>
+                <span>Sample rate</span>
+                <select id="f_sr">
+                  <option value="48000">48 kHz</option>
+                  <option value="32000">32 kHz</option>
+                </select>
+              </label>
+              <label>
+                <span>Channels</span>
+                <select id="f_ch">
+                  <option value="2">Stereo</option>
+                  <option value="1">Mono</option>
+                </select>
+              </label>
+              <label>
+                <span class="lbl-row">CU (estim.)<span class="dls-count" id="cuImpact"></span></span>
+                <input id="f_cu" disabled />
+              </label>
+              <label>
+                <span>PAD size (bytes, DLS + slides)</span>
+                <input id="f_padsize" type="number" min="4" max="196" step="1" />
+              </label>
+              <span class="field-note span2 beside-input" id="padHelp"></span>
+            </div>
+          </div>
+          <div class="meta-card" data-fold="advanced">
+            <div class="meta-card-title" role="button" tabindex="0" aria-expanded="true">Advanced buffers <span class="meta-fold-sum" id="metaSumAdv"></span></div>
+            <p class="meta-help">Leave the defaults unless audio drops out: ZMQ buffers are in AAC frames (24 ms), the encoder buffer is the VLC input buffer.</p>
+            <div class="grid3">
+              <label>
+                <span>ZMQ buffer</span>
+                <input id="f_zbuf" type="number" min="0" max="4000" />
+              </label>
+              <label>
+                <span>ZMQ prebuffer</span>
+                <input id="f_zpre" type="number" min="0" max="4000" />
+              </label>
+              <label>
+                <span>Encoder buffer (ms)</span>
+                <input id="f_encbuf" type="number" min="0" max="2000" />
+              </label>
+            </div>
+          </div>
         </div>
       </section>
 
       <section class="tabpanel hidden" data-panel="audio">
         <div class="grid2">
-          <label class="span2">
+          <label>
             <span>Main audio source</span>
             <select id="f_src">
               <option value="GSTREAMER">GStreamer</option>
@@ -403,34 +416,48 @@
             <span>Audio gain (dB)</span>
             <input id="f_gain" type="number" step="0.5" min="-20" max="20" />
           </label>
+
           <label id="f_uri_row" class="span2">
             <span>Main stream</span>
-            <input id="f_uri" placeholder="http://..." />
-          </label>
-
-          <label id="f_thresh_row">
-            <span>Silence (sec)</span>
-            <input id="f_thresh" type="number" min="1" max="600" />
-          </label>
-          <label id="f_return_row">
-            <span>Return main (sec)</span>
-            <input id="f_return" type="number" min="0" max="3600" />
-          </label>
-          <label id="f_switch_row">
-            <span>Switch to backup</span>
-            <select id="f_switch">
-              <option value="1">Yes</option>
-              <option value="0">No</option>
-            </select>
+            <span class="url-test">
+              <input id="f_uri" placeholder="http://..." />
+              <button type="button" class="btn btn-sm" data-test-url="f_uri">Test</button>
+            </span>
+            <span class="field-note" id="f_uri_test"></span>
           </label>
 
           <label id="f_backup_row" class="span2">
             <span>Backup stream</span>
-            <input id="f_backup" placeholder="http://..." />
+            <span class="url-test">
+              <input id="f_backup" placeholder="http://..." />
+              <button type="button" class="btn btn-sm" data-test-url="f_backup">Test</button>
+            </span>
+            <span class="field-note" id="f_backup_test"></span>
           </label>
 
           <div id="f_swap_row" class="row span2">
-            <button type="button" class="btn" id="btnSwap">Swap main/backup</button>
+            <button type="button" class="btn btn-sm" id="btnSwap">Swap main/backup</button>
+          </div>
+
+          <div class="meta-card span2" id="f_failover_card">
+            <div class="meta-card-title">Failover</div>
+            <div class="grid3">
+              <label id="f_switch_row">
+                <span>Switch to backup on failure</span>
+                <select id="f_switch">
+                  <option value="1">Yes</option>
+                  <option value="0">No</option>
+                </select>
+              </label>
+              <label id="f_thresh_row">
+                <span>Silence before switching (s)</span>
+                <input id="f_thresh" type="number" min="1" max="600" />
+              </label>
+              <label id="f_return_row">
+                <span>Back to main after (s)</span>
+                <input id="f_return" type="number" min="0" max="3600" />
+              </label>
+            </div>
           </div>
         </div>
       </section>
@@ -441,8 +468,8 @@
           <div class="meta-main">
 
             <!-- 1. Where the titles come from -->
-            <div class="meta-card">
-              <div class="meta-card-title">Titles source</div>
+            <div class="meta-card" data-fold="source">
+              <div class="meta-card-title" role="button" tabindex="0" aria-expanded="true">Titles source <span class="meta-fold-sum" id="metaSumSource"></span></div>
               <div class="seg" id="metaModeSeg" role="radiogroup" aria-label="Metadata mode">
                 <button type="button" data-mode="STREAM" role="radio">Stream (ICY)</button>
                 <button type="button" data-mode="JSON" role="radio">JSON API</button>
@@ -460,24 +487,26 @@
                   <span>JSON URL</span>
                   <input id="f_json_url" placeholder="https://api.example.com/nowplaying" />
                 </label>
+                <div class="meta-grid2">
+                  <label>
+                    <span>Artist key</span>
+                    <input id="f_json_artist" placeholder="artist" value="artist" />
+                  </label>
+                  <label>
+                    <span>Title key</span>
+                    <input id="f_json_title" placeholder="title" value="title" />
+                  </label>
+                </div>
                 <div class="meta-grid4">
+                  <label class="meta-span3">
+                    <span>Cover URL key <small class="muted">(a|b = b if a is empty)</small></span>
+                    <input id="f_json_sls" placeholder="slide" value="slide" />
+                  </label>
                   <label>
                     <span>Refresh (s)</span>
                     <input id="f_json_interval" type="number" min="3" max="3600" value="10" />
                   </label>
-                  <label class="meta-span3">
-                    <span>Artist key</span>
-                    <input id="f_json_artist" placeholder="artist" value="artist" />
-                  </label>
                 </div>
-                <label class="meta-full">
-                  <span>Title key</span>
-                  <input id="f_json_title" placeholder="title" value="title" />
-                </label>
-                <label class="meta-full">
-                  <span>Cover URL key <small class="muted">(a|b = b if a is empty)</small></span>
-                  <input id="f_json_sls" placeholder="slide" value="slide" />
-                </label>
                 <div class="row meta-tests">
                   <button type="button" class="btn btn-sm" id="btnTestJson">Test JSON</button>
                   <button type="button" class="btn btn-sm" id="btnTestCover">Test cover</button>
@@ -509,8 +538,8 @@
             </div>
 
             <!-- 2. Text sent (DLS) -->
-            <div class="meta-card">
-              <div class="meta-card-title">Text (DLS)</div>
+            <div class="meta-card" data-fold="text">
+              <div class="meta-card-title" role="button" tabindex="0" aria-expanded="true">Text (DLS) <span class="meta-fold-sum" id="metaSumText"></span></div>
               <label class="meta-full">
                 <span id="dlsTextLabel">Default text</span>
                 <input id="f_default_dls" placeholder="My DAB+ Radio" />
@@ -535,8 +564,8 @@
             </div>
 
             <!-- 3. Station logo and slides -->
-            <div class="meta-card">
-              <div class="meta-card-title">Station logo &amp; slides</div>
+            <div class="meta-card" data-fold="logo">
+              <div class="meta-card-title" role="button" tabindex="0" aria-expanded="true">Station logo &amp; slides <span class="meta-fold-sum" id="metaSumLogo"></span></div>
               <div class="slsrow">
                 <div class="meta-logo-col">
                   <div id="slsImgWrap" class="no-logo">
