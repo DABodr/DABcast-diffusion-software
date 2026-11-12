@@ -833,7 +833,7 @@ function render() {
         : ['ZMQ', 'EDI'].includes(String(svc.input?.mode || '').toUpperCase()) ? muxPeakLevels(MUX_STATS?.inputs?.[svc.id])
         : svc.runtime?.audioLevels)],
       // ZMQ/EDI direct: DLS / DL+ travel in the external encoder's PAD — DABcast's own DLS is not broadcast
-      ['muted', isDirectInput
+      ['muted col-dls', isDirectInput
         ? '<div class="dls-text" title="DLS and DL+ are sent by the external encoder (PAD of the ZMQ/EDI input)">from encoder</div>'
         : `<div class="dls-text" title="${esc(dlsPreview)}">${esc(dlsPreview)}</div>`],
       ['col-dlplus', svc.runtime?.dlplusActive && !isDirectInput ? '<span class="dlplus-icon" title="DL+ active">DL+</span>' : ''],
