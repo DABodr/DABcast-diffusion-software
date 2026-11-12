@@ -7,7 +7,7 @@ import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
 import tls from 'node:tls';
-import { execSync, execFileSync, spawn } from 'node:child_process';
+import { execSync, execFileSync, execFile, spawn } from 'node:child_process';
 import archiver from 'archiver';
 import bcrypt from 'bcryptjs';
 
@@ -21,7 +21,7 @@ import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import { convertToSlide as convertSlideImage, removeBlackBands } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
-import { normalizeOutputs, normalizeEdiOptions, validateOutputs } from './odr/outputs.js';
+import { normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy } from './odr/outputs.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
@@ -1190,17 +1190,45 @@ async function establishedPeers() {
   }
   return peers;
 }
+// 'Check HackRF' (HackRF output / HACKRF mode): hackrf_info only reads the board (never transmits).
+// While hackrf_transfer runs it holds the device: reported as in use instead of a failing check.
+app.post('/api/hackrf/check', (req, res) => {
+  if (pm.isRunning('mux:hackrf_transfer')) {
+    return res.json({ ok: true, inUse: true, message: 'HackRF in use by hackrf_transfer (transmitting)' });
+  }
+  execFile('hackrf_info', [], { timeout: 6000 }, (err, stdout, stderr) => {
+    const out = `${stdout || ''}${stderr || ''}`;
+    if (err && err.code === 'ENOENT') return res.json({ ok: false, message: 'hackrf_info not installed (sudo apt install hackrf)' });
+    if (/No HackRF boards found/i.test(out) || !/Found HackRF/i.test(out)) {
+      return res.json({ ok: false, message: 'No HackRF found: check the USB cable and port (lsusb | grep -i hackrf)' });
+    }
+    const pick = (re) => (re.exec(out) || [])[1]?.trim() || '';
+    const serial = pick(/Serial number:\s*(\S+)/i).replace(/^0+/, '');
+    const firmware = pick(/Firmware Version:\s*(.+)/i);
+    const board = [pick(/Board ID Number:\s*\d+\s*\(([^)]+)\)/i), pick(/Hardware Revision:\s*(.+)/i)].filter(Boolean).join(' ');
+    const busy = /Resource busy|LIBUSB_ERROR_BUSY/i.test(out);
+    res.json({ ok: !busy, message: busy ? 'HackRF found but busy (used by another program)'
+      : `HackRF connected${board ? ` — ${board}` : ''}${firmware ? ` · firmware ${firmware}` : ''}${serial ? ` · serial …${serial.slice(-8)}` : ''}` });
+  });
+});
+
 app.get('/api/mux/outputs', async (req, res) => {
   const dabmux = settings.dabmux || {};
-  const outputs = normalizeOutputs(dabmux.outputs);
+  // NETWORK: the outputs list; a legacy mode not converted yet: its equivalent outputs (what it sends)
+  const network = String(dabmux.txMode || 'EASYDAB').toUpperCase() === 'NETWORK';
+  const outputs = network ? normalizeOutputs(dabmux.outputs) : outputsFromLegacy(dabmux);
   const peers = state.muxRunning ? await establishedPeers() : new Map();
   const monitorPort = Number(dabmux.easyDabOutput?.netPort) || 9901;
   res.json({
     running: state.muxRunning,
     txMode: String(dabmux.txMode || 'EASYDAB').toUpperCase(),
     outputs: outputs.map((o) => ({
-      id: o.id,
-      connected: o.type === 'edi-udp' || !o.enabled ? null : [...new Set(peers.get(o.port) || [])],
+      id: o.id, name: o.name, type: o.type, enabled: o.enabled, port: o.port,
+      ...(o.type === 'edi-udp' ? { destination: o.destination } : {}),
+      ...(o.type === 'hackrf' ? { dabBlock: o.dabBlock } : {}),
+      connected: o.type === 'edi-udp' || o.type === 'hackrf' || !o.enabled ? null : [...new Set(peers.get(o.port) || [])],
+      // local HackRF chain: odr-dabmod (connected to the internal EDI port) + hackrf_transfer
+      ...(o.type === 'hackrf' && o.enabled ? { local: { dabmod: pm.isRunning('mux:odr-dabmod'), hackrf: pm.isRunning('mux:hackrf_transfer') } } : {}),
     })),
     monitor: { port: monitorPort, connected: [...new Set(peers.get(monitorPort) || [])] },
   });

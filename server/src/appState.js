@@ -7,6 +7,8 @@ import { ensureDir, readJson, writeJson, safeExists } from './fsutil.js';
 import { buildMuxConfig } from './odr/muxBuilder.js';
 import { convertToSlide as convertSlideImage } from './slideImage.js';
 import { buildAudioEncCommand, buildDabMuxCommand, buildPadEncCommand, buildDabModConfig, buildHackrfTransferCommand, buildProbeCommand } from './odr/commandBuilder.js';
+import { localHackrfOutput } from './odr/outputs.js';
+import { DEFAULT_FILTERTAPS } from './odr/filtertaps.js';
 import { validateService } from './odr/validate.js';
 import { ALLOWED_BITRATES_KBPS, DEFAULT_BITRATE_KBPS, DEFAULT_ZMQ_BUFFER, DEFAULT_ZMQ_PREBUFFER, DEFAULT_DEMO_PRESET_ID, DAB_FREQ_TABLE } from './defaults.js';
 import { estimateCU, sumCU } from './cu.js';
@@ -1493,6 +1495,20 @@ export class AppState {
     this._syncAirSlides(svc);
   }
 
+  // Local HackRF chain (odr-dabmod + hackrf_transfer): the HACKRF mode (settings.dabmux.hackrf,
+  // EDI port ediTcpListenPort) or the HackRF output of the NETWORK mode (its own settings and
+  // port). null = no local HackRF chain.
+  _localHackrf() {
+    const dm = this.settings.dabmux || {};
+    const mode = String(dm.txMode || 'EASYDAB').toUpperCase();
+    if (mode === 'HACKRF') return { hk: dm.hackrf || {}, ediPort: Number(dm.ediTcpListenPort) || 13000 };
+    if (mode === 'NETWORK') {
+      const o = localHackrfOutput(dm.outputs);
+      if (o) return { hk: o, ediPort: o.port };
+    }
+    return null;
+  }
+
   async startMux() {
     if (this.muxRunning) {
       throw new Error('Mux déjà en cours (ON AIR).');
@@ -1513,8 +1529,7 @@ export class AppState {
     if (!this.pm.binaryExists('odr-dabmux')) missingOdr.push('odr-dabmux');
     if (!this.pm.binaryExists('odr-audioenc')) missingOdr.push('odr-audioenc');
     if (!this.pm.binaryExists('odr-padenc')) missingOdr.push('odr-padenc');
-    const txMode = (this.settings.dabmux?.txMode || 'EASYDAB').toUpperCase();
-    if (txMode === 'HACKRF') {
+    if (this._localHackrf()) {
       if (!this.pm.binaryExists('odr-dabmod')) missingOdr.push('odr-dabmod');
       if (!this.pm.binaryExists('hackrf_transfer')) missingOther.push('hackrf_transfer');
     }
@@ -1562,9 +1577,9 @@ export class AppState {
       // Wait briefly for odr-dabmux to open its EDI TCP port before odr-dabmod connects
       await new Promise((resolve) => setTimeout(resolve, 500));
 
-      const txMode = (this.settings.dabmux?.txMode || 'EASYDAB').toUpperCase();
-      if (txMode === 'HACKRF') {
-        const hk = this.settings.dabmux?.hackrf || {};
+      const localHk = this._localHackrf();   // HACKRF mode, or the HackRF output of the NETWORK mode
+      if (localHk) {
+        const hk = localHk.hk;
         const dabBlock = hk.dabBlock || '7A';
         const freqHz = DAB_FREQ_TABLE[dabBlock];
         if (!freqHz) throw new Error(`Unknown DAB block: ${dabBlock}`);
@@ -1574,9 +1589,10 @@ export class AppState {
         const filtertapsPath = path.resolve(this.runtimeDir, 'filtertaps.txt');
         const dabmodIniPath = path.resolve(this.runtimeDir, 'dabmod.ini');
 
-        // Copy filtertaps.txt to runtime dir
+        // Copy filtertaps.txt to runtime dir (the .deb does not ship it: built-in default when absent)
         const srcFilterTaps = path.resolve(this.dataDir, 'filtertaps.txt');
-        fs.copyFileSync(srcFilterTaps, filtertapsPath);
+        if (safeExists(srcFilterTaps)) fs.copyFileSync(srcFilterTaps, filtertapsPath);
+        else fs.writeFileSync(filtertapsPath, DEFAULT_FILTERTAPS, 'utf8');
 
         // Create FIFO if not exists
         if (!safeExists(fifoPath)) {
@@ -1586,7 +1602,7 @@ export class AppState {
         }
 
         // Generate dabmod.ini
-        const ediPort = Number(this.settings.dabmux?.ediTcpListenPort) || 13000;
+        const ediPort = localHk.ediPort;
         const dabmodConfig = buildDabModConfig({
           source: `tcp://localhost:${ediPort}`,
           maxFramesQueued: hk.maxFramesQueued || 580,
@@ -1993,8 +2009,7 @@ export class AppState {
           }
         }
         // HACKRF: verify dabmod + hackrf_transfer are alive
-        const wdTxMode = (this.settings.dabmux?.txMode || 'EASYDAB').toUpperCase();
-        if (wdTxMode === 'HACKRF') {
+        if (this._localHackrf()) {
           const dabmodAlive = this.pm.isRunning('mux:odr-dabmod');
           const hackrfAlive = this.pm.isRunning('mux:hackrf_transfer');
           if (!dabmodAlive || !hackrfAlive) {
