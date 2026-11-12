@@ -778,9 +778,9 @@
           <div class="net-common">
             <label class="check-row net-edi-only"><input type="checkbox" id="m_net_pft" /> EDI: PFT / FEC (all EDI outputs)</label>
             <label class="net-inline net-edi-only"><span>FEC</span><input id="m_net_fec" type="number" min="0" max="5" step="1" /></label>
-            <label class="net-inline"><span>TIST offset (s)</span><input id="m_net_tist" type="number" min="0" max="60" step="0.024" /></label>
+            <label class="net-inline net-tist-only"><span>TIST offset (s)</span><input id="m_net_tist" type="number" min="0" max="60" step="0.024" /></label>
           </div>
-          <p class="meta-help"><span class="net-edi-only">PFT / FEC protects EDI over UDP against lost packets (usual for commercial modulators, not needed over TCP); it applies to every EDI output. </span>The TIST offset gives transmitters time to buffer (EasyDAB V2: 2 s). The ETI monitoring output (Player / Dablin) is always kept.</p>
+          <p class="meta-help"><span class="net-edi-only">PFT / FEC protects EDI over UDP against lost packets (usual for commercial modulators, not needed over TCP); it applies to every EDI output. </span><span class="net-tist-only">The TIST offset delays the timestamps so that transmitters reading them (EDI, EasyDAB V2) can fill their buffer (EasyDAB V2: 2 s; 0 otherwise). </span>The ETI monitoring output (Player / Dablin) is always kept.</p>
         </div>
         <label class="hackrf-only">
           <span>DAB Block</span>

@@ -1644,6 +1644,9 @@ function renderNetOutputs() {
   // PFT / FEC only concerns EDI outputs: hidden when the list has none (EasyDAB / ETI only)
   const hasEdi = NET_OUTPUTS.some((o) => o.type === 'edi-udp' || o.type === 'edi-tcp');
   document.querySelectorAll('.net-edi-only').forEach((el) => el.classList.toggle('hidden', !hasEdi));
+  // TIST offset: only read by EDI transmitters and the EasyDAB V2 (ZMQ with metadata)
+  const usesTist = hasEdi || NET_OUTPUTS.some((o) => o.type === 'zmq' && o.allowMetadata);
+  document.querySelectorAll('.net-tist-only').forEach((el) => el.classList.toggle('hidden', !usesTist));
   if (!NET_OUTPUTS.length) { box.innerHTML = '<div class="muted net-empty">No output yet: choose a type and press + Add.</div>'; return; }
   box.innerHTML = NET_OUTPUTS.map((o, i) => {
     const mc = o.type === 'edi-udp' && /^(22[4-9]|23\d)\./.test(o.destination || '');
@@ -1682,6 +1685,7 @@ $('#netOutputs')?.addEventListener('input', (e) => {
   const k = el.dataset.key;
   o[k] = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value);
   if (k === 'enabled') el.closest('.net-row').classList.toggle('off', !el.checked);
+  if (k === 'allowMetadata') { renderNetOutputs(); return updateMuxRestartWarn(); }
   if (k === 'destination' || k === 'port') {   // multicast fields / help address follow
     const pos = el.selectionStart;
     renderNetOutputs();
@@ -1920,7 +1924,8 @@ async function saveMuxSettings() {
       ...(network ? {
         outputs: netCollect(),
         ediOptions: { pft: $('#m_net_pft').checked, fec: Number($('#m_net_fec').value) },
-        tistOffsetSec: Number($('#m_net_tist').value) || 0,
+        // hidden (no output reads timestamps) = 0: never an offset the user cannot see
+        tistOffsetSec: document.getElementById('m_net_tist').closest('label').classList.contains('hidden') ? 0 : (Number($('#m_net_tist').value) || 0),
       } : {}),
       easyDabOutput: {
         ip: $('#m_easydab_ip').value.trim(),
