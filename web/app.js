@@ -398,7 +398,7 @@ function ptyCell(pty) {
 function streamDot(isActive, hasUri, isOnAir, isWarn = false) {
   if (!hasUri) return '';
   const cls = isActive ? (isWarn ? 'dot warn' : 'dot ok') : (isOnAir ? 'dot err' : 'dot');
-  const title = isActive ? (isWarn ? 'Instable' : 'En lecture') : (isOnAir ? 'Hors ligne' : 'En attente');
+  const title = isActive ? (isWarn ? 'Unstable' : 'Playing') : (isOnAir ? 'Offline' : 'Standby');
   return `<span class="${cls}" title="${title}"></span>`;
 }
 
@@ -1415,7 +1415,7 @@ async function importAllConfig(file) {
   }
 
   if (!payload.preset) {
-    throw new Error('Format de fichier invalide (preset manquant)');
+    throw new Error('Invalid file format (no preset in it)');
   }
 
   await api('/api/import/full', { method: 'POST', body: JSON.stringify(payload) });
