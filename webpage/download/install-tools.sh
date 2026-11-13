@@ -127,18 +127,18 @@ install_optional libvlc-dev libfdk-aac-dev
 #   NODE_VERSION=$(node --version)
 #   echo "Node.js already installed: $NODE_VERSION"
 #   NODE_MAJOR=$(node --version | cut -d'.' -f1 | sed 's/v//')
-#   if [ "$NODE_MAJOR" -lt 18 ]; then
-#     echo -e "${YELLOW}Node.js version is too old (need v18+). Upgrading...${NC}"
+#   if [ "$NODE_MAJOR" -lt 24 ]; then
+#     echo -e "${YELLOW}Node.js version is too old (need v24+). Upgrading...${NC}"
 #     INSTALL_NODE=true
 #   else
-#     echo "Node.js version is sufficient (v18+)"
+#     echo "Node.js version is sufficient (v24+)"
 #     INSTALL_NODE=false
 #   fi
 # else
 #   INSTALL_NODE=true
 # fi
 # if [ "$INSTALL_NODE" = true ]; then
-#   curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+#   curl -fsSL https://deb.nodesource.com/setup_24.x | bash -
 #   apt-get install -y nodejs
 #   echo "Node.js installed: $(node --version)"
 #   echo "npm installed: $(npm --version)"
@@ -148,7 +148,7 @@ install_optional libvlc-dev libfdk-aac-dev
 # Install ODR-mmbTools
 print_section "Installing ODR-mmbTools..."
 
-# Check if we can use PPA (Ubuntu) or backports (Debian)
+# Ubuntu: official archive (universe / multiverse); Debian 12: backports; Debian 13+: standard repository
 if [[ "$OS" == "ubuntu" ]]; then
   # Ubuntu: the ODR tools are in the official archive (universe; odr-audioenc in multiverse, as it
   # uses fdk-aac) — Ubuntu 26.04 LTS or newer for odr-audioenc. The former opendigitalradio PPA

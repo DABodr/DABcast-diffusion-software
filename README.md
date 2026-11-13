@@ -290,7 +290,7 @@ One or several transmitters fed at once by the same multiplex (**Multiplex & mod
 
 ### Robustness and security
 
-- ✅ **Safe startup**: detection of missing binaries (ODR-mmbTools, libhackrf)
+- ✅ **Safe startup**: detection of missing binaries (ODR-mmbTools, and hackrf_transfer for a HackRF output saved by an older version)
   - Pre-check before mux startup
   - Toast error messages (5s) with precise details
   - No crash if odr-audioenc/padenc/hackrf_transfer not found
