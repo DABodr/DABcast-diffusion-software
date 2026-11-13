@@ -195,3 +195,15 @@ describe('buildMuxConfig', () => {
     assert.ok(!e.includes('tist_offset') && !e.includes('10.0.0.1'), 'EASYDAB unchanged by the outputs list');
   });
 });
+
+describe('muxBuilder — labels', () => {
+  it('a label never adds a line to the .mux (quotes and line breaks neutralised)', () => {
+    const cfg = makeConfig();
+    cfg.settings.ensemble.label = 'Evil"\n    outputs { x "file:///tmp/x" }';
+    const text = buildMuxConfig(cfg);
+    const line = text.split('\n').find((l) => l.trim().startsWith('label') && l.includes('Evil'));
+    assert.ok(line, 'label kept on one line');
+    assert.doesNotMatch(line, /"[^"]*"[^"]*"/, 'no extra quote');
+    assert.doesNotMatch(text, /^\s*outputs \{ x/m, 'no injected line');
+  });
+});
