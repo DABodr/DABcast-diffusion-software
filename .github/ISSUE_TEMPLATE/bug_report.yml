@@ -1,0 +1,42 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please remove any private stream URL, token or password from what you paste.
+        Security issues: do not open a public issue, see SECURITY.md.
+  - type: input
+    id: version
+    attributes:
+      label: DABcast version
+      description: Shown in the About (?) dialog
+      placeholder: "1.10.2"
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      placeholder: "Debian 13 amd64 / Raspberry Pi OS 64-bit on Pi 5"
+    validations:
+      required: true
+  - type: input
+    id: outputs
+    attributes:
+      label: Transmitter outputs used
+      placeholder: "ZMQ EasyDAB V2 + SDR HackRF"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+      description: Steps to reproduce if you can
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: Logs button (tabs Errors / Watchdog / odr-dabmod), or /var/lib/dabcast/logs/dabweb.log
+      render: text

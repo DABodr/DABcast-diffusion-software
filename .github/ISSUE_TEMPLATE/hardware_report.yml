@@ -1,0 +1,40 @@
+name: Hardware report (SDR, modulator, converter)
+description: Tell us whether DABcast works with your transmitter, SDR or converter
+labels: [hardware]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        DABcast was tested on air with a HackRF One and an EasyDAB V2 only.
+        LimeSDR, BladeRF, PlutoSDR and commercial modulators are offered but not tested — your report helps everyone.
+  - type: input
+    id: hardware
+    attributes:
+      label: Hardware
+      placeholder: "LimeSDR Mini v2 / GatesAir exciter / digris-edi-tcp-converter …"
+    validations:
+      required: true
+  - type: dropdown
+    id: output
+    attributes:
+      label: DABcast output used
+      options: [SDR (SoapySDR), ZMQ, EDI/UDP, EDI/UDP multicast, EDI/TCP, ETI/TCP]
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Result
+      options: [Works, Works with changes (describe below), Does not work]
+    validations:
+      required: true
+  - type: textarea
+    id: settings
+    attributes:
+      label: Settings and notes
+      description: TX gain, master clock, bandwidth, antenna, PFT / FEC, TIST offset… and what you had to change
+  - type: input
+    id: version
+    attributes:
+      label: DABcast version and system
+      placeholder: "1.10.2 — Raspberry Pi OS 64-bit, Pi 5"
