@@ -659,6 +659,25 @@ app.get('/api/export/full', (req, res) => {
 app.post('/api/import/full', (req, res) => {
   try {
     const payload = req.body || {};
+    // An imported file gets the same checks as the Settings screen (PATCH /api/settings), BEFORE
+    // anything is written: its text ends up in the .mux / dabmod.ini (security review).
+    if (payload.settings?.dabmux) {
+      const imp = payload.settings.dabmux;
+      if (imp.outputs !== undefined) imp.outputs = normalizeOutputs(imp.outputs);
+      if (imp.ediOptions !== undefined) imp.ediOptions = normalizeEdiOptions(imp.ediOptions);
+      const next = { ...settings.dabmux, ...imp };
+      if (String(next.txMode || '').toUpperCase() === 'NETWORK') {
+        const errors = validateOutputs(normalizeOutputs(next.outputs), {
+          reserved: reservedForOutputs(next),
+          ediOptions: normalizeEdiOptions(next.ediOptions),
+        });
+        if (errors.length) throw new Error(`Transmitter outputs: ${errors.join(' · ')}`);
+      }
+    }
+    // logos: one per service PI code (4 hex digits) — never a path (no "../")
+    const logoEntries = payload.logos && typeof payload.logos === 'object' ? Object.entries(payload.logos) : [];
+    const badLogo = logoEntries.find(([k]) => !/^(0x)?[0-9A-F]{4}$/i.test(k));
+    if (badLogo) throw new Error(`Invalid logo key "${String(badLogo[0]).slice(0, 40)}" (expected a PI code)`);
     if (payload.settings) {
       settings.ensemble = { ...settings.ensemble, ...payload.settings.ensemble };
       settings.dabmux = { ...settings.dabmux, ...payload.settings.dabmux };
@@ -668,9 +687,10 @@ app.post('/api/import/full', (req, res) => {
       if (payload.settings.dabmux?.hackrf) {
         settings.dabmux.hackrf = { ...(settings.dabmux.hackrf || {}), ...payload.settings.dabmux.hackrf };
       }
-      if (payload.settings.odrBinDir !== undefined) {
-        settings.odrBinDir = payload.settings.odrBinDir;
-        pm.odrBinDir = settings.odrBinDir;
+      // odrBinDir (where the ODR programs are started from) is never taken from an imported file:
+      // a crafted file could otherwise make DABcast start other programs (security review)
+      if (payload.settings.odrBinDir !== undefined && payload.settings.odrBinDir !== settings.odrBinDir) {
+        logger.line('export', `Import: odrBinDir "${String(payload.settings.odrBinDir).slice(0, 80)}" ignored (kept "${settings.odrBinDir || ''}")`, 'WARN');
       }
       writeJson(settingsPath, settings);
     }
@@ -679,8 +699,9 @@ app.post('/api/import/full', (req, res) => {
     }
 
     // Import logos if present
-    if (payload.logos && typeof payload.logos === 'object') {
-      for (const [svcId, logoBase64] of Object.entries(payload.logos)) {
+    if (logoEntries.length) {
+      for (const [key, logoBase64] of logoEntries) {
+        const svcId = key.replace(/^0x/i, '').toUpperCase();   // checked above: 4 hex digits
         try {
           const motDir = path.join(dataDir, 'mot', svcId);
           const slideDir = path.join(motDir, 'slide');
