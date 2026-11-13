@@ -63,15 +63,22 @@ export class FileLogger {
     this._emit(scope, msg, lvl);
   }
 
-  _emit(scope, msg, level) {
+  _emit(scope, msg, level, recoveryKind = null) {
     const timestamp = new Date().toISOString();
     this._write(`[${timestamp}] [${level}] [${scope}] ${msg}\n`);
     if (!this.notifier) return;
 
     try {
+      // recovery line: "✅ RESOLVED" message when its Telegram option is on, else an ordinary line
+      if (recoveryKind && this.notifier.notifyRecovery?.(recoveryKind, { timestamp, scope, message: String(msg) })) return;
       const result = this.notifier.notify({ timestamp, level, scope, message: String(msg) });
       if (result && typeof result.catch === 'function') result.catch(() => {});
     } catch { /* remote notifications must never affect file logging */ }
+  }
+
+  // INFO line telling that an incident is over (kind: 'outputs' | 'services', see TelegramLogNotifier.recovery)
+  recovery(kind, scope, msg) {
+    this._emit(scope, msg, 'INFO', kind);
   }
 
   _write(logLine) {

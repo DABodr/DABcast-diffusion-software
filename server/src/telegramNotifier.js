@@ -23,6 +23,7 @@ export class TelegramLogNotifier {
     maxQueueSize = 100,
     requestTimeoutMs = 10000,
     silent = false,
+    recovery = {},
     onError = (message) => console.error(message)
   } = {}) {
     if (!token) throw new Error('Telegram bot token is required');
@@ -38,6 +39,8 @@ export class TelegramLogNotifier {
     this.maxQueueSize = Math.max(1, Number(maxQueueSize) || 100);
     this.requestTimeoutMs = Math.max(1, Number(requestTimeoutMs) || 10000);
     this.silent = Boolean(silent);
+    // recovery messages ("back on air") sent whatever minLevel, one option per kind: { outputs, services }
+    this.recovery = { outputs: recovery?.outputs === true, services: recovery?.services === true };
     this.onError = onError;
     this._queue = [];
     this._draining = null;
@@ -52,11 +55,23 @@ export class TelegramLogNotifier {
     const normalizedLevel = normalizeLevel(level);
     if (!this.accepts(normalizedLevel)) return false;
 
-    const text = this._format({ timestamp, level: normalizedLevel, scope, message });
+    this._enqueue(this._format({ timestamp, level: normalizedLevel, scope, message }));
+    return true;
+  }
+
+  // "✅ RESOLVED" message (transmitter output back: SDR transmitting / modulator reconnected; service back
+  // on air / on its main stream):
+  // false = its option is off (the caller then logs it as an ordinary INFO line)
+  notifyRecovery(kind, { timestamp = new Date().toISOString(), scope = 'app', message = '' } = {}) {
+    if (!this.recovery[kind]) return false;
+    this._enqueue(this._format({ timestamp, level: '✅ RESOLVED', scope, message }));
+    return true;
+  }
+
+  _enqueue(text) {
     if (this._queue.length >= this.maxQueueSize) this._queue.shift();
     this._queue.push(text);
     this._startDrain();
-    return true;
   }
 
   async flush() {

@@ -340,10 +340,19 @@ input:disabled, select:disabled {
   cursor: not-allowed;
 }
 .span2 { grid-column: span 2; }
+.tg-grid { row-gap: 10px; }
+.tg-section { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); border-top: 1px solid var(--border); padding-top: 10px; margin-top: 2px; }
+.tg-section .muted { text-transform: none; letter-spacing: 0; font-weight: 400; }
+label.check-row.tg-recovery { align-items: flex-start; }
+.tg-recovery > span { display: flex; flex-direction: column; gap: 2px; }
+.tg-recovery small { font-size: 11px; }
 .modal-actions { display:flex; justify-content: space-between; align-items:center; gap: 10px; margin-top: 14px; }
-.logs-tabs { margin-top: 12px; }
-.logs-filters { display: flex; align-items: center; gap: 12px; margin: 8px 0 4px; font-size: 13px; }
+.logs-tabs { margin-top: 12px; flex-wrap: wrap; row-gap: 6px; }
+.logs-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 8px 0 4px; font-size: 13px; }
 .logs-filters label { display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--muted); }
+.logs-filters input[type="search"] { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 13px; width: 180px; }
+.logs .log-err { color: var(--red, #f87171); }
+.logs .log-warn { color: var(--yellow, #fbbf24); }
 .logs-filters select { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px; font-size: 13px; }
 .logs {
   height: 60vh;
@@ -851,6 +860,7 @@ input.just-filled { border-color: var(--green) !important; box-shadow: 0 0 0 3px
 .net-status { font-size: 11px; color: var(--muted); }
 .net-status.ok { color: var(--green); }
 .net-status.warn { color: var(--yellow); font-weight: 600; }
+.net-status.err { color: var(--red); font-weight: 600; }
 .net-common { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: end; padding-top: 4px; border-top: 1px solid var(--border); }
 .net-common .check-row { padding-bottom: 6px; font-size: 12px; }
 .net-empty { padding: 6px 2px; font-size: 12px; }
@@ -876,6 +886,8 @@ input.just-filled { border-color: var(--green) !important; box-shadow: 0 0 0 3px
 .mux-pill.ok i { background: var(--green); }
 .mux-pill.warn i { background: var(--yellow); }
 .mux-pill.warn { border-color: rgba(241, 196, 15, .5); }
+.mux-pill.err i { background: var(--red); }
+.mux-pill.err { border-color: rgba(231, 76, 60, .6); color: #fecaca; }
 dialog.mux-inline { position: static; display: none; width: 100%; max-width: none; margin: 0; padding: 0; border: 0; border-top: 1px solid var(--border); background: transparent; color: inherit; }
 dialog.mux-inline[open] { display: block; }
 .mux-form { padding: 12px 14px 14px; }

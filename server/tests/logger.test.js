@@ -87,6 +87,19 @@ describe('FileLogger', () => {
     assert.equal(notifications[0].message, 'encoder crashed');
   });
 
+  it('recovery lines: INFO in the file, ✅ RESOLVED when the option is on, else an ordinary line', () => {
+    const sent = [];
+    const notifier = {
+      notify: (e) => sent.push(`notify ${e.level} ${e.message}`),
+      notifyRecovery: (kind, e) => { if (kind !== 'outputs') return false; sent.push(`recovery ${e.message}`); return true; },
+    };
+    const logger = new FileLogger(logPath, { notifier });
+    logger.recovery('outputs', 'watchdog', 'SDR transmitting again');
+    logger.recovery('services', 'svc:F9A3', 'back on its main stream');
+    assert.deepEqual(sent, ['recovery SDR transmitting again', 'notify INFO back on its main stream']);
+    assert.match(readLog(logPath), /\[INFO\] \[watchdog\] SDR transmitting again/);
+  });
+
   it('does not let notifier failures break file logging', () => {
     const notifier = { notify: () => { throw new Error('offline'); } };
     const logger = new FileLogger(logPath, { notifier });

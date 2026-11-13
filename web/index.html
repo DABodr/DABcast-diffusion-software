@@ -63,7 +63,7 @@
         <div class="grid">
           <div class="mux-row span2">
             <label>
-              <span>Ensemble ID</span>
+              <span class="lbl-row">Ensemble ID<span class="dls-count" id="ensHint"></span></span>
               <input id="m_ens_id" maxlength="4" placeholder="F401" />
             </label>
             <label>
@@ -101,11 +101,11 @@
               </select>
             </label>
             <label>
-              <span>Short label (PS8)</span>
+              <span class="lbl-row">Short label (PS8)<span class="dls-count" id="mShortCount"></span></span>
               <input id="m_short" maxlength="8" />
             </label>
             <label>
-              <span>Label (PS16)</span>
+              <span class="lbl-row">Label (PS16)<span class="dls-count" id="mLabelCount"></span></span>
               <input id="m_label" maxlength="16" />
             </label>
           </div>
@@ -154,7 +154,7 @@
                 <option value="edi-tcp">EDI/TCP — transmitter / converter connects</option>
                 <option value="zmq">ZMQ — EasyDAB V2</option>
                 <option value="eti-tcp">ETI/TCP — raw ETI</option>
-                <option value="hackrf">HackRF — local SDR on this server</option>
+                <option value="sdr">SDR — HackRF, LimeSDR, BladeRF, PlutoSDR… on this server</option>
               </select>
               <button type="button" class="btn btn-sm btn-primary" id="netAdd">+ Add</button>
             </div>
@@ -827,13 +827,18 @@
       <div class="tabs logs-tabs" role="tablist" aria-label="Logs tabs">
         <button type="button" class="tab active" data-logtab="all">All</button>
         <button type="button" class="tab" data-logtab="dabmux">odr-dabmux</button>
+        <button type="button" class="tab" data-logtab="dabmod">odr-dabmod / SDR</button>
         <button type="button" class="tab" data-logtab="audio">odr-audioenc / odr-padenc</button>
+        <button type="button" class="tab" data-logtab="meta">Metadata</button>
+        <button type="button" class="tab" data-logtab="watchdog">Watchdog</button>
         <button type="button" class="tab" data-logtab="proc">Running process</button>
         <button type="button" class="tab" data-logtab="errors">Errors</button>
       </div>
       <div class="logs-filters">
         <label><input type="checkbox" id="chkRawOutput"> Raw output (DEBUG)</label>
         <select id="selLogService"><option value="">All services</option></select>
+        <input type="search" id="logSearch" placeholder="Search…" aria-label="Search the logs" />
+        <span class="muted" id="logCount"></span>
       </div>
       <pre id="logsPre" class="logs"></pre>
       <div class="modal-actions">
@@ -1064,12 +1069,14 @@
       <div class="alert hidden" id="telegramError"></div>
       <div id="telegramStatus" class="info-status"></div>
 
-      <div class="grid2">
-        <label class="check-row grid-col2">
+      <div class="grid2 tg-grid">
+        <label class="check-row span2">
           <input type="checkbox" id="tg_enabled" />
           Enable Telegram notifications
         </label>
-        <label class="grid-col2">
+
+        <div class="tg-section span2">Bot</div>
+        <label class="span2">
           <span>Bot token</span>
           <div style="display:flex;gap:4px;align-items:center;">
             <input id="tg_token" type="password" autocomplete="new-password" placeholder="123456789:token provided by BotFather" style="flex:1;" />
@@ -1090,9 +1097,19 @@
             <option value="DEBUG">All logs (very verbose)</option>
           </select>
         </label>
-        <label class="check-row grid-col2">
+        <label class="check-row span2">
           <input type="checkbox" id="tg_silent" />
           Send without notification sound
+        </label>
+
+        <div class="tg-section span2">When the problem is over <span class="muted">— ✅ RESOLVED message, sent whatever the minimum level</span></div>
+        <label class="check-row tg-recovery" title="SDR / HackRF sending frames again after 'stalled' / 'chain broken'; EasyDAB, modulator or converter connected again to its ZMQ, EDI/TCP or ETI/TCP output after 'disconnected' (EDI/UDP: no feedback from the transmitter)">
+          <input type="checkbox" id="tg_recovery_outputs" />
+          <span>Transmitter output back<small class="muted">SDR / HackRF transmitting again, EasyDAB / modulator reconnected</small></span>
+        </label>
+        <label class="check-row tg-recovery" title="After an encoder crash: running again (30 s stable), or back on its main stream after a failover to the backup">
+          <input type="checkbox" id="tg_recovery_services" />
+          <span>Service back on air<small class="muted">encoder running again, back on the main stream</small></span>
         </label>
       </div>
 
