@@ -4,7 +4,7 @@
 # Removes everything installed by install-tools.sh:
 #   odr-dabmux, odr-audioenc, odr-padenc, odr-dabmod
 #   ImageMagick, dablin, socat, wmctrl, xdotool
-#   HackRF (if installed)
+#   SDR support: SoapySDR drivers, HackRF / LimeSDR / BladeRF tools (if installed)
 #   ODR build dependencies
 #   ODR PPA/backports source
 #
@@ -86,6 +86,11 @@ elif [[ "$OS" == "debian" ]]; then
     rm -f "$BOOKWORM_BP_LIST"
     echo -e "  ${GREEN}✓${NC} $BOOKWORM_BP_LIST removed"
   fi
+  # Removing the non-free component added for odr-audioenc (Debian 13 and newer)
+  if [ -f /etc/apt/sources.list.d/dabcast-non-free.list ]; then
+    rm -f /etc/apt/sources.list.d/dabcast-non-free.list
+    echo -e "  ${GREEN}✓${NC} /etc/apt/sources.list.d/dabcast-non-free.list removed"
+  fi
   # Removing bookworm-backports pin
   BOOKWORM_PIN="/etc/apt/preferences.d/bookworm-backports-pin"
   if [ -f "$BOOKWORM_PIN" ]; then
@@ -115,8 +120,9 @@ else
 fi
 
 # --- HackRF ---
-print_section "Removing HackRF support..."
-for pkg in libhackrf-dev hackrf; do
+print_section "Removing SDR support (SoapySDR, HackRF, LimeSDR, BladeRF)..."
+for pkg in soapysdr0.8-module-all soapysdr0.8-module-hackrf soapysdr0.8-module-lms7 soapysdr0.8-module-bladerf \
+           soapysdr-tools limesuite bladerf libhackrf-dev hackrf; do
   if dpkg -l "$pkg" 2>/dev/null | grep -q "^ii"; then
     apt-get remove -y "$pkg"
     echo -e "  ${GREEN}✓${NC} $pkg removed"
