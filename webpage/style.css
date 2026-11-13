@@ -432,3 +432,75 @@ footer {
 }
 
 .new-badge { display: inline-block; margin-left: 6px; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; vertical-align: middle; background: rgba(34,197,94,.16); color: #4ade80; letter-spacing: .02em; }
+
+/* ── DABcast WebUI theme (v1.4+: flat, dense) — additive overrides, remove this block to revert ── */
+:root {
+  --bg:        #111318;
+  --bg-soft:   #0d0f14;
+  --card:      #181b22;
+  --surface2:  #1f232e;
+  --surface3:  #262c3a;
+  --text:      #d8dff0;
+  --muted:     #8892b0;
+  --border:    #2a3045;
+  --green:     #2ecc71;
+  --yellow:    #f1c40f;
+  --red:       #e74c3c;
+  --blue:      #3498db;
+  --accent:    #3498db;
+  --shadow:    0 2px 8px rgba(0, 0, 0, 0.35);
+}
+body { background: var(--bg); font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+a { color: var(--blue); }
+
+/* header = the top bar of DABcast */
+.site-header { background: var(--card); backdrop-filter: none; border-bottom: 1px solid var(--border); }
+.header-inner { padding: 10px 24px; }
+.site-title { font-size: 17px; letter-spacing: .01em; }
+nav a { font-size: 13px; }
+.btn-nav { background: var(--blue); border: 1px solid var(--blue); color: #fff !important; border-radius: 6px; padding: 6px 14px; font-size: 12.5px; }
+.btn-nav:hover { background: #2e86c1 !important; border-color: #2e86c1; }
+
+/* buttons = DABcast buttons */
+.btn { border-radius: 6px; padding: 9px 18px; font-size: 13px; transition: background .15s, color .15s; }
+.btn-primary { background: var(--blue); border: 1px solid var(--blue); color: #fff; }
+.btn-primary:hover { background: #2e86c1; opacity: 1; }
+.btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+.btn-ghost:hover { background: var(--surface2); color: var(--text); }
+
+/* hero: the ON AIR pill of the top bar (green, no blinking) */
+.onair-badge { color: #fff; background: linear-gradient(135deg, #1a7a3a, #27ae60); border: 0; border-radius: 24px; padding: 6px 18px; letter-spacing: .06em; box-shadow: 0 0 20px rgba(39, 174, 96, .4); animation: none; }
+h1 { font-weight: 800; letter-spacing: -.01em; }
+.accent { color: var(--blue); }
+
+/* screenshot window */
+.screenshot-frame { border-radius: 8px; box-shadow: var(--shadow); }
+.screenshot-bar { background: var(--surface2); border-bottom: 1px solid var(--border); }
+.screenshot-bar span:nth-child(1) { background: var(--red); }
+.screenshot-bar span:nth-child(2) { background: var(--yellow); }
+.screenshot-bar span:nth-child(3) { background: var(--green); }
+.screenshot-url { background: var(--bg-soft) !important; }
+.screenshot-body { background: var(--card); }
+.screenshot-zoom:focus-visible { outline-color: var(--blue); }
+.screenshot-zoom-hint { background: var(--card); border-color: var(--border); border-radius: 6px; backdrop-filter: none; }
+.screenshot-lightbox { background: var(--card); border-radius: 8px; }
+.screenshot-lightbox img { border-color: var(--border); border-radius: 8px 8px 0 0; }
+.lightbox-close { background: var(--surface2); border-color: var(--border); }
+.lightbox-close:hover { background: var(--blue); }
+
+/* cards = DABcast cards / summary tiles */
+.feature-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 22px 24px; }
+.feature-card:hover { border-color: rgba(52, 152, 219, .55); transform: none; }
+.feature-icon { font-size: 24px; margin-bottom: 10px; }
+.feature-card h3 { font-size: 15px; }
+.feature-card p { font-size: 13.5px; }
+.download { border-top-color: var(--border); }
+.download-card { background: var(--card); border-radius: 8px; padding: 16px 20px; }
+.download-card:hover { border-color: rgba(52, 152, 219, .55); }
+.install-block { background: var(--bg-soft); border-radius: 8px; }
+.install-label { font-size: 10.5px; letter-spacing: .05em; }
+.install-block pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12.5px; }
+.mock-header { background: var(--card); }
+.mock-gauge::after { background: var(--green); }
+.new-badge { background: rgba(46, 204, 113, .16); color: var(--green); }
+footer { background: var(--card); margin-top: 40px; }
