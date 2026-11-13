@@ -231,6 +231,14 @@
     }
     .box-info { border-left-color: #38bdf8; background: linear-gradient(90deg, rgba(14, 116, 144, .15), rgba(14, 116, 144, .04)); }
     .box-warn { border-left-color: var(--amber); background: linear-gradient(90deg, rgba(217, 119, 6, .15), rgba(217, 119, 6, .04)); }
+    /* status dots and badge drawn in CSS: emoji (colored circles, check mark) are missing from many fonts */
+    .dot { display: inline-block; width: .72em; height: .72em; border-radius: 50%; margin-right: .4em; vertical-align: -.04em;
+      -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .dot-green { background: #2ecc71; } .dot-orange { background: #f39c12; } .dot-red { background: #e74c3c; }
+    .dot-yellow { background: #f1c40f; } .dot-blue { background: #3498db; } .dot-grey { background: #8892b0; }
+    .dot-label { white-space: nowrap; }   /* the dot stays with its name in narrow columns */
+    .badge-resolved { display: inline-block; padding: 0 .35em; border-radius: 3px; background: #16a34a; color: #fff;
+      font-size: .82em; font-weight: 700; letter-spacing: .02em; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     .box-ok { border-left-color: var(--green); background: linear-gradient(90deg, rgba(22, 163, 74, .14), rgba(22, 163, 74, .035)); }
     .box-label { margin-bottom: 5px; font-size: 11px; font-weight: 850; letter-spacing: .12em; text-transform: uppercase; }
     .box-info .box-label { color: #67d4f7; }
@@ -384,7 +392,7 @@
   </tr>
   <tr>
     <td><strong>Telegram notifications</strong></td>
-    <td>Forwards logs and critical broadcast alerts to a Telegram bot, with configurable severity, silent delivery and a built-in connection test — and, optionally, a ✅ RESOLVED message when a transmitter or a service is back on air.</td>
+    <td>Forwards logs and critical broadcast alerts to a Telegram bot, with configurable severity, silent delivery and a built-in connection test — and, optionally, a <span class="badge-resolved">RESOLVED</span> message when a transmitter or a service is back on air.</td>
   </tr>
   <tr>
     <td><strong>Live metadata — DLS, DL+ &amp; SLS</strong></td>
@@ -554,10 +562,10 @@ or the web port, or to sign out.</p>
 <h2>Status Indicators</h2>
 <table>
   <tr><th>Dot colour</th><th>Badge</th><th>Meaning</th></tr>
-  <tr><td>🟢 Green</td><td>RUNNING</td><td>Service is live on the active stream</td></tr>
-  <tr><td>🟠 Orange</td><td>WARNING</td><td>Running on backup stream, or backup is unstable</td></tr>
-  <tr><td>🔴 Red</td><td>ERROR / CRASH</td><td>Encoder crashed, attempting restart</td></tr>
-  <tr><td>⚪ Grey</td><td>STOPPED</td><td>Service is stopped or mux is not running</td></tr>
+  <tr><td><span class="dot-label"><span class="dot dot-green"></span>Green</span></td><td>RUNNING</td><td>Service is live on the active stream</td></tr>
+  <tr><td><span class="dot-label"><span class="dot dot-orange"></span>Orange</span></td><td>WARNING</td><td>Running on backup stream, or backup is unstable</td></tr>
+  <tr><td><span class="dot-label"><span class="dot dot-red"></span>Red</span></td><td>ERROR / CRASH</td><td>Encoder crashed, attempting restart</td></tr>
+  <tr><td><span class="dot-label"><span class="dot dot-grey"></span>Grey</span></td><td>STOPPED</td><td>Service is stopped or mux is not running</td></tr>
 </table>
 
 <h2>Mux Input Buffer Tags</h2>
@@ -568,11 +576,11 @@ or the web port, or to sign out.</p>
 </p>
 <table>
   <tr><th>Tag</th><th>Meaning</th><th>What to do</th></tr>
-  <tr><td>🔵 STARTING</td><td>Just after Start: buffers are filling up and start-up underruns are normal. Ends on its own once the radio has had no new underrun for 5 seconds (usually about 15 s after Start, at most 1 minute). No warning or alarm is raised during this phase.</td><td>Nothing</td></tr>
-  <tr><td>🟢 BUFFER OK</td><td>Audio arrives regularly, no buffer incident in the last 30 seconds. Shown even while dabmux itself still reports <em>Unstable</em> for old glitches (e.g. the buffer filling up right after Start) — the tooltip says so.</td><td>Nothing</td></tr>
-  <tr><td>🟡 UNSTABLE ▲</td><td>Underruns increased during the last 30 seconds: the buffer ran empty and listeners may hear dropouts (▲ = increase since the previous reading)</td><td>Check the source stream, network and encoder of that service</td></tr>
-  <tr><td>🟡 SILENCE</td><td>Data arrives but the audio is (almost) silent</td><td>Check the source programme</td></tr>
-  <tr><td>🔴 NO DATA</td><td>Nothing arrives from the encoder</td><td>Check the encoder and its logs</td></tr>
+  <tr><td><span class="dot-label"><span class="dot dot-blue"></span>STARTING</span></td><td>Just after Start: buffers are filling up and start-up underruns are normal. Ends on its own once the radio has had no new underrun for 5 seconds (usually about 15 s after Start, at most 1 minute). No warning or alarm is raised during this phase.</td><td>Nothing</td></tr>
+  <tr><td><span class="dot-label"><span class="dot dot-green"></span>BUFFER OK</span></td><td>Audio arrives regularly, no buffer incident in the last 30 seconds. Shown even while dabmux itself still reports <em>Unstable</em> for old glitches (e.g. the buffer filling up right after Start) — the tooltip says so.</td><td>Nothing</td></tr>
+  <tr><td><span class="dot-label"><span class="dot dot-yellow"></span>UNSTABLE ▲</span></td><td>Underruns increased during the last 30 seconds: the buffer ran empty and listeners may hear dropouts (▲ = increase since the previous reading)</td><td>Check the source stream, network and encoder of that service</td></tr>
+  <tr><td><span class="dot-label"><span class="dot dot-yellow"></span>SILENCE</span></td><td>Data arrives but the audio is (almost) silent</td><td>Check the source programme</td></tr>
+  <tr><td><span class="dot-label"><span class="dot dot-red"></span>NO DATA</span></td><td>Nothing arrives from the encoder</td><td>Check the encoder and its logs</td></tr>
 </table>
 <p>
   The <strong>Mux inputs</strong> card sums these tags; <em>SILENCE</em> and <em>NO DATA</em> inputs are added to the <strong>Alarms</strong> card.
@@ -805,7 +813,7 @@ txgain=40</pre>
 </ol>
 <ul>
   <li>Errors sent include encoder crashes, failover, an SDR that stops transmitting and a transmitter that disconnects from its output — once per incident.</li>
-  <li><strong>When the problem is over</strong> (off by default): <em>Transmitter output back</em> (SDR transmitting again, EasyDAB / modulator reconnected) and <em>Service back on air</em> (encoder running again for 30 s, back on its main stream) send a <strong>✅ RESOLVED</strong> message, whatever the minimum level.</li>
+  <li><strong>When the problem is over</strong> (off by default): <em>Transmitter output back</em> (SDR transmitting again, EasyDAB / modulator reconnected) and <em>Service back on air</em> (encoder running again for 30 s, back on its main stream) send a <strong><span class="badge-resolved">RESOLVED</span></strong> message, whatever the minimum level.</li>
   <li><em>Send without notification sound</em> delivers silently. The token is stored in <code>/var/lib/dabcast/.telegram.json</code> (readable by DABcast only) and is never shown again nor exported; a Telegram failure never affects the logs or the broadcast.</li>
 </ul>
 
