@@ -1976,41 +1976,40 @@ app.post('/api/update/apply', async (req, res) => {
   _updateState = { status: 'downloading', progress: 0, error: null, version: _releaseCache.latestVersion };
   res.json({ ok: true, arch, asset: asset.name });
 
-  _doUpdate(asset).catch(err => {
+  _doUpdate(asset, _releaseCache.latestVersion).catch(err => {
     logger.line('update', `Update failed: ${err.message || err}`, 'ERROR');
     _updateState = { status: 'error', progress: 0, error: String(err.message || err), version: null };
   });
 });
 
-async function _doUpdate(asset) {
-  const tmpPath = path.join(os.tmpdir(), `dabcast-update_${asset.name}`);
-
-  // Stream download with progress
-  const r = await fetch(asset.url, {
-    headers: { 'User-Agent': 'DABcast' },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(180000)
-  });
-  if (!r.ok) throw new Error(`Download failed: ${r.status} ${r.statusText}`);
-
-  const total = Number(r.headers.get('content-length') || asset.size || 0);
-  let received = 0;
-  const dest = fs.createWriteStream(tmpPath);
-  for await (const chunk of r.body) {
-    dest.write(chunk);
-    received += chunk.byteLength;
-    if (total > 0) _updateState.progress = Math.round((received / total) * 100);
-  }
-  await new Promise((ok, fail) => { dest.end(); dest.on('finish', ok); dest.on('error', fail); });
-
-  _updateState = { ..._updateState, status: 'installing', progress: 100 };
-  logger.line('update', `Installing ${asset.name}...`);
-
+// The root helper (dabcast-install-update, sudo rule of the package) downloads the official release
+// itself and checks it: the service only gives the version number, never a file (security).
+// Its "PROGRESS n" lines drive the progress bar, "INSTALLING" switches to the installing step.
+async function _doUpdate(asset, version) {
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(String(version || ''))) throw new Error(`Invalid release version: ${version}`);
+  logger.line('update', `Downloading and installing ${asset.name} (v${version})...`);
+  let errText = '';
   await new Promise((ok, fail) => {
-    const child = spawn('sudo', ['/opt/dabcast/bin/dabcast-install-update'], {
-      stdio: ['ignore', 'inherit', 'inherit']
+    const child = spawn('sudo', ['-n', '/opt/dabcast/bin/dabcast-install-update', version], {
+      stdio: ['ignore', 'pipe', 'pipe']
     });
-    child.on('exit', code => code === 0 ? ok() : fail(new Error(`Installer exited with code ${code}`)));
+    let buf = '';
+    child.stdout.on('data', (d) => {
+      buf += d.toString();
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        const m = /^PROGRESS (\d+)$/.exec(line);
+        if (m) _updateState.progress = Math.min(100, Number(m[1]));
+        else if (line === 'INSTALLING') {
+          _updateState = { ..._updateState, status: 'installing', progress: 100 };
+          logger.line('update', `Installing ${asset.name}...`);
+        } else if (line) logger.line('update', line, 'DEBUG');
+      }
+    });
+    child.stderr.on('data', (d) => { errText = (errText + d.toString()).slice(-500); });
+    child.on('exit', (code) => (code === 0 ? ok() : fail(new Error(`Installer exited with code ${code}${errText.trim() ? `: ${errText.trim().split('\n').pop()}` : ''}`))));
     child.on('error', fail);
   });
 
