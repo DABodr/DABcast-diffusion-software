@@ -7,7 +7,8 @@ import { ensureDir, readJson, writeJson, safeExists } from './fsutil.js';
 import { buildMuxConfig } from './odr/muxBuilder.js';
 import { convertToSlide as convertSlideImage } from './slideImage.js';
 import { buildAudioEncCommand, buildDabMuxCommand, buildPadEncCommand, buildDabModConfig, buildHackrfTransferCommand, buildProbeCommand } from './odr/commandBuilder.js';
-import { localHackrfOutput } from './odr/outputs.js';
+import { localHackrfOutput, sdrDeviceString } from './odr/outputs.js';
+import { getDabmodValue } from './odr/dabmodRc.js';
 import { DEFAULT_FILTERTAPS } from './odr/filtertaps.js';
 import { validateService } from './odr/validate.js';
 import { ALLOWED_BITRATES_KBPS, DEFAULT_BITRATE_KBPS, DEFAULT_ZMQ_BUFFER, DEFAULT_ZMQ_PREBUFFER, DEFAULT_DEMO_PRESET_ID, DAB_FREQ_TABLE } from './defaults.js';
@@ -22,6 +23,10 @@ function nowMs() { return Date.now(); }
 // Failover constants
 const FAILOVER_CRASH_THRESHOLD = 1;  // crashes before switching to backup
 const FAILOVER_STABLE_MS = 30000;    // encoder must run 30s before crash counter resets
+// Local modulator (SDR / HackRF) supervision by the watchdog (_superviseLocalModulator)
+const MOD_STALL_MS = 15000;          // SoapySDR: no frame sent for 15 s = stalled (device unplugged)
+const MOD_RETRY_MS = 30000;          // broken / stalled chain restarted every 30 s until it transmits
+const MOD_STABLE_MS = 10000;         // hackrf_transfer chain: alive 10 s after a restart = back on air
 
 /**
  * Resolve a value from a JSON object using dot-path, array index, and pipe fallbacks.
@@ -1509,6 +1514,192 @@ export class AppState {
     return null;
   }
 
+  // true when the local SDR chain is odr-dabmod alone (SoapySDR, the 'sdr' output); false = hackrf_transfer
+  _localSoapy() {
+    return this._localHackrf()?.hk.type === 'sdr';
+  }
+
+  // Writes dabmod.ini and spawns the local modulator chain: odr-dabmod (+ hackrf_transfer unless SoapySDR).
+  // Synchronous (throws on a bad setting). Called by startMux() and by the watchdog to restart a
+  // broken / stalled chain without touching the encoders or odr-dabmux.
+  _spawnLocalModulator(localHk) {
+    const hk = localHk.hk;
+    const dabBlock = hk.dabBlock || '7A';
+    const freqHz = DAB_FREQ_TABLE[dabBlock];
+    if (!freqHz) throw new Error(`Unknown DAB block: ${dabBlock}`);
+
+    const rate = hk.rate || 4096000;
+    const soapy = this._localSoapy();   // NETWORK 'sdr' output; HACKRF mode / 'hackrf' output = hackrf_transfer
+    const fifoPath = path.resolve(this.runtimeDir, 'ofdm.fifo');
+    const filtertapsPath = path.resolve(this.runtimeDir, 'filtertaps.txt');
+    const dabmodIniPath = path.resolve(this.runtimeDir, 'dabmod.ini');
+
+    // Copy filtertaps.txt to runtime dir (the .deb does not ship it: built-in default when absent)
+    const srcFilterTaps = path.resolve(this.dataDir, 'filtertaps.txt');
+    if (safeExists(srcFilterTaps)) fs.copyFileSync(srcFilterTaps, filtertapsPath);
+    else fs.writeFileSync(filtertapsPath, DEFAULT_FILTERTAPS, 'utf8');
+
+    // Create FIFO if not exists (hackrf_transfer chain only)
+    if (!soapy && !safeExists(fifoPath)) {
+      try { execFileSync('mkfifo', [fifoPath]); } catch (e) {
+        throw new Error(`Failed to create FIFO ${fifoPath}: ${e.message}`);
+      }
+    }
+
+    // Generate dabmod.ini
+    const ediPort = localHk.ediPort;
+    const dabmodConfig = buildDabModConfig({
+      source: `tcp://localhost:${ediPort}`,
+      maxFramesQueued: hk.maxFramesQueued || 580,
+      gainmode: hk.gainmode ?? 2,
+      digitalGain: hk.digitalGain ?? 1,
+      rate,
+      filtertapsPath,
+      fifoPath,
+      ...(soapy ? { soapy: { device: sdrDeviceString(hk), masterClockRate: hk.masterClockRate, txGain: hk.txGain, freqHz, bandwidth: hk.bandwidth, txAntenna: hk.txAntenna } } : {})
+    });
+    fs.writeFileSync(dabmodIniPath, dabmodConfig, 'utf8');
+    this.logger.line('mux', `generated dabmod.ini: ${dabmodIniPath}`);
+
+    // Start odr-dabmod
+    this.pm.spawn('mux:odr-dabmod', 'odr-dabmod', [dabmodIniPath], {
+      ...(soapy ? {
+        onStderr: (line) => {
+          if (/Error making SoapySDR device/i.test(line)) {   // once per failed start (not 'Cannot create…', same error)
+            const msg = `SDR not detected (SoapySDR ${sdrDeviceString(hk)}) — check the device and its SoapySDR module`;
+            if (this._modState?.failing) { this.logger.line('mux', `${msg} (retry ${this._modState.attempts})`, 'WARN'); return; }   // already reported
+            this.logger.line('mux', msg, 'ERROR');
+            if (!this._otherOutputsOn()) {   // other outputs on air: shown on the SDR output only
+              this.lastError = msg;
+              this.muxStatus = 'fail';
+            }
+          }
+        }
+      } : {}),
+      onExit: (code) => {
+        if (this.muxRunning && code !== 0) {
+          // while the watchdog retries a broken chain: WARN (the failure was already reported as ERROR)
+          this.logger.line('mux', `odr-dabmod crashed (code=${code})`, this._modState?.failing ? 'WARN' : 'ERROR');
+        }
+      }
+    });
+    this.logger.line('mux', `started odr-dabmod (block=${dabBlock}, freq=${freqHz}Hz${soapy ? `, SoapySDR ${sdrDeviceString(hk)}, txGain=${hk.txGain}` : ''})`);
+
+    // Start hackrf_transfer (SoapySDR driver: none, odr-dabmod sends to the HackRF itself)
+    if (!soapy) {
+      const hackrfCmd = buildHackrfTransferCommand({
+        fifoPath, freqHz, txGain: hk.txGain ?? 47, rate
+      });
+      this.pm.spawn('mux:hackrf_transfer', hackrfCmd.bin, hackrfCmd.args, {
+        onStderr: (line) => {
+          if (/hackrf.*not found/i.test(line)) {
+            const msg = 'HackRF not detected — please connect HackRF device';
+            // watchdog restart of the chain: keep the mux (and the other outputs) on air, retry later
+            if (this._modState?.attempts) { this.logger.line('mux', `${msg} (retry ${this._modState.attempts})`, 'WARN'); return; }
+            this.logger.line('mux', msg, 'ERROR');
+            this.lastError = msg;
+            this.muxStatus = 'fail';
+            this.stopMux().catch(() => {});
+          }
+        },
+        onExit: (code) => {
+          if (this.muxRunning && code !== 0) {
+            this.logger.line('mux', `hackrf_transfer crashed (code=${code})`, this._modState?.failing ? 'WARN' : 'ERROR');
+          }
+        }
+      });
+      this.logger.line('mux', `started hackrf_transfer (freq=${freqHz}Hz, txGain=${hk.txGain ?? 47})`);
+    }
+  }
+
+  // Watchdog (every 5 s, ON AIR): the local modulator chain must be alive and, with SoapySDR, really send
+  // frames — odr-dabmod keeps running without any error when its device is unplugged, only its 'sdr frames'
+  // counter (remote control, read-only) stops. Broken or stalled = reported once (ERROR, muxStatus fail),
+  // then this chain alone is restarted every MOD_RETRY_MS until it transmits again (INFO); the encoders,
+  // odr-dabmux and the other outputs stay on air. The previous behaviour only logged "chain broken".
+  // Line telling that an incident is over: Telegram "✅ RESOLVED" when its option is on (logger.recovery),
+  // an ordinary INFO line otherwise (or with a logger without that method)
+  _logRecovery(kind, scope, msg) {
+    if (typeof this.logger.recovery === 'function') this.logger.recovery(kind, scope, msg);
+    else this.logger.line(scope, msg);
+  }
+
+  // NETWORK mode: an output other than the local SDR / HackRF is ON (the mux still feeds a transmitter)
+  _otherOutputsOn() {
+    const dm = this.settings?.dabmux || {};
+    if (String(dm.txMode || '').toUpperCase() !== 'NETWORK') return false;
+    return (dm.outputs || []).some((o) => o.enabled !== false && o.type !== 'hackrf' && o.type !== 'sdr');
+  }
+
+  async _superviseLocalModulator() {
+    const localHk = this._localHackrf();
+    if (!localHk) return;
+    const st = this._modState || (this._modState = { lastFrames: -1, lastProgressMs: Date.now(), failing: false, failingSinceMs: 0, restartAfterMs: 0, attempts: 0 });
+    const now = Date.now();
+    const label = localHk.hk.type === 'sdr' ? 'SDR' : 'HACKRF';
+    const soapy = this._localSoapy();
+    const dabmodAlive = this.pm.isRunning('mux:odr-dabmod');
+    // SoapySDR: odr-dabmod is the whole chain (no hackrf_transfer)
+    const hackrfAlive = soapy ? dabmodAlive : this.pm.isRunning('mux:hackrf_transfer');
+    let problem = null;
+    if (!dabmodAlive || !hackrfAlive) {
+      problem = `${label} chain broken: dabmod=${dabmodAlive} hackrf=${hackrfAlive}`;
+    } else if (soapy) {
+      const v = await getDabmodValue('sdr', 'frames', { port: this.dabmodRcPort ?? 2121 });   // telnetport of dabmod.ini
+      if (!this.muxRunning) return;   // Stop pressed meanwhile
+      const frames = v === null ? NaN : Number(v);   // NaN = remote control not reachable: no verdict
+      if (Number.isFinite(frames) && frames > st.lastFrames) {
+        st.lastFrames = frames;
+        st.lastProgressMs = now;
+      } else if (Number.isFinite(frames) && now - st.lastProgressMs > MOD_STALL_MS) {
+        problem = `${label} stalled: no frame sent for ${Math.round((now - st.lastProgressMs) / 1000)} s (device unplugged or blocked?)`;
+      }
+    }
+
+    if (!problem) {
+      // back on air: SoapySDR = frames sent since the restart; hackrf_transfer = alive for MOD_STABLE_MS
+      const recovered = soapy ? st.lastFrames > 0 && st.lastProgressMs >= (st.restartedMs || 0) : now - (st.restartedMs || 0) >= MOD_STABLE_MS;
+      if (st.failing && recovered) {
+        this._logRecovery('outputs', 'watchdog', `${label} transmitting again (after ${Math.round((now - st.failingSinceMs) / 1000)} s, ${st.attempts} restart(s))`);
+        st.failing = false;
+        st.attempts = 0;
+        if (this.muxStatus === 'fail') this.muxStatus = 'on';
+      }
+      return;
+    }
+
+    if (!st.failing) {   // reported once per incident
+      st.failing = true;
+      st.failingSinceMs = now;
+      st.restartAfterMs = 0;
+      this.logger.line('watchdog', `${problem} — restarting the ${label} chain every ${MOD_RETRY_MS / 1000} s until it transmits again`, 'ERROR');
+      // other outputs (EasyDAB, EDI…) still on air: the mux stays ON AIR, the SDR output alone shows it
+      if (!this._otherOutputsOn()) {
+        this.lastError = problem;
+        this.muxStatus = 'fail';
+      }
+    }
+    if (now < st.restartAfterMs) return;
+    st.restartAfterMs = now + MOD_RETRY_MS;
+    st.attempts += 1;
+    this.logger.line('watchdog', `restarting the ${label} chain (attempt ${st.attempts}): ${problem}`);
+    try { await this.pm.stop('mux:hackrf_transfer'); } catch { /* not running */ }
+    try { await this.pm.stop('mux:odr-dabmod'); } catch { /* not running */ }
+    if (!this.muxRunning) return;   // Stop pressed meanwhile: never spawn after it
+    if (this.pm.isRunning('mux:odr-dabmod') || this.pm.isRunning('mux:hackrf_transfer')) {
+      st.restartAfterMs = now + 5000;   // still exiting (SIGKILL sent): spawn at the next tick
+      return;
+    }
+    st.lastFrames = -1;   // counter restarts at 0 with the new odr-dabmod
+    st.lastProgressMs = Date.now();
+    st.restartedMs = Date.now();
+    try {
+      this._spawnLocalModulator(this._localHackrf());
+    } catch (e) {
+      this.logger.line('watchdog', `${label} restart failed: ${e?.message || e}`, 'WARN');
+    }
+  }
+
   async startMux() {
     if (this.muxRunning) {
       throw new Error('Mux déjà en cours (ON AIR).');
@@ -1531,7 +1722,8 @@ export class AppState {
     if (!this.pm.binaryExists('odr-padenc')) missingOdr.push('odr-padenc');
     if (this._localHackrf()) {
       if (!this.pm.binaryExists('odr-dabmod')) missingOdr.push('odr-dabmod');
-      if (!this.pm.binaryExists('hackrf_transfer')) missingOther.push('hackrf_transfer');
+      // SoapySDR (the 'sdr' output): odr-dabmod drives the device, no hackrf_transfer
+      if (!this._localSoapy() && !this.pm.binaryExists('hackrf_transfer')) missingOther.push('hackrf_transfer');
     }
     if (missingOdr.length || missingOther.length) {
       const parts = [];
@@ -1579,73 +1771,9 @@ export class AppState {
 
       const localHk = this._localHackrf();   // HACKRF mode, or the HackRF output of the NETWORK mode
       if (localHk) {
-        const hk = localHk.hk;
-        const dabBlock = hk.dabBlock || '7A';
-        const freqHz = DAB_FREQ_TABLE[dabBlock];
-        if (!freqHz) throw new Error(`Unknown DAB block: ${dabBlock}`);
-
-        const rate = hk.rate || 4096000;
-        const fifoPath = path.resolve(this.runtimeDir, 'ofdm.fifo');
-        const filtertapsPath = path.resolve(this.runtimeDir, 'filtertaps.txt');
-        const dabmodIniPath = path.resolve(this.runtimeDir, 'dabmod.ini');
-
-        // Copy filtertaps.txt to runtime dir (the .deb does not ship it: built-in default when absent)
-        const srcFilterTaps = path.resolve(this.dataDir, 'filtertaps.txt');
-        if (safeExists(srcFilterTaps)) fs.copyFileSync(srcFilterTaps, filtertapsPath);
-        else fs.writeFileSync(filtertapsPath, DEFAULT_FILTERTAPS, 'utf8');
-
-        // Create FIFO if not exists
-        if (!safeExists(fifoPath)) {
-          try { execFileSync('mkfifo', [fifoPath]); } catch (e) {
-            throw new Error(`Failed to create FIFO ${fifoPath}: ${e.message}`);
-          }
-        }
-
-        // Generate dabmod.ini
-        const ediPort = localHk.ediPort;
-        const dabmodConfig = buildDabModConfig({
-          source: `tcp://localhost:${ediPort}`,
-          maxFramesQueued: hk.maxFramesQueued || 580,
-          gainmode: hk.gainmode ?? 2,
-          digitalGain: hk.digitalGain ?? 1,
-          rate,
-          filtertapsPath,
-          fifoPath
-        });
-        fs.writeFileSync(dabmodIniPath, dabmodConfig, 'utf8');
-        this.logger.line('mux', `generated dabmod.ini: ${dabmodIniPath}`);
-
-        // Start odr-dabmod
-        this.pm.spawn('mux:odr-dabmod', 'odr-dabmod', [dabmodIniPath], {
-          onExit: (code) => {
-            if (this.muxRunning && code !== 0) {
-              this.logger.line('mux', `odr-dabmod crashed (code=${code})`, 'ERROR');
-            }
-          }
-        });
-        this.logger.line('mux', `started odr-dabmod (block=${dabBlock}, freq=${freqHz}Hz)`);
-
-        // Start hackrf_transfer
-        const hackrfCmd = buildHackrfTransferCommand({
-          fifoPath, freqHz, txGain: hk.txGain ?? 47, rate
-        });
-        this.pm.spawn('mux:hackrf_transfer', hackrfCmd.bin, hackrfCmd.args, {
-          onStderr: (line) => {
-            if (/hackrf.*not found/i.test(line)) {
-              const msg = 'HackRF not detected — please connect HackRF device';
-              this.logger.line('mux', msg, 'ERROR');
-              this.lastError = msg;
-              this.muxStatus = 'fail';
-              this.stopMux().catch(() => {});
-            }
-          },
-          onExit: (code) => {
-            if (this.muxRunning && code !== 0) {
-              this.logger.line('mux', `hackrf_transfer crashed (code=${code})`, 'ERROR');
-            }
-          }
-        });
-        this.logger.line('mux', `started hackrf_transfer (freq=${freqHz}Hz, txGain=${hk.txGain ?? 47})`);
+        // fresh supervision state of the local modulator (watchdog: frames counter, restarts)
+        this._modState = { lastFrames: -1, lastProgressMs: Date.now(), failing: false, failingSinceMs: 0, restartAfterMs: 0, attempts: 0 };
+        this._spawnLocalModulator(localHk);
       }
     } catch (err) {
       // Rollback: stop any started services
@@ -1855,6 +1983,8 @@ export class AppState {
           const hasDistinctBackup = svc.input.backupUri && svc.input.backupUri !== svc.input.uri;
           const okMain = await headOk(svc.input.uri);
           const okBackup = hasDistinctBackup ? await headOk(svc.input.backupUri) : false;
+          // Stop pressed during the HTTP checks above: the encoders were stopped on purpose, not crashed
+          if (!this.muxRunning) break;
 
           // --- CRASH DETECTION (transition-based) ---
           // Only count a NEW crash on alive→dead transition
@@ -1924,7 +2054,7 @@ export class AppState {
           if (rt.consecutiveCrashes > 0 && rt.lastStartMs) {
             const upMs = nowMs() - rt.lastStartMs;
             if (upMs >= FAILOVER_STABLE_MS) {
-              this.logger.line(`svc:${svc.id}`, `encoder stable for ${Math.round(upMs / 1000)}s — crash counter reset`);
+              this._logRecovery('services', `svc:${svc.id}`, `encoder stable for ${Math.round(upMs / 1000)}s — crash counter reset (${svc.identity?.ps8 || svc.id} back on air)`);
               rt.consecutiveCrashes = 0;
             }
           }
@@ -2008,14 +2138,9 @@ export class AppState {
             }
           }
         }
-        // HACKRF: verify dabmod + hackrf_transfer are alive
-        if (this._localHackrf()) {
-          const dabmodAlive = this.pm.isRunning('mux:odr-dabmod');
-          const hackrfAlive = this.pm.isRunning('mux:hackrf_transfer');
-          if (!dabmodAlive || !hackrfAlive) {
-            this.logger.line('watchdog', `HACKRF chain broken: dabmod=${dabmodAlive} hackrf=${hackrfAlive}`, 'ERROR');
-            this.muxStatus = 'fail';
-          }
+        // Local modulator (SDR / HackRF): alive, frames really sent, restarted when broken or stalled
+        if (this.muxRunning && this._localHackrf()) {   // not after a Stop pressed during this iteration
+          await this._superviseLocalModulator();
         }
       } catch (err) {
         this.logger.line('watchdog', `error: ${err?.message || err}`, 'ERROR');
@@ -2157,7 +2282,8 @@ export class AppState {
       rt.lastStartMs = nowMs();
       rt.encWasAlive = true;
       rt.status = 'RUNNING';
-      this.logger.line(`svc:${svc.id}`, `[failover] switch OK — now on ${newUri}`);
+      if (newUri === svc.input.uri && prevUri !== newUri) this._logRecovery('services', `svc:${svc.id}`, `[failover] switch OK — now on ${newUri} (${svc.identity?.ps8 || svc.id} back on its main stream)`);
+      else this.logger.line(`svc:${svc.id}`, `[failover] switch OK — now on ${newUri}`);
     } catch (err) {
       this.logger.line(`svc:${svc.id}`, `[failover] switch FAILED: ${err.message}`, 'ERROR');
       rt.status = 'ERROR';

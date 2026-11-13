@@ -15,13 +15,14 @@ import { DEFAULT_SETTINGS, WEAK_PASSWORDS, MIN_PASSWORD_LENGTH } from './default
 import { ensureDir, readJson, writeJson } from './fsutil.js';
 import { FileLogger } from './logger.js';
 import { TelegramLogNotifier } from './telegramNotifier.js';
+import { OutputMonitor } from './outputMonitor.js';
 import { OdrProcessManager } from './odr/processManager.js';
 import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import { convertToSlide as convertSlideImage, removeBlackBands } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
-import { normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy } from './odr/outputs.js';
+import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy, sdrDeviceString } from './odr/outputs.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
 import {
   LoginAttemptLimiter,
@@ -220,6 +221,8 @@ function buildTelegramNotifier(config) {
     chatId: config.chatId,
     minLevel: config.minLevel,
     silent: config.silent,
+    // "✅ RESOLVED" messages, off by default (older .telegram.json files have no such fields)
+    recovery: { outputs: config.recoveryOutputs === true, services: config.recoveryServices === true },
     onError: (message) => console.error(message)
   });
 }
@@ -550,7 +553,9 @@ app.get('/api/telegram', (req, res) => {
     tokenHint: token ? `••••${token.slice(-4)}` : '',
     chatId: String(telegramConfig.chatId || ''),
     minLevel: telegramConfig.minLevel || 'ERROR',
-    silent: Boolean(telegramConfig.silent)
+    silent: Boolean(telegramConfig.silent),
+    recoveryOutputs: telegramConfig.recoveryOutputs === true,
+    recoveryServices: telegramConfig.recoveryServices === true
   });
 });
 
@@ -566,7 +571,9 @@ app.put('/api/telegram', (req, res) => {
       token: String(body.token || '').trim() || String(telegramConfig.token || ''),
       chatId: String(body.chatId || '').trim(),
       minLevel,
-      silent: Boolean(body.silent)
+      silent: Boolean(body.silent),
+      recoveryOutputs: body.recoveryOutputs === true,
+      recoveryServices: body.recoveryServices === true
     };
     if (body.clearToken === true) next.token = '';
     if (next.enabled && (!next.token || !next.chatId)) {
@@ -1190,6 +1197,24 @@ async function establishedPeers() {
   }
   return peers;
 }
+// Transmitter outputs where dabmux listens: alert when a connected transmitter goes away (OutputMonitor).
+// Every 5 s ON AIR, async /proc read (same as /api/mux/outputs), one iteration at a time.
+const outputMonitor = new OutputMonitor({ logger });
+let _outputMonitorBusy = false;
+setInterval(async () => {
+  if (_outputMonitorBusy) return;
+  _outputMonitorBusy = true;
+  try {
+    const dabmux = settings.dabmux || {};
+    const network = String(dabmux.txMode || 'EASYDAB').toUpperCase() === 'NETWORK';
+    const outputs = network ? normalizeOutputs(dabmux.outputs) : outputsFromLegacy(dabmux);
+    const peers = state.muxRunning ? await establishedPeers() : new Map();
+    outputMonitor.tick({ running: state.muxRunning, runKey: state.muxSinceMs, outputs, peers });
+  } catch { /* monitoring only: never affects the broadcast */ } finally {
+    _outputMonitorBusy = false;
+  }
+}, 5000).unref();
+
 // 'Check HackRF' (HackRF output / HACKRF mode): hackrf_info only reads the board (never transmits).
 // While hackrf_transfer runs it holds the device: reported as in use instead of a failing check.
 app.post('/api/hackrf/check', (req, res) => {
@@ -1212,6 +1237,26 @@ app.post('/api/hackrf/check', (req, res) => {
   });
 });
 
+// 'Check device' of the SDR output: SoapySDRUtil --find only enumerates devices (never transmits).
+// While odr-dabmod drives a SoapySDR device it holds it: reported as in use.
+app.post('/api/sdr/check', (req, res) => {
+  const o = normalizeOutput({ ...(req.body || {}), type: 'sdr' });
+  const device = sdrDeviceString(o);
+  if (!device || !/^[A-Za-z0-9_=,.:/ -]+$/.test(device)) return res.json({ ok: false, message: 'Enter the SoapySDR device args (e.g. driver=lime)' });
+  if (pm.isRunning('mux:odr-dabmod') && state._localSoapy()) {
+    return res.json({ ok: true, inUse: true, message: 'SDR in use by odr-dabmod (SoapySDR, transmitting)' });
+  }
+  execFile('SoapySDRUtil', [`--find=${device}`], { timeout: 10000 }, (err, stdout, stderr) => {
+    const out = `${stdout || ''}${stderr || ''}`;
+    if (err && err.code === 'ENOENT') return res.json({ ok: false, message: 'SoapySDRUtil not installed (sudo apt install soapysdr-tools)' });
+    const label = (/^\s*label\s*=\s*(.+)$/m.exec(out) || [])[1]?.trim();
+    if (!/Found device/i.test(out)) {
+      return res.json({ ok: false, message: `No device found for ${device}: check the USB / network link and that its SoapySDR module is installed (SoapySDRUtil --info)` });
+    }
+    res.json({ ok: true, message: `Found: ${label || device}` });
+  });
+});
+
 app.get('/api/mux/outputs', async (req, res) => {
   const dabmux = settings.dabmux || {};
   // NETWORK: the outputs list; a legacy mode not converted yet: its equivalent outputs (what it sends)
@@ -1225,10 +1270,13 @@ app.get('/api/mux/outputs', async (req, res) => {
     outputs: outputs.map((o) => ({
       id: o.id, name: o.name, type: o.type, enabled: o.enabled, port: o.port,
       ...(o.type === 'edi-udp' ? { destination: o.destination } : {}),
-      ...(o.type === 'hackrf' ? { dabBlock: o.dabBlock } : {}),
-      connected: o.type === 'edi-udp' || o.type === 'hackrf' || !o.enabled ? null : [...new Set(peers.get(o.port) || [])],
+      ...(o.type === 'hackrf' || o.type === 'sdr' ? { dabBlock: o.dabBlock } : {}),
+      connected: o.type === 'edi-udp' || o.type === 'hackrf' || o.type === 'sdr' || !o.enabled ? null : [...new Set(peers.get(o.port) || [])],
       // local HackRF chain: odr-dabmod (connected to the internal EDI port) + hackrf_transfer
-      ...(o.type === 'hackrf' && o.enabled ? { local: { dabmod: pm.isRunning('mux:odr-dabmod'), hackrf: pm.isRunning('mux:hackrf_transfer') } } : {}),
+      // failing = broken / stalled (watchdog restarting it, see _superviseLocalModulator)
+      ...(o.type === 'hackrf' && o.enabled ? { local: { dabmod: pm.isRunning('mux:odr-dabmod'), hackrf: pm.isRunning('mux:hackrf_transfer'), failing: Boolean(state._modState?.failing) } } : {}),
+      // SDR (SoapySDR): odr-dabmod alone drives the device, so it stands for both
+      ...(o.type === 'sdr' && o.enabled ? { local: { dabmod: pm.isRunning('mux:odr-dabmod'), hackrf: pm.isRunning('mux:odr-dabmod'), driver: 'soapy', failing: Boolean(state._modState?.failing) } } : {}),
     })),
     monitor: { port: monitorPort, connected: [...new Set(peers.get(monitorPort) || [])] },
   });
@@ -1302,21 +1350,58 @@ app.get('/api/player/levels', (req, res) => {
   res.json({ levels });
 });
 
-app.get('/api/logs', (req, res) => {
+// Lines below the requested level removed (lines without a level tag kept, old format)
+function filterLogLevel(content, level) {
+  if (!level || level === 'DEBUG') return content;
+  const hide = level === 'ERROR' ? ['DEBUG', 'WARN', 'INFO'] : level === 'WARN' ? ['DEBUG', 'INFO'] : ['DEBUG'];
+  return content.split('\n').filter((line) => {
+    const m = line.match(/^\[.*?\] \[([A-Z]+)\] /);
+    if (!m) return true; // old format or non-log line — always include
+    return !hide.includes(m[1]);
+  }).join('\n');
+}
+const LOG_TAIL_MAX = 4 * 1024 * 1024;
+app.get('/api/logs', async (req, res) => {
   const logPath = path.resolve(dataDir, 'logs', 'dabweb.log');
-  const content = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
   const level = String(req.query.level || '').toUpperCase();
-  if (level && level !== 'DEBUG') {
-    // Filter out lines below requested level (keep lines without a level tag for backward compat)
-    const hide = level === 'ERROR' ? ['DEBUG', 'WARN', 'INFO'] : level === 'WARN' ? ['DEBUG', 'INFO'] : ['DEBUG'];
-    const filtered = content.split('\n').filter((line) => {
-      const m = line.match(/^\[.*?\] \[([A-Z]+)\] /);
-      if (!m) return true; // old format or non-log line — always include
-      return !hide.includes(m[1]);
-    }).join('\n');
-    return res.type('text/plain').send(filtered);
+  // Logs panel: ?tail=N = only the last N bytes (whole lines), ?since=S = only what was appended after
+  // byte S (nothing when the file did not change). Read asynchronously: the log can reach 10 MB and a
+  // synchronous read every 3 s blocked the server (Pi). X-Log-Size = where to continue next time;
+  // X-Log-Mode = tail (replace the text) | append (add to it). No tail = the whole file, as before.
+  if (req.query.tail !== undefined) {
+    const tail = Math.min(Math.max(Number(req.query.tail) || 0, 1024), LOG_TAIL_MAX);
+    const since = req.query.since === undefined ? -1 : Number(req.query.since);
+    let fh = null;
+    try {
+      fh = await fs.promises.open(logPath, 'r');
+      const { size } = await fh.stat();
+      // same size = no change; smaller = cleared / rotated; far behind = start again from the tail
+      const append = Number.isFinite(since) && since >= 0 && since <= size && size - since <= tail;
+      const start = append ? since : Math.max(0, size - tail);
+      const buf = Buffer.alloc(size - start);
+      let got = 0;
+      while (got < buf.length) {   // chunk by chunk (one read may return less)
+        const { bytesRead } = await fh.read(buf, got, buf.length - got, start + got);
+        if (!bytesRead) break;
+        got += bytesRead;
+      }
+      let from = 0;
+      if (!append && start > 0) from = buf.indexOf(0x0a, 0) + 1;   // drop the cut first line
+      const lastNl = buf.lastIndexOf(0x0a, got - 1);
+      const end = lastNl >= from ? lastNl + 1 : from;   // a line being written is sent next time
+      res.set('X-Log-Size', String(start + end));
+      res.set('X-Log-Mode', append ? 'append' : 'tail');
+      return res.type('text/plain').send(filterLogLevel(buf.subarray(from, end).toString('utf8'), level));
+    } catch (e) {
+      res.set('X-Log-Size', '0');
+      res.set('X-Log-Mode', 'tail');
+      return res.type('text/plain').send(e.code === 'ENOENT' ? '' : `Cannot read the log: ${e.message}`);
+    } finally {
+      await fh?.close().catch(() => {});
+    }
   }
-  res.type('text/plain').send(content);
+  const content = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf8') : '';
+  res.type('text/plain').send(filterLogLevel(content, level));
 });
 
 app.delete('/api/logs', (req, res) => {

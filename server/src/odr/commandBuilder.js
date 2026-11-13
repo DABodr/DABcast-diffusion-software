@@ -91,7 +91,29 @@ export function buildDabMuxCommand(muxPath) {
 }
 
 // Generate dabmod.ini content from parameters
-export function buildDabModConfig({ source, maxFramesQueued, gainmode, digitalGain, rate, filtertapsPath, fifoPath }) {
+// soapy (optional): { device, txGain, freqHz, masterClockRate, bandwidth, txAntenna } = odr-dabmod drives
+// the SDR itself through SoapySDR instead of writing to the FIFO read by hackrf_transfer. Values are the
+// final ones (the caller adapts them to the device). bandwidth 0 / txAntenna '' = not written (driver default).
+export function buildDabModConfig({ source, maxFramesQueued, gainmode, digitalGain, rate, filtertapsPath, fifoPath, soapy }) {
+  const output = soapy ? [
+    '[output]',
+    'output=soapysdr',
+    '',
+    '[soapyoutput]',
+    `device=${soapy.device}`,
+    `master_clock_rate=${soapy.masterClockRate || 0}`,
+    `txgain=${soapy.txGain}`,
+    `frequency=${soapy.freqHz}`,
+    ...(soapy.bandwidth ? [`bandwidth=${soapy.bandwidth}`] : []),
+    ...(soapy.txAntenna ? [`tx_antenna=${soapy.txAntenna}`] : [])
+  ] : [
+    '[output]',
+    'output=file',
+    '',
+    '[fileoutput]',
+    'format=s8',
+    `filename=${fifoPath}`
+  ];
   return [
     '[remotecontrol]',
     'telnet=1',
@@ -111,12 +133,7 @@ export function buildDabModConfig({ source, maxFramesQueued, gainmode, digitalGa
     'enabled=1',
     `filtertapsfile=${filtertapsPath}`,
     '',
-    '[output]',
-    'output=file',
-    '',
-    '[fileoutput]',
-    'format=s8',
-    `filename=${fifoPath}`
+    ...output
   ].join('\n') + '\n';
 }
 

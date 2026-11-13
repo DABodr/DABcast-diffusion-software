@@ -169,6 +169,23 @@ describe('buildDabModConfig', () => {
     assert.ok(config.includes('filtertapsfile=/data/runtime/filtertaps.txt'));
     assert.ok(config.includes('format=s8'));
     assert.ok(config.includes('filename=/data/runtime/ofdm.fifo'));
+    assert.ok(config.includes('output=file') && !config.includes('soapy'), 'no soapy option = the previous file output, unchanged');
+  });
+  it('SoapySDR output: odr-dabmod drives the SDR itself (HackRF values)', () => {
+    const config = buildDabModConfig({
+      source: 'tcp://localhost:13090', maxFramesQueued: 580, gainmode: 2, digitalGain: 1, rate: 2048000,
+      filtertapsPath: '/data/runtime/filtertaps.txt', fifoPath: '/data/runtime/ofdm.fifo',
+      soapy: { device: 'driver=hackrf', masterClockRate: 0, txGain: 61, freqHz: 188928000, bandwidth: 1750000 },
+    });
+    assert.match(config, /\[output\]\noutput=soapysdr\n\n\[soapyoutput\]\ndevice=driver=hackrf\nmaster_clock_rate=0\ntxgain=61\nfrequency=188928000\nbandwidth=1750000\n$/);
+    assert.ok(!config.includes('ofdm.fifo') && !config.includes('fileoutput'), 'no FIFO');
+    assert.ok(config.includes('source=tcp://localhost:13090') && config.includes('rate=2048000'));
+  });
+  it('SoapySDR output: bandwidth / antenna written only when set', () => {
+    const base = { source: 'tcp://localhost:13091', maxFramesQueued: 580, gainmode: 2, digitalGain: 1, rate: 2048000, filtertapsPath: '/t', fifoPath: '/f' };
+    const lime = buildDabModConfig({ ...base, soapy: { device: 'driver=lime', masterClockRate: 32768000, txGain: 40, freqHz: 188928000, bandwidth: 0, txAntenna: 'BAND1' } });
+    assert.match(lime, /device=driver=lime\nmaster_clock_rate=32768000\ntxgain=40\nfrequency=188928000\ntx_antenna=BAND1\n$/);
+    assert.doesNotMatch(lime, /bandwidth/);
   });
 });
 

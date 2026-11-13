@@ -611,7 +611,7 @@ function renderStats(cap) {
   const ens = STATE.settings.ensemble || {};
   const tx = STATE.settings.dabmux?.txMode || 'EASYDAB';
   // a HackRF on this server: its channel and frequency; otherwise the ECC (the TX mode said nothing useful)
-  const hkOut = tx === 'NETWORK' ? (STATE.settings.dabmux?.outputs || []).find((o) => o.type === 'hackrf' && o.enabled !== false) : null;
+  const hkOut = tx === 'NETWORK' ? (STATE.settings.dabmux?.outputs || []).find((o) => (o.type === 'hackrf' || o.type === 'sdr') && o.enabled !== false) : null;
   const block = hkOut ? hkOut.dabBlock : tx === 'HACKRF' ? (STATE.settings.dabmux?.hackrf?.dabBlock || '7A') : null;
   const muxSub = block
     ? `${esc(block)} · ${((DAB_FREQ_TABLE[block] || 0) / 1e6).toFixed(3)} MHz`
@@ -1268,6 +1268,7 @@ async function refresh() {
   try {
     STATE = await api('/api/state', { signal: refreshAbort.signal });
     render();
+    if (dlgMux.open) updateMuxRestartWarn();   // banner follows a Start / Stop while the panel is open
     maybeFetchMuxStats();
     maybeFetchSysLoad();
     if (STATE.mustChangePassword && !pwdDialogShown) {
@@ -1322,16 +1323,47 @@ async function startDablin() {
 }
 
 let _logRefreshTimer = null;
+// Logs panel: the last LOG_TAIL_BYTES of the file, then only the lines appended since (X-Log-Size);
+// the server answers nothing new when the file did not change. Download = the whole file.
+const LOG_TAIL_BYTES = 1024 * 1024;
+let _logSize = -1;        // byte of the file already received (-1 = start again from the tail)
+let _logFollow = true;    // panel scrolled to the bottom: follows new lines
+let _logBusy = false;
 
 async function _refreshLogContent() {
-  const level = showRawOutput ? 'DEBUG' : 'INFO';
-  const text = await api(`/api/logs?level=${level}`);
-  LOGS_TEXT = String(text || '');
-  renderLogs();
+  if (_logBusy) return;
+  _logBusy = true;
+  try {
+    const level = showRawOutput ? 'DEBUG' : 'INFO';
+    const res = await fetch(`/api/logs?level=${level}&tail=${LOG_TAIL_BYTES}${_logSize >= 0 ? `&since=${_logSize}` : ''}`);
+    if (res.status === 401) { window.location.replace(`/login.html?next=${encodeURIComponent(window.location.pathname)}`); return; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const text = await res.text();
+    const size = Number(res.headers.get('X-Log-Size'));
+    const append = res.headers.get('X-Log-Mode') === 'append';
+    if (append && !text && size === _logSize) return;   // no new line: nothing to redraw
+    LOGS_TEXT = append ? LOGS_TEXT + text : text;
+    if (LOGS_TEXT.length > LOG_TAIL_BYTES * 1.5) {   // long session: keep about the tail size
+      const cut = LOGS_TEXT.indexOf('\n', LOGS_TEXT.length - LOG_TAIL_BYTES);
+      LOGS_TEXT = LOGS_TEXT.slice(cut + 1);
+    }
+    _logSize = Number.isFinite(size) ? size : -1;
+    renderLogs();
+  } catch { /* next try in 3 s */ } finally {
+    _logBusy = false;
+  }
+}
+// level (Raw output) changed or log cleared: start again from the tail
+function _resetLogContent() {
+  _logSize = -1;
+  LOGS_TEXT = '';
+  _logFollow = true;
+  return _refreshLogContent();
 }
 
 async function showLogs() {
-  await _refreshLogContent();
+  _logFollow = true;   // opens on the latest lines
+  await _resetLogContent();
 
   // Populate service filter select
   const sel = $('#selLogService');
@@ -1458,10 +1490,29 @@ function filterLogsByTab(tab) {
     }).join('\n');
   }
 
+  if (tab === 'dabmod') {   // local modulator: odr-dabmod (SDR / HackRF), hackrf_transfer, their start / watchdog lines
+    return lines.filter((line) => {
+      const scope = logLineScope(line);
+      return scope.startsWith('mux:odr-dabmod') || scope.startsWith('mux:hackrf_transfer')
+        || ((scope === 'mux' || scope === 'watchdog') && /dabmod|hackrf|SDR/i.test(line));
+    }).join('\n');
+  }
+
   if (tab === 'audio') {
     return lines.filter((line) => {
       const scope = logLineScope(line);
       return scope.includes(':audioenc') || scope.includes(':padenc');
+    }).join('\n');
+  }
+
+  if (tab === 'meta') {   // metadata loop: JSON / XML / ICY fetches, titles, covers (svc:<PI>:meta)
+    return lines.filter((line) => logLineScope(line).endsWith(':meta') || logLineScope(line) === 'metadata').join('\n');
+  }
+
+  if (tab === 'watchdog') {   // encoder crashes, failover to backup, return to main (probe), transmitter outputs
+    return lines.filter((line) => {
+      const scope = logLineScope(line);
+      return scope === 'watchdog' || scope === 'probe' || scope === 'outputs' || /^svc:[^:]+$/.test(scope);
     }).join('\n');
   }
 
@@ -1485,7 +1536,18 @@ function renderLogs() {
   document.querySelectorAll('.logs-tabs .tab').forEach((btn) => {
     btn.classList.toggle('active', btn.dataset.logtab === activeLogTab);
   });
-  $('#logsPre').textContent = filterLogsByTab(activeLogTab);
+  const pre = $('#logsPre');
+  let lines = filterLogsByTab(activeLogTab).split('\n');
+  const q = ($('#logSearch')?.value || '').trim().toLowerCase();
+  if (q) lines = lines.filter((l) => l.toLowerCase().includes(q));
+  const count = $('#logCount');
+  if (count) count.textContent = q ? `${lines.filter(Boolean).length} line(s)` : '';
+  // ERROR in red, WARN in yellow (escaped text, one span per coloured line)
+  pre.innerHTML = lines.map((l) => {
+    const lvl = logLineLevel(l);
+    return lvl === 'ERROR' ? `<span class="log-err">${esc(l)}</span>` : lvl === 'WARN' ? `<span class="log-warn">${esc(l)}</span>` : esc(l);
+  }).join('\n');
+  if (_logFollow) pre.scrollTop = pre.scrollHeight;   // at the bottom: follow; scrolled up: stay
 }
 
 function showMuxError(message) {
@@ -1510,7 +1572,7 @@ function normalizeHex(raw, expectedLen) {
 // Multiplex settings read by odr-dabmux/dabmod at start. Editing them ON AIR = Stop → save → Start.
 const MUX_DLG_RESTART_FIELDS = ['m_ens_id','m_ecc','m_label','m_short','m_txmode','m_easydab_ip','m_easydab_port','m_edi_port','m_edi_pft','m_edi_fec','m_edi_tist_offset','m_mgmt','m_telnet',
   'm_hackrf_block','m_hackrf_txgain','m_hackrf_maxframes','m_hackrf_gainmode','m_hackrf_diggain','m_hackrf_rate'];
-let muxRestartSnapshot = null;  // field values when the Multiplex dialog opened ON AIR (null otherwise)
+let muxRestartSnapshot = null;  // field values when the Multiplex panel opened (compared only ON AIR)
 const muxDlgFieldValues = () => [...MUX_DLG_RESTART_FIELDS.map((id) => {
   const el = document.getElementById(id);
   return !el ? '' : el.type === 'checkbox' ? String(el.checked) : el.value;
@@ -1519,6 +1581,8 @@ const muxDlgFieldsChanged = () => Boolean(muxRestartSnapshot && STATE?.muxRunnin
   && muxDlgFieldValues().some((v, i) => v !== muxRestartSnapshot[i]));
 function updateMuxRestartWarn() {
   document.getElementById('muxRestartWarn')?.classList.toggle('hidden', !muxDlgFieldsChanged());
+  const hint = document.getElementById('muxLockHint');   // the mux may have been started / stopped since the panel opened
+  if (hint) hint.textContent = STATE?.muxRunning ? 'ON AIR: changing ensemble or output settings restarts the multiplex on save' : '';
 }
 
 function openMuxDialog() {
@@ -1530,8 +1594,10 @@ function openMuxDialog() {
   $('#m_ens_id').value = (STATE.settings.ensemble.idHex || '').replace(/^0x/i, '');
   $('#m_ecc').value = (STATE.settings.ensemble.eccHex || '').replace(/^0x/i, '');
   updateEccTitle();
+  updateEnsHint();
   $('#m_label').value = STATE.settings.ensemble.label || '';
   $('#m_short').value = STATE.settings.ensemble.shortlabel || '';
+  updateMuxLabelCounts();
 
   // ports / tx
   // TX mode is always "Network outputs" now: a legacy mode (EASYDAB / EDI / HACKRF) is shown as the
@@ -1553,6 +1619,10 @@ function openMuxDialog() {
   $('#m_net_fec').value = STATE.settings.dabmux.ediOptions?.fec ?? 2;
   $('#m_net_tist').value = STATE.settings.dabmux.tistOffsetSec ?? 0;
   if (!savedNetwork) NET_OUTPUTS = netOutputsFromLegacy();   // what the legacy mode sends today, as outputs
+  // a HackRF output (hackrf_transfer chain) is shown as the SDR HackRF; saved as such at the next Save
+  const preConversion = JSON.stringify(NET_OUTPUTS);
+  const hackrfConverted = NET_OUTPUTS.some((o) => o.type === 'hackrf');
+  NET_OUTPUTS = NET_OUTPUTS.map((o) => (o.type === 'hackrf' ? hackrfToSdr(o) : o));
   renderNetOutputs();
 
   // HackRF fields
@@ -1580,7 +1650,10 @@ function openMuxDialog() {
     const el = document.getElementById(id);
     if (el) el.disabled = false;
   });
-  muxRestartSnapshot = locked ? muxDlgFieldValues() : null;
+  // always taken: the panel stays open in the page, the mux may be started after it was opened
+  muxRestartSnapshot = muxDlgFieldValues();
+  // ON AIR, the converted HackRF counts as a change: applied by a restart (new chain), never silently
+  if (hackrfConverted) muxRestartSnapshot[MUX_DLG_RESTART_FIELDS.length] = preConversion;
   updateMuxRestartWarn();
 
   updateTxModeVisibility();
@@ -1595,6 +1668,35 @@ function updateEccTitle() {
   if (sel) sel.title = sel.selectedOptions[0]?.dataset.full || sel.value;
 }
 $('#m_ecc')?.addEventListener('change', updateEccTitle);
+// Live hint for the Ensemble ID (format still enforced on save): 4 hex digits, first digit = country
+// code (never 0), normally the same country digit as the PI codes of the services
+function updateEnsHint() {
+  const el = $('#ensHint');
+  if (!el) return;
+  const raw = $('#m_ens_id')?.value.trim() || '';
+  const id = normalizeHex(raw, 4);
+  const digits = (STATE?.preset?.services || []).map((s) => normalizePiValue(s.identity?.pi || s.id)?.replace(/^0x/i, '')[0]).filter(Boolean);
+  const common = digits.sort((a, b) => digits.filter((d) => d === b).length - digits.filter((d) => d === a).length)[0];
+  const [msg, tip] = !raw ? ['', ''] : !id ? ['⚠ 4 hex', '4 hexadecimal digits (0-9, A-F), e.g. F401']
+    : id[0] === '0' ? ['⚠ 0xxx', 'The first digit is the country code (with the ECC): it cannot be 0']
+      : common && id[0] !== common ? [`⚠ ≠ PI ${common}…`, `First digit ${id[0]} = country code, but the services' PI codes start with ${common}: normally the same country digit (e.g. F for France)`] : ['', ''];
+  el.textContent = msg;
+  el.classList.toggle('over', Boolean(msg));
+  el.title = tip;
+}
+$('#m_ens_id')?.addEventListener('input', updateEnsHint);
+// Multiplex Short label / Label: counters + live hint of the PS8 ⊂ PS16 rule (still enforced on save)
+function updateMuxLabelCounts() {
+  const short = $('#m_short')?.value || '', label = $('#m_label')?.value || '';
+  const cs = $('#mShortCount'), cl = $('#mLabelCount');
+  if (cs) cs.textContent = `${short.length} / 8`;
+  if (!cl) return;
+  const bad = shortLabelMismatch(short.trim(), label.trim());
+  cl.textContent = `${bad ? '⚠ PS8 not in PS16 · ' : ''}${label.length} / 16`;
+  cl.classList.toggle('over', bad);
+  cl.title = bad ? 'The Label (PS16) must contain all characters of the Short label (PS8), in the same order' : '';
+}
+['m_short', 'm_label'].forEach((id) => document.getElementById(id)?.addEventListener('input', updateMuxLabelCounts));
 // Multiplex panel: the summary line (ensemble + transmitters) unfolds / folds the settings
 function toggleMuxPanel(scroll = false) {
   if (dlgMux.open) { dlgMux.close(); return; }
@@ -1616,7 +1718,10 @@ function muxOutState(o, running) {
   if (!running) return ['', 'off air'];
   if (o.enabled === false) return ['', 'OFF'];
   if (o.type === 'edi-udp') return ['ok', `sending to ${o.destination}:${o.port}`];
-  if (o.type === 'hackrf') return o.local?.dabmod && o.local?.hackrf ? ['ok', `transmitting on ${o.dabBlock}`] : ['warn', 'HackRF chain stopped'];
+  if (o.type === 'hackrf' || o.type === 'sdr') {
+    if (o.local?.failing) return ['err', 'device seems unplugged — not transmitting, DABcast retries every 30 s (see Logs)'];
+    return o.local?.dabmod && o.local?.hackrf ? ['ok', `transmitting on ${o.dabBlock}`] : ['warn', `${o.type === 'sdr' ? 'SDR' : 'HackRF'} chain stopped`];
+  }
   return o.connected?.length ? ['ok', `${o.connected.length} connected: ${o.connected.join(', ')}`] : ['warn', 'no transmitter connected'];
 }
 function renderMuxSummary() {
@@ -1647,12 +1752,27 @@ function updateTxModeVisibility() {
 // ── Multiplex dialog: transmitter outputs of the NETWORK mode (server: odr/outputs.js) ──
 let NET_OUTPUTS = [];          // outputs being edited (saved as settings.dabmux.outputs)
 let netStatusTimer = null;     // connection state polling while the dialog is open
-const NET_TYPE_LABEL = { 'edi-udp': 'EDI/UDP', 'edi-tcp': 'EDI/TCP', zmq: 'ZMQ', 'eti-tcp': 'ETI/TCP', hackrf: 'HackRF' };
+const NET_TYPE_LABEL = { 'edi-udp': 'EDI/UDP', 'edi-tcp': 'EDI/TCP', zmq: 'ZMQ', 'eti-tcp': 'ETI/TCP', hackrf: 'HackRF', sdr: 'SDR' };
+// SoapySDR devices of the SDR output: starting values applied when the device is chosen (same as
+// SDR_DEVICES of server/src/odr/outputs.js). Tested on real hardware: HackRF only.
+const SDR_DEVICE_UI = {
+  hackrf: { label: 'HackRF', txGain: 61, masterClockRate: 0, bandwidth: 1750000 },
+  lime: { label: 'LimeSDR (not tested)', txGain: 40, masterClockRate: 32768000, bandwidth: 0 },
+  bladerf: { label: 'BladeRF (not tested)', txGain: 20, masterClockRate: 0, bandwidth: 0 },
+  plutosdr: { label: 'PlutoSDR (not tested)', txGain: 40, masterClockRate: 0, bandwidth: 0 },
+  custom: { label: 'Other (SoapySDR args)', txGain: 20, masterClockRate: 0, bandwidth: 0 },
+};
+// HackRF output saved before the SDR output (odr-dabmod → FIFO → hackrf_transfer) → the same HackRF as an
+// SDR output (odr-dabmod drives it through SoapySDR): same level (VGA + the 14 dB amplifier of -a 1)
+const hackrfToSdr = (o) => ({ id: o.id, name: o.name, enabled: o.enabled !== false, type: 'sdr', port: o.port, device: 'hackrf', deviceArgs: '',
+  dabBlock: o.dabBlock || '7A', txGain: (Number(o.txGain ?? 47) || 0) + 14, masterClockRate: 0, txAntenna: '', bandwidth: 1750000,
+  maxFramesQueued: o.maxFramesQueued ?? 580, gainmode: o.gainmode ?? 2, digitalGain: o.digitalGain ?? 1, rate: o.rate || 4096000 });
 const NET_HELP = {
   'edi-udp': 'DABcast sends EDI to the transmitter: set its EDI input to UDP, port below (multicast: join the group). Use PFT / FEC.',
   'edi-tcp': 'The transmitter, a digris-edi-tcp-converter or a remote odr-dabmod connects to this server on this port (EDI over TCP).',
   zmq: 'The EasyDAB V2 (or ODR-DabMod) connects to this server on this port (ZMQ client).',
   'eti-tcp': 'The receiver connects to this server on this port and reads raw ETI.',
+  sdr: 'SDR plugged into this server: odr-dabmod modulates (through the internal EDI port) and drives it through SoapySDR, one process (the device needs its SoapySDR module, see Check device). TX gain = SoapySDR overall gain in dB: HackRF 0-61 (VGA 0-47 + 14 dB amplifier), other devices: their own range — devices other than the HackRF are not tested yet, start low. Master clock 0 = driver default (LimeSDR: 32768000). PlutoSDR: Band III (174-240 MHz) is below the stock 325 MHz limit. Extra args: e.g. serial=… to pick one device. Only one SDR output.',
   hackrf: 'HackRF plugged into this server: odr-dabmod modulates (through the internal EDI port) and hackrf_transfer transmits — same chain and settings as the HackRF TX mode. Only one HackRF output.',
 };
 const serverHost = () => location.hostname || 'this server';
@@ -1692,7 +1812,7 @@ function netAdd(kind) {
     'edi-tcp': () => ({ type: 'edi-tcp', name: 'EDI/TCP', port: netNextPort(13000) }),
     zmq: () => ({ type: 'zmq', name: 'EasyDAB V2', ip: '0.0.0.0', port: netNextPort(18081), allowMetadata: false }),
     'eti-tcp': () => ({ type: 'eti-tcp', name: 'ETI/TCP', ip: '0.0.0.0', port: netNextPort(9902) }),
-    hackrf: () => ({ type: 'hackrf', name: 'HackRF', port: netNextPort(13090), dabBlock: '7A', txGain: 47, maxFramesQueued: 580, gainmode: 2, digitalGain: 1, rate: 4096000 }),
+    sdr: () => ({ type: 'sdr', name: 'HackRF', port: netNextPort(13090), device: 'hackrf', deviceArgs: '', dabBlock: '7A', txGain: 61, masterClockRate: 0, txAntenna: '', bandwidth: 1750000, maxFramesQueued: 580, gainmode: 2, digitalGain: 1, rate: 2048000 }),
   };
   const o = { enabled: true, ...presets[kind]() };
   o.id = netNewId(o.type);
@@ -1734,6 +1854,24 @@ function renderNetOutputs() {
         + netField(o, i, 'maxFramesQueued', 'Max frames queued', 'type="number" min="1" max="2000"')
         + netField(o, i, 'port', 'Internal EDI port', 'type="number" min="1024" max="65535"')
         + `<span class="net-inline"><button type="button" class="btn btn-sm" data-hackrf-check>Check HackRF</button></span><span class="net-help hackrf-check-result"></span>`;
+    } else if (o.type === 'sdr') {
+      const sel = (key, label, optionsHtml) => `<label class="net-inline"><span>${label}</span><select data-net="${i}" data-key="${key}">${optionsHtml}</select></label>`;
+      const devices = Object.entries(SDR_DEVICE_UI).map(([v, d]) => `<option value="${v}"${v === o.device ? ' selected' : ''}>${esc(d.label)}</option>`).join('');
+      const blocks = Object.keys(DAB_FREQ_TABLE).map((ch) => `<option value="${ch}"${ch === o.dabBlock ? ' selected' : ''}>${ch} (${(DAB_FREQ_TABLE[ch] / 1e6).toFixed(3)} MHz)</option>`).join('');
+      const fromSel = (id, v) => [...document.querySelectorAll(`#${id} option`)].map((op) => `<option value="${op.value}"${String(op.value) === String(v) ? ' selected' : ''}>${esc(op.textContent)}</option>`).join('');
+      fields = sel('device', 'Device', devices)
+        + netField(o, i, 'deviceArgs', o.device === 'custom' ? 'SoapySDR args' : 'Extra args', `placeholder="${o.device === 'custom' ? 'driver=…' : 'serial=… (optional)'}"`)
+        + sel('dabBlock', 'DAB block', blocks)
+        + netField(o, i, 'txGain', 'TX gain (dB)', 'type="number" min="-50" max="100" step="any"')
+        + netField(o, i, 'masterClockRate', 'Master clock (Hz)', 'type="number" min="0" step="1"')
+        + netField(o, i, 'bandwidth', 'Bandwidth (Hz, 0 = auto)', 'type="number" min="0" step="1"')
+        + netField(o, i, 'txAntenna', 'TX antenna', 'placeholder="default"')
+        + sel('gainmode', 'Gain mode', fromSel('m_hackrf_gainmode', o.gainmode))
+        + netField(o, i, 'digitalGain', 'Digital gain', 'type="number" min="0" max="10" step="0.1"')
+        + sel('rate', 'Sample rate', fromSel('m_hackrf_rate', o.rate))
+        + netField(o, i, 'maxFramesQueued', 'Max frames queued', 'type="number" min="1" max="2000"')
+        + netField(o, i, 'port', 'Internal EDI port', 'type="number" min="1024" max="65535"')
+        + `<span class="net-inline"><button type="button" class="btn btn-sm" data-sdr-check="${i}">Check device</button></span><span class="net-help hackrf-check-result"></span>`;
     } else {
       fields = netField(o, i, 'ip', 'Listen IP', 'placeholder="0.0.0.0" class="net-ip"') + netField(o, i, 'port', 'Port', 'type="number" min="1024" max="65535"')
         + (o.type === 'zmq' ? `<label class="check-row net-inline"><input type="checkbox" data-net="${i}" data-key="allowMetadata" ${o.allowMetadata ? 'checked' : ''} /> send timestamps (metadata)</label>` : '');
@@ -1749,7 +1887,7 @@ function renderNetOutputs() {
     const shared = isEdi
       ? ' PFT / FEC and the TIST offset are shared by all outputs that use them (one value per multiplex in odr-dabmux).'
       : (o.type === 'zmq' && o.allowMetadata ? ' TIST offset: buffer delay read by the EasyDAB V2 when timestamps are sent (2 s), shared by all outputs that use it.' : '');
-    const help = (o.type === 'edi-udp' || o.type === 'hackrf' ? NET_HELP[o.type] : `${NET_HELP[o.type]} Address: ${serverHost()}:${o.port}`) + shared;
+    const help = (o.type === 'edi-udp' || o.type === 'hackrf' || o.type === 'sdr' ? NET_HELP[o.type] : `${NET_HELP[o.type]} Address: ${serverHost()}:${o.port}`) + shared;
     return `<div class="net-row${o.enabled ? '' : ' off'}">
       <div class="net-row-head">
         <label class="check-row" title="ON = fed by the multiplex"><input type="checkbox" data-net="${i}" data-key="enabled" ${o.enabled ? 'checked' : ''} /></label>
@@ -1782,6 +1920,13 @@ $('#netOutputs')?.addEventListener('input', (e) => {
   const k = el.dataset.key;
   o[k] = el.type === 'checkbox' ? el.checked : (el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value);
   if (k === 'enabled') el.closest('.net-row').classList.toggle('off', !el.checked);
+  if (k === 'device' && SDR_DEVICE_UI[o.device]) {   // SDR: starting values of the chosen device
+    const d = SDR_DEVICE_UI[o.device];
+    Object.assign(o, { txGain: d.txGain, masterClockRate: d.masterClockRate, bandwidth: d.bandwidth });
+    if (!o.name || Object.values(SDR_DEVICE_UI).some((x) => x.label.replace(/ \(.*$/, '') === o.name) || o.name === 'SDR') o.name = d.label.replace(/ \(.*$/, '');
+    renderNetOutputs();
+    return updateMuxRestartWarn();
+  }
   if (k === 'allowMetadata') {   // EasyDAB with timestamps: buffer delay of 2 s suggested when none is set
     if (el.checked && !(Number($('#m_net_tist').value) > 0)) $('#m_net_tist').value = 2;
     renderNetOutputs();
@@ -1820,7 +1965,23 @@ async function checkHackrf(resultEl) {
 document.getElementById('dlgMux')?.addEventListener('click', (e) => {
   const b = e.target.closest('[data-hackrf-check]');
   if (b) checkHackrf(b.closest('.net-fields, .hackrf-check-row').querySelector('.hackrf-check-result'));
+  const sb = e.target.closest('[data-sdr-check]');
+  if (sb) checkSdr(NET_OUTPUTS[Number(sb.dataset.sdrCheck)], sb.closest('.net-fields').querySelector('.hackrf-check-result'));
 });
+// 'Check device' of the SDR output: SoapySDRUtil --find on the server (read-only, never transmits)
+async function checkSdr(o, resultEl) {
+  if (!o || !resultEl) return;
+  resultEl.className = 'net-help hackrf-check-result';
+  resultEl.textContent = 'Checking…';
+  try {
+    const r = await api('/api/sdr/check', { method: 'POST', body: JSON.stringify({ device: o.device, deviceArgs: o.deviceArgs }) });
+    resultEl.textContent = `${r.ok ? '✓' : '⚠'} ${r.message}`;
+    resultEl.classList.add(r.ok ? 'ok' : 'err');
+  } catch (err) {
+    resultEl.textContent = `⚠ ${err.message || err}`;
+    resultEl.classList.add('err');
+  }
+}
 // connection state of each output (read-only, every 5 s while the dialog is open ON AIR)
 async function refreshNetStatus() {
   if (!dlgMux.open || ($('#m_txmode').value || '') !== 'NETWORK') return;
@@ -1835,9 +1996,13 @@ async function refreshNetStatus() {
     if (!st.running || !saved) txt = st.running ? 'saved settings not applied yet' : 'off air';
     else if (!o.enabled) txt = 'OFF';
     else if (o.type === 'edi-udp') { txt = `sending to ${o.destination}:${o.port}`; cls = 'ok'; }
-    else if (o.type === 'hackrf') {
+    else if (o.type === 'hackrf' || o.type === 'sdr') {
       const l = s?.local;
-      if (l?.dabmod && l?.hackrf) { txt = `transmitting on ${o.dabBlock} (odr-dabmod + hackrf_transfer running)`; cls = 'ok'; }
+      if (l?.failing) { txt = '⚠ Device seems unplugged — NOT transmitting. DABcast retries every 30 s (see Logs › odr-dabmod / SDR)'; cls = 'err'; }
+      else if (l?.driver === 'soapy') {   // odr-dabmod alone drives the HackRF (SoapySDR)
+        if (l.dabmod) { txt = `transmitting on ${o.dabBlock} (odr-dabmod, SoapySDR, running)`; cls = 'ok'; }
+        else { txt = 'chain stopped: odr-dabmod NOT running — see Logs'; cls = 'warn'; }
+      } else if (l?.dabmod && l?.hackrf) { txt = `transmitting on ${o.dabBlock} (odr-dabmod + hackrf_transfer running)`; cls = 'ok'; }
       else { txt = `chain stopped: odr-dabmod ${l?.dabmod ? 'running' : 'NOT running'}, hackrf_transfer ${l?.hackrf ? 'running' : 'NOT running'} — see Logs`; cls = 'warn'; }
     }
     else if (!s) txt = 'not applied yet (save to apply)';
@@ -2894,6 +3059,8 @@ async function showTelegram() {
     $('#tg_chat_id').value = config.chatId || '';
     $('#tg_min_level').value = config.minLevel || 'ERROR';
     $('#tg_silent').checked = Boolean(config.silent);
+    $('#tg_recovery_outputs').checked = Boolean(config.recoveryOutputs);
+    $('#tg_recovery_services').checked = Boolean(config.recoveryServices);
     $('#telegramTokenHint').textContent = config.tokenConfigured
       ? `Token saved (${config.tokenHint}). Leave blank to keep it.`
       : 'No token saved.';
@@ -2913,7 +3080,9 @@ async function saveTelegramConfig({ close = true } = {}) {
       token: $('#tg_token').value.trim(),
       chatId: $('#tg_chat_id').value.trim(),
       minLevel: $('#tg_min_level').value,
-      silent: $('#tg_silent').checked
+      silent: $('#tg_silent').checked,
+      recoveryOutputs: $('#tg_recovery_outputs').checked,
+      recoveryServices: $('#tg_recovery_services').checked
     };
     const result = await api('/api/telegram', {
       method: 'PUT',
@@ -3136,8 +3305,14 @@ document.querySelectorAll('.logs-tabs .tab').forEach((btn) => {
 
 $('#chkRawOutput')?.addEventListener('change', async (e) => {
   showRawOutput = e.target.checked;
-  await _refreshLogContent();
+  await _resetLogContent();
 });
+$('#logsPre')?.addEventListener('scroll', (e) => {
+  const el = e.target;
+  _logFollow = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+});
+$('#logSearch')?.addEventListener('input', () => renderLogs());
+$('#logSearch')?.addEventListener('keydown', (e) => { if (e.key === 'Escape' && e.target.value) { e.preventDefault(); e.target.value = ''; renderLogs(); } });
 
 $('#selLogService')?.addEventListener('change', (e) => {
   activeServiceFilter = e.target.value;
@@ -3152,7 +3327,7 @@ $('#btnClearLogs')?.addEventListener('click', async () => {
   if (!confirm('Clear all logs?')) return;
   try {
     await api('/api/logs', { method: 'DELETE' });
-    renderLogs();
+    await _resetLogContent();   // the old text no longer stays on screen
   } catch (err) {
     alert(err.message || String(err));
   }

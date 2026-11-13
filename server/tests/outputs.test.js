@@ -1,7 +1,7 @@
 // Tests for the transmitter outputs of the NETWORK mode (odr/outputs.js)
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, outputsFromLegacy, validateOutputs, buildOutputLines } from '../src/odr/outputs.js';
+import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, outputsFromLegacy, validateOutputs, buildOutputLines, sdrDeviceString, localHackrfOutput } from '../src/odr/outputs.js';
 
 describe('outputs — normalize', () => {
   it('fills the defaults of each type and coerces numbers', () => {
@@ -129,5 +129,28 @@ describe('outputs — HackRF (local SDR)', () => {
     assert.match(alone, /enable_pft false/);
     const withUdp = buildOutputLines(normalizeOutputs([{ type: 'hackrf' }, { type: 'edi-udp', destination: '10.0.0.1' }]), { ediOptions: { pft: true, fec: 2 } }).join('\n');
     assert.match(withUdp, /enable_pft true\n {8}fec 2/);
+  });
+});
+
+describe('outputs — SDR (SoapySDR, local)', () => {
+  it('defaults (HackRF), device string, internal EDI/TCP port, no PFT for an SDR alone', () => {
+    const o = normalizeOutput({ type: 'sdr', port: 13091 });
+    assert.deepEqual([o.device, o.txGain, o.masterClockRate, o.bandwidth, o.rate], ['hackrf', 61, 0, 1750000, 2048000], 'same level / bandwidth as hackrf_transfer -x 47 -a 1 -b 1750000');
+    assert.equal(sdrDeviceString(o), 'driver=hackrf');
+    assert.equal(sdrDeviceString({ ...o, device: 'lime' }), 'driver=lime');
+    assert.equal(sdrDeviceString({ ...o, device: 'bladerf', deviceArgs: 'serial=12ab' }), 'driver=bladerf,serial=12ab');
+    assert.equal(sdrDeviceString({ ...o, device: 'custom', deviceArgs: 'driver=uhd,type=b200' }), 'driver=uhd,type=b200');
+    const t = buildOutputLines([o], { ediOptions: { pft: true, fec: 2 } }).join('\n');
+    assert.match(t, /protocol tcp\n {16}listenport 13091\n/);
+    assert.match(t, /enable_pft false/);
+    assert.equal(localHackrfOutput([o]).type, 'sdr');
+  });
+  it('validation: one local modulator, safe args (written to dabmod.ini), custom needs args', () => {
+    assert.deepEqual(validateOutputs(normalizeOutputs([{ type: 'sdr' }, { type: 'zmq', port: 18081 }])), []);
+    assert.match(validateOutputs(normalizeOutputs([{ type: 'sdr' }, { type: 'hackrf' }])).join(), /Only one local SDR output/);
+    assert.match(validateOutputs(normalizeOutputs([{ type: 'sdr', deviceArgs: 'serial=1\noutput=file' }])).join(), /device args/);
+    assert.match(validateOutputs(normalizeOutputs([{ type: 'sdr', txAntenna: 'A;B' }])).join(), /device args \/ antenna/);
+    assert.match(validateOutputs(normalizeOutputs([{ type: 'sdr', device: 'custom' }])).join(), /SoapySDR device args/);
+    assert.match(validateOutputs(normalizeOutputs([{ type: 'sdr', device: 'usrp9' }])).join(), /unknown SDR device/);
   });
 });

@@ -34,6 +34,22 @@ describe('TelegramLogNotifier', () => {
     assert.match(payload.text, /crashed/);
   });
 
+  it('recovery messages: sent whatever the level, only when their option is on', async () => {
+    const requests = [];
+    const make = (recovery) => new TelegramLogNotifier({
+      token: 't', chatId: '1', minLevel: 'ERROR', minIntervalMs: 0, recovery,
+      fetchImpl: async (url, options) => { requests.push(JSON.parse(options.body).text); return successfulResponse(); },
+    });
+    const off = make(undefined);   // older .telegram.json: no option = off
+    assert.equal(off.notifyRecovery('outputs', { scope: 'watchdog', message: 'SDR transmitting again' }), false);
+    const on = make({ outputs: true, services: false });
+    assert.equal(on.notifyRecovery('services', { scope: 'svc:F9A3', message: 'back on its main stream' }), false);
+    assert.equal(on.notifyRecovery('outputs', { scope: 'watchdog', message: 'SDR transmitting again' }), true);
+    await on.flush();
+    assert.equal(requests.length, 1);
+    assert.match(requests[0], /✅ RESOLVED \[watchdog\]\n.*\nSDR transmitting again/);
+  });
+
   it('reports API errors without rejecting flush', async () => {
     const errors = [];
     const notifier = new TelegramLogNotifier({
