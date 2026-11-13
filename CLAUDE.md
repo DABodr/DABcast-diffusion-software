@@ -12,9 +12,9 @@ DABcast is a Node.js/Express web application that manages a chain of ODR-mmbTool
 processes to produce and multiplex DAB+ radio signals.
 
 **Stack:**
-- Backend: Node.js 18+ (ESM `type: "module"`), Express 4, no TypeScript
+- Backend: Node.js 24 (ESM `type: "module"`), Express 4, no TypeScript — the .deb embeds Node 24 LTS (pkg)
 - Frontend: Vanilla JS single-page app (`web/app.js`), no framework, no build step
-- Tests: Node.js built-in test runner (`node --test server/tests/*.test.js` — Node 24 no longer accepts a bare directory)  — **261 tests, 63 suites**
+- Tests: Node.js built-in test runner (`node --test server/tests/*.test.js` — Node 24 no longer accepts a bare directory)  — **295 tests, 72 suites**; CI runs them on every PR (`.github/workflows/tests.yml`)
 - Build: `esbuild` (bundle) → `@yao-pkg/pkg` (binary) → `dpkg-deb` (.deb package)
 - Targets: `./build.sh` → amd64 | `./build.sh arm64` → Raspberry Pi OS 64-bit
 - Service port: **9090** (default)
@@ -57,7 +57,7 @@ project root/
 │   │   │   └── validate.js       # validateService() — normalization + errors + warnings
 │   │   └── utils/
 │   │       └── dlplus.js         # DL+ tag parsing, buildDlPlusFileContent, parseNowPlaying
-│   └── tests/                    # 178 tests — run with: node --test server/tests/*.test.js
+│   └── tests/                    # 295 tests — run with: node --test server/tests/*.test.js
 │
 ├── web/
 │   ├── index.html                # Single-page app shell (all dialogs inline)
@@ -419,7 +419,7 @@ Describe:
 
 ### Step 5 — Verify tests
 After any backend change: `node --test server/tests/`
-All 178 tests must pass. If a test fails, fix the code (not the test) unless the test is demonstrably wrong.
+All 295 tests must pass. If a test fails, fix the code (not the test) unless the test is demonstrably wrong.
 
 ## 7.1 — RELEASE & ROLLBACK POLICY
 

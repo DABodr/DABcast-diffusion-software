@@ -119,7 +119,7 @@ echo "Installing optional dependencies..."
 install_optional libvlc-dev libfdk-aac-dev
 
 # ── Node.js (development mode only) ──────────────────────────────────────────
-# Not required when installing via .deb (Node.js 18 is embedded in the
+# Not required when installing via .deb (Node.js 24 is embedded in the
 # dabcast binary). Uncomment only to run DABcast from sources.
 #
 # print_section "Installing Node.js..."
