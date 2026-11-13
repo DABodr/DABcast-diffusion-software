@@ -13,6 +13,10 @@
 
 set -e
 export DEBIAN_FRONTEND=noninteractive   # no package configuration dialog during the installation
+# Every apt-get call waits for the apt lock (up to 3 min) instead of failing at once: on Raspberry Pi
+# OS with a desktop, PackageKit / unattended-upgrades often hold it for a while (a package was then
+# skipped, e.g. soapysdr-tools)
+apt-get() { command apt-get -o DPkg::Lock::Timeout=180 "$@"; }
 
 TOOLS_ONLY=false
 ASSUME_YES=false
@@ -72,11 +76,13 @@ ask() {
 
 # Install optional packages one by one — skips unavailable ones without aborting
 install_optional() {
+  local pkg out
   for pkg in "$@"; do
-    if apt-get install -y "$pkg" 2>/dev/null; then
+    if out=$(apt-get install -y "$pkg" 2>&1); then
       echo -e "  ${GREEN}✓${NC} $pkg"
     else
-      echo -e "  ${YELLOW}⚠ $pkg not available, skipped${NC}"
+      # the reason given by apt (not available, lock, dependency…), not just "skipped"
+      echo -e "  ${YELLOW}⚠ $pkg not installed: $(echo "$out" | grep -E '^(E|W): ' | tail -1 | cut -c1-160)${NC}"
     fi
   done
 }
@@ -375,9 +381,11 @@ if ask "Install SDR support (an SDR plugged into this machine: HackRF, LimeSDR, 
   echo -e "  ${BLUE}PlutoSDR:${NC} no Debian package for its SoapySDR driver — build SoapyPlutoSDR from"
   echo "    https://github.com/pothosware/SoapyPlutoSDR (build tools installed; needs libiio-dev libad9361-dev libsoapysdr-dev cmake)."
   echo "    A stock PlutoSDR does not go below 325 MHz (DAB Band III = 174-240 MHz)."
-  if command_exists SoapySDRUtil; then
-    echo "SoapySDR drivers installed: $(SoapySDRUtil --info 2>/dev/null | grep -i 'Available factories' | cut -d. -f4- | sed 's/^ *//')"
-  fi
+  # summary from the packages really installed (SoapySDRUtil may be missing)
+  _DRV=$(dpkg-query -W -f='${Status} ${Package}\n' 'soapysdr0.8-module-*' 2>/dev/null \
+    | awk '/install ok installed/{sub("soapysdr0.8-module-", "", $4); if ($4 != "all") print $4}' | tr '\n' ' ')
+  echo -e "  SoapySDR drivers ready: ${_DRV:-none}"
+  command_exists SoapySDRUtil || echo -e "  ${YELLOW}⚠ SoapySDRUtil missing (soapysdr-tools): the 'Check device' button of DABcast needs it${NC}"
   _GROUPS="plugdev audio"   # USB access to the SDRs (udev rules: group plugdev)
 else
   echo "Skipping SDR support (DABcast works without it: network outputs only; run the script again to add it)"
