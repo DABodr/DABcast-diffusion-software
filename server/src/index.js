@@ -381,8 +381,11 @@ const state = new AppState({ settings, dataDir, logger, processManager: pm });
 
 // static web
 app.use('/', express.static(webDir));
+// /data: only the pictures of the services (data/mot/…/*.jpg|png|webp). settings.json (password hash),
+// logs, presets and runtime files are not served (security review; the web UI uses /api/mot).
 app.use('/data', (req, res, next) => {
   if (path.basename(req.path).startsWith('.')) return res.status(404).end();
+  if (!/^\/mot\/[^/]+\/(?:[^/]+\/)*[^/]+\.(?:jpe?g|png|webp)$/i.test(req.path)) return res.status(404).end();
   next();
 }, express.static(dataDir));
 
