@@ -19,7 +19,7 @@ import { OutputMonitor } from './outputMonitor.js';
 import { OdrProcessManager } from './odr/processManager.js';
 import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
-import { convertToSlide as convertSlideImage, removeBlackBands } from './slideImage.js';
+import { convertToSlide as convertSlideImage, removeBlackBands, imageCoder } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
 import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy, sdrDeviceString } from './odr/outputs.js';
@@ -291,7 +291,9 @@ function writeSlideImage(slideDir, filename, buf) {
   try {
     fs.writeFileSync(raw, buf);
     if (convertToSlideFile(raw, conv)) fs.renameSync(conv, path.join(slideDir, filename));
-    else fs.renameSync(raw, path.join(slideDir, filename));
+    // as received only if it really is a JPEG / PNG / GIF / WebP (odr-padenc reads the slide dir too)
+    else if (imageCoder(raw)) fs.renameSync(raw, path.join(slideDir, filename));
+    else throw new Error('not a JPEG / PNG / GIF / WebP picture');
   } finally {
     for (const f of [raw, conv]) { try { fs.unlinkSync(f); } catch { /* already moved */ } }
   }
@@ -1764,7 +1766,9 @@ app.post('/api/mot/:svcId/logo', (req, res) => {
     try {
       fs.writeFileSync(raw, buf);
       if (convertToSlideFile(raw, conv)) fs.renameSync(conv, path.resolve(dir, 'logo.jpg'));
-      else fs.renameSync(raw, path.resolve(dir, `logo.${ext}`));
+      // as received only if it really is a picture (odr-padenc reads the slide dir too)
+      else if (imageCoder(raw)) fs.renameSync(raw, path.resolve(dir, `logo.${ext}`));
+      else return res.status(400).json({ error: 'Not a JPEG / PNG / GIF / WebP picture' });
     } finally {
       for (const f of [raw, conv]) { try { fs.unlinkSync(f); } catch { /* moved */ } }
     }
