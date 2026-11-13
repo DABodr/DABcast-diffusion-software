@@ -1,0 +1,36 @@
+name: Tests
+
+# Runs the server test suite on every pull request and on pushes to main.
+# No ODR tool is needed (the tests use fakes); ImageMagick runs the slide conversion tests.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: server/package-lock.json
+
+      - name: Install ImageMagick (slide conversion tests)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
+
+      - name: Install dependencies
+        run: npm ci --prefix server
+
+      - name: Run tests
+        working-directory: server
+        run: node --test tests/*.test.js
