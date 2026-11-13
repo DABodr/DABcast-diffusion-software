@@ -1,12 +1,29 @@
 #!/bin/bash
 #
-# DABcast Installation Script for Debian/Ubuntu
-# Installs all required dependencies and sets up the application
+# DABcast installation script for Debian / Raspberry Pi OS / Ubuntu
+# Installs the ODR-mmbTools and everything DABcast can use, then DABcast itself (latest release).
+# Everything that can be useful is installed (build tools, Dablin window helpers…) so that the
+# installation keeps working when a desktop is added later. Only the real choices are asked, with a
+# default: SDR support, updating ODR tools already installed (versions shown), installing DABcast.
 #
-# Usage: sudo ./install-tools.sh
+# Usage: sudo bash install-tools.sh [--yes] [--tools-only]
+#   --yes          answer every question with its default (unattended installation)
+#   --tools-only   install the tools only, not DABcast (e.g. to run DABcast from its sources)
 #
 
 set -e
+export DEBIAN_FRONTEND=noninteractive   # no package configuration dialog during the installation
+
+TOOLS_ONLY=false
+ASSUME_YES=false
+for _arg in "$@"; do
+  case "$_arg" in
+    --tools-only) TOOLS_ONLY=true ;;
+    -y|--yes) ASSUME_YES=true ;;
+    -h|--help) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "Unknown option: $_arg (see --help)"; exit 1 ;;
+  esac
+done
 
 # Colors for output
 RED='\033[0;31m'
@@ -47,7 +64,8 @@ command_exists() {
 ask() {
   local _def="${2:-N}" _ans=""
   local _hint="(y/N)"; [[ "$_def" == "Y" ]] && _hint="(Y/n)"
-  if [[ -r /dev/tty ]]; then read -r -p "$1 $_hint " _ans < /dev/tty || _ans=""; fi
+  if [[ "$ASSUME_YES" == "true" ]]; then echo "$1 $_hint -> ${_def} (--yes)"
+  elif [[ -r /dev/tty ]]; then read -r -p "$1 $_hint " _ans < /dev/tty || _ans=""; fi
   _ans="${_ans:-$_def}"
   [[ "$_ans" =~ ^[Yy] ]]
 }
@@ -61,6 +79,42 @@ install_optional() {
       echo -e "  ${YELLOW}⚠ $pkg not available, skipped${NC}"
     fi
   done
+}
+
+ODR_PKGS=(odr-dabmux odr-audioenc odr-padenc odr-dabmod)
+
+# Newest version of a package in the configured repositories (empty if none)
+newest_version() {
+  local best="" v
+  for v in $(apt-cache madison "$1" 2>/dev/null | awk -F'|' '{gsub(/ /, "", $2); print $2}'); do
+    if [[ -z "$best" ]] || dpkg --compare-versions "$v" gt "$best"; then best="$v"; fi
+  done
+  echo "$best"
+}
+# ODR tools: first installation → no question. Already installed → table of the installed / available
+# versions and one question before updating them (missing ones are installed in any case).
+# Sets ODR_PKGS to what must be installed; returns 1 when there is nothing to install.
+odr_confirm() {
+  local p inst avail missing=() newer=() installed=false _ODR_TABLE=""
+  for p in "${ODR_PKGS[@]}"; do
+    inst=$(dpkg-query -W -f='${Status}|${Version}' "$p" 2>/dev/null | awk -F'|' '/install ok installed/{print $2}' || true)
+    avail=$(newest_version "$p")
+    if [[ -z "$inst" ]]; then missing+=("$p")
+    else
+      installed=true
+      if [[ -n "$avail" ]] && dpkg --compare-versions "$avail" gt "$inst"; then newer+=("$p"); fi
+    fi
+    _ODR_TABLE+=$(printf '\n  %-14s %-28s %s' "$p" "${inst:-(not installed)}" "${avail:-(not available)}")
+  done
+  echo "  tool           installed                    available${_ODR_TABLE}"
+  if [[ "$installed" == "false" ]]; then return 0; fi
+  if [[ ${#newer[@]} -gt 0 ]] && ask "Update the ODR tools (${newer[*]}) to the available versions?" Y; then
+    ODR_PKGS=("${missing[@]}" "${newer[@]}")
+  else
+    [[ ${#newer[@]} -eq 0 ]] && echo -e "  ${GREEN}✓${NC} installed ODR tools are up to date"
+    ODR_PKGS=("${missing[@]}")
+  fi
+  [[ ${#ODR_PKGS[@]} -gt 0 ]]
 }
 
 # Detect OS
@@ -105,8 +159,11 @@ apt-get update
 
 # Install basic dependencies
 print_section "Installing basic dependencies..."
+# sudo: the one-click update of DABcast relies on it (missing on a minimal Debian with a root password)
+# file: used by the DABcast package to check its binary. Build tools: kept to compile a driver or a
+# tool from its sources later (e.g. SoapyPlutoSDR).
 _BASE_PKGS=(
-  curl wget git build-essential automake libtool ca-certificates
+  curl wget git build-essential automake libtool ca-certificates sudo file
   libusb-1.0-0 libusb-1.0-0-dev libzmq3-dev libboost-system-dev
   libcurl4-openssl-dev libasound2-dev procps psmisc netcat-openbsd
 )
@@ -161,7 +218,7 @@ if [[ "$OS" == "ubuntu" ]]; then
   else
     echo -e "${YELLOW}⚠ add-apt-repository not available: make sure universe and multiverse are enabled${NC}"
   fi
-  install_optional odr-dabmux odr-audioenc odr-padenc odr-dabmod
+  if odr_confirm; then install_optional "${ODR_PKGS[@]}"; fi
   if ! command_exists odr-audioenc; then
     echo -e "${YELLOW}⚠ odr-audioenc is not available on $PRETTY_NAME (it is in Ubuntu 26.04 LTS and newer, multiverse).${NC}"
     echo -e "${YELLOW}  Use Ubuntu 26.04+ or Debian 12 / 13, or build ODR-AudioEnc from its sources.${NC}"
@@ -185,11 +242,7 @@ elif [[ "$OS" == "debian" || "$OS" == "raspbian" ]]; then
   # Tested and supported codenames (no warning); newer ones (forky, sid) use the standard repository
   _KNOWN="bookworm trixie"
   if [[ ! " $_KNOWN " =~ " $CODENAME " ]]; then
-    echo -e "${YELLOW}Warning: $PRETTY_NAME has not been tested with this script.${NC}"
-    echo -e "${YELLOW}Tested versions: $_KNOWN${NC}"
-    if ! ask "Continue anyway?" N; then
-      exit 1
-    fi
+    echo -e "${YELLOW}Warning: $PRETTY_NAME has not been tested with this script (tested: $_KNOWN) — continuing.${NC}"
   fi
 
   # Detect ODR binaries compiled from sources (will shadow apt packages)
@@ -260,8 +313,6 @@ elif [[ "$OS" == "debian" || "$OS" == "raspbian" ]]; then
     esac
   fi
 
-  ODR_PKGS=(odr-dabmux odr-audioenc odr-padenc odr-dabmod)
-
   if [[ "${_SKIP_ODR_APT:-false}" == "true" ]]; then
     echo "apt installation of ODR tools skipped (source binaries kept)."
   elif [[ "$OS" == "raspbian" ]]; then
@@ -275,8 +326,10 @@ elif [[ "$OS" == "debian" || "$OS" == "raspbian" ]]; then
     echo "Adding/updating Debian backports: $BACKPORTS_LIST"
     echo "deb http://deb.debian.org/debian ${CODENAME}-backports main contrib non-free non-free-firmware" > "$BACKPORTS_LIST"
     apt-get update
-    echo "Installing ODR tools from ${CODENAME}-backports: ${ODR_PKGS[*]}"
-    apt-get install -y -t "${CODENAME}-backports" "${ODR_PKGS[@]}"
+    if odr_confirm; then
+      echo "Installing ODR tools from ${CODENAME}-backports: ${ODR_PKGS[*]}"
+      apt-get install -y -t "${CODENAME}-backports" "${ODR_PKGS[@]}"
+    fi
 
   else
     # Debian 13 (trixie) and newer: ODR tools in the standard repository (the versions DABcast is
@@ -284,14 +337,16 @@ elif [[ "$OS" == "debian" || "$OS" == "raspbian" ]]; then
     # odr-audioenc is in non-free, not enabled by a default installation.
     # madison lists the installable versions (apt-cache show also succeeds for a package only referred to)
     if [[ -z "$(apt-cache madison odr-audioenc 2>/dev/null)" ]]; then
-      echo -e "${YELLOW}odr-audioenc is in the Debian 'non-free' component, which is not enabled on this system.${NC}"
-      if ask "Enable 'non-free' for ${CODENAME} (file /etc/apt/sources.list.d/dabcast-non-free.list)?" Y; then
-        echo "deb http://deb.debian.org/debian ${CODENAME} non-free" > /etc/apt/sources.list.d/dabcast-non-free.list
-        apt-get update
-      fi
+      # DABcast cannot work without odr-audioenc (it uses fdk-aac, hence 'non-free')
+      echo -e "${YELLOW}odr-audioenc is in the Debian 'non-free' component: enabling it for ${CODENAME}${NC}"
+      echo "  (file /etc/apt/sources.list.d/dabcast-non-free.list — removed by uninstall-tools.sh)"
+      echo "deb http://deb.debian.org/debian ${CODENAME} non-free" > /etc/apt/sources.list.d/dabcast-non-free.list
+      apt-get update
     fi
-    echo "Installing ODR tools (${CODENAME}): ${ODR_PKGS[*]}"
-    install_optional "${ODR_PKGS[@]}"
+    if odr_confirm; then
+      echo "Installing ODR tools (${CODENAME}): ${ODR_PKGS[*]}"
+      install_optional "${ODR_PKGS[@]}"
+    fi
   fi
 fi
 
@@ -311,30 +366,46 @@ which convert && convert --version | head -1
 print_section "Installing monitoring tools..."
 install_optional dablin socat wmctrl xdotool ffmpeg
 
-# SDR support (optional): the SDR output of DABcast — odr-dabmod drives the device through SoapySDR
-print_section "SDR support (SoapySDR) — for an SDR plugged into this server"
-if ask "Install SDR support (SoapySDR tools, then a choice of drivers)?" N; then
-  install_optional soapysdr-tools
-  if ask "  HackRF (SoapySDR driver + hackrf tools)?" Y; then
-    install_optional soapysdr0.8-module-hackrf hackrf
-  fi
-  if ask "  LimeSDR (SoapySDR driver + LimeSuite)?" N; then
-    install_optional soapysdr0.8-module-lms7 limesuite
-  fi
-  if ask "  BladeRF (SoapySDR driver + bladeRF tools)?" N; then
-    install_optional soapysdr0.8-module-bladerf bladerf
-  fi
-  if ask "  All other SoapySDR drivers (USRP/UHD, RTL-SDR, Airspy…)?" N; then
-    install_optional soapysdr0.8-module-all
-  fi
+# SDR support: the SDR output of DABcast (odr-dabmod drives the device through SoapySDR). One
+# question for all the drivers, so that an SDR plugged in later works without installing anything.
+print_section "SDR support (SoapySDR and drivers: HackRF, LimeSDR, BladeRF, USRP, RTL-SDR…)"
+if ask "Install SDR support (an SDR plugged into this machine: HackRF, LimeSDR, BladeRF…)?" Y; then
+  install_optional soapysdr-tools soapysdr0.8-module-all soapysdr0.8-module-hackrf soapysdr0.8-module-lms7 \
+    soapysdr0.8-module-bladerf hackrf limesuite bladerf
   echo -e "  ${BLUE}PlutoSDR:${NC} no Debian package for its SoapySDR driver — build SoapyPlutoSDR from"
-  echo "    https://github.com/pothosware/SoapyPlutoSDR (needs libiio-dev libad9361-dev libsoapysdr-dev cmake)."
+  echo "    https://github.com/pothosware/SoapyPlutoSDR (build tools installed; needs libiio-dev libad9361-dev libsoapysdr-dev cmake)."
   echo "    A stock PlutoSDR does not go below 325 MHz (DAB Band III = 174-240 MHz)."
   if command_exists SoapySDRUtil; then
     echo "SoapySDR drivers installed: $(SoapySDRUtil --info 2>/dev/null | grep -i 'Available factories' | cut -d. -f4- | sed 's/^ *//')"
   fi
+  _GROUPS="plugdev audio"   # USB access to the SDRs (udev rules: group plugdev)
 else
-  echo "Skipping SDR support (DABcast works without it: network outputs only)"
+  echo "Skipping SDR support (DABcast works without it: network outputs only; run the script again to add it)"
+  _GROUPS="audio"
+fi
+
+# Groups of the user who runs DABcast: audio (ALSA sound card sources), plugdev (SDR)
+if [[ -n "$ACTUAL_USER" && "$ACTUAL_USER" != "root" ]] && id -u "$ACTUAL_USER" >/dev/null 2>&1; then
+  for _grp in $_GROUPS; do
+    if getent group "$_grp" >/dev/null && ! id -nG "$ACTUAL_USER" | tr ' ' '\n' | grep -qx "$_grp"; then
+      usermod -aG "$_grp" "$ACTUAL_USER" && echo -e "  ${GREEN}✓${NC} $ACTUAL_USER added to group $_grp"
+    fi
+  done
+fi
+
+# Clock: EDI timestamps (TIST), EasyDAB metadata and HTTPS certificates need the right time
+print_section "Checking time synchronisation..."
+if [[ -d /run/systemd/system ]]; then
+  if systemctl is-active --quiet systemd-timesyncd || systemctl is-active --quiet chrony \
+     || systemctl is-active --quiet chronyd || systemctl is-active --quiet ntpsec || systemctl is-active --quiet ntp; then
+    echo -e "  ${GREEN}✓${NC} time synchronisation already active"
+  else
+    install_optional systemd-timesyncd
+    systemctl enable --now systemd-timesyncd 2>/dev/null && echo -e "  ${GREEN}✓${NC} systemd-timesyncd enabled" \
+      || echo -e "  ${YELLOW}⚠ could not enable systemd-timesyncd: check the clock (timedatectl)${NC}"
+  fi
+else
+  echo "  systemd not running (container): skipped"
 fi
 
 # ── DABcast npm dependencies (development mode only) ─────────────────────────
@@ -377,7 +448,57 @@ fi
 _MISSING=()
 for _t in odr-dabmux odr-audioenc odr-padenc; do command_exists "$_t" || _MISSING+=("$_t"); done
 _DEB_ARCH=$(dpkg --print-architecture 2>/dev/null || echo amd64)
+_REPO="DABodr/DABcast-diffusion-software"
+_MANUAL_STEPS() {
+  echo "  Download the package for this machine (${_DEB_ARCH}) from"
+  echo "    https://github.com/${_REPO}/releases/latest"
+  echo "  then: sudo dpkg -i dabcast_X.Y.Z_${_DEB_ARCH}.deb"
+}
 
+# DABcast itself: the latest official release for this architecture (skipped with --tools-only)
+_DABCAST_OK=false
+if [[ "$TOOLS_ONLY" == "true" ]]; then
+  print_section "DABcast not installed (--tools-only)"
+elif [[ "$_DEB_ARCH" != "amd64" && "$_DEB_ARCH" != "arm64" ]]; then
+  print_section "DABcast: no package for $_DEB_ARCH"
+else
+  print_section "Installing DABcast (latest release)..."
+  _LATEST=$(curl -fsSL --max-time 20 "https://api.github.com/repos/${_REPO}/releases/latest" 2>/dev/null \
+    | grep -m1 '"tag_name"' | sed -E 's/.*"v?([0-9]+\.[0-9]+\.[0-9]+)".*/\1/')
+  _INSTALLED=$(dpkg-query -W -f='${Status} ${Version}' dabcast 2>/dev/null | awk '/install ok installed/{print $4}')
+  if [[ ! "$_LATEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo -e "${YELLOW}⚠ Could not read the latest release from GitHub. Install DABcast by hand:${NC}"
+    _MANUAL_STEPS
+  elif [[ "$_INSTALLED" == "$_LATEST" ]]; then
+    echo -e "  ${GREEN}✓${NC} DABcast ${_INSTALLED} already installed (latest release)"
+    _DABCAST_OK=true
+  elif ! ask "$([[ -n "$_INSTALLED" ]] && echo "Update DABcast ${_INSTALLED} → ${_LATEST} now?" || echo "Install DABcast ${_LATEST} (${_DEB_ARCH}) now?")" Y; then
+    echo "  DABcast not installed now. To install it later:"
+    _MANUAL_STEPS
+    _DABCAST_SKIPPED=true
+  else
+    _TMPD=$(mktemp -d)
+    _DEB="$_TMPD/dabcast_${_LATEST}_${_DEB_ARCH}.deb"
+    echo "  Downloading DABcast ${_LATEST} (${_DEB_ARCH})${_INSTALLED:+ — installed: ${_INSTALLED}}..."
+    if curl -fL --max-time 600 -o "$_DEB" "https://github.com/${_REPO}/releases/download/v${_LATEST}/dabcast_${_LATEST}_${_DEB_ARCH}.deb" \
+       && [[ "$(dpkg-deb -f "$_DEB" Package 2>/dev/null)" == "dabcast" ]] \
+       && [[ "$(dpkg-deb -f "$_DEB" Version 2>/dev/null)" == "$_LATEST" ]]; then
+      # SUDO_USER is kept: the package runs the service as the user who started this script
+      if dpkg -i "$_DEB"; then
+        echo -e "  ${GREEN}✓${NC} DABcast ${_LATEST} installed"
+        _DABCAST_OK=true
+      else
+        echo -e "${YELLOW}⚠ DABcast package installation failed — see the messages above and /var/log/dabcast-install.log${NC}"
+      fi
+    else
+      echo -e "${YELLOW}⚠ DABcast download failed. Install it by hand:${NC}"
+      _MANUAL_STEPS
+    fi
+    rm -rf "$_TMPD"
+  fi
+fi
+
+_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 echo
 echo -e "${BLUE}========================================${NC}"
 if [[ ${#_MISSING[@]} -eq 0 ]]; then
@@ -386,13 +507,20 @@ else
   echo -e "${RED}Missing required ODR tools: ${_MISSING[*]}${NC}"
   echo -e "${RED}DABcast cannot go on air without them — see the messages above.${NC}"
 fi
+if [[ "$_DABCAST_OK" == "true" ]]; then
+  echo -e "${GREEN}DABcast is installed: open http://${_IP:-<server-ip>}:9090${NC}"
+  echo "  First sign-in: admin / dabcast — a new password is asked at once."
+fi
 echo -e "${BLUE}========================================${NC}"
-echo
-echo "Next step: install DABcast (package for this machine: ${_DEB_ARCH})"
-echo "  https://github.com/DABodr/DABcast-diffusion-software/releases/latest"
-echo "  sudo dpkg -i dabcast_X.Y.Z_${_DEB_ARCH}.deb"
-echo "  sudo systemctl enable --now dabcast"
-echo "  Then open http://<server-ip>:9090"
+if [[ "$_DABCAST_OK" != "true" && "$TOOLS_ONLY" != "true" && "${_DABCAST_SKIPPED:-false}" != "true" ]]; then
+  echo
+  echo "Next step: install DABcast"
+  _MANUAL_STEPS
+fi
+if id -nG "$ACTUAL_USER" 2>/dev/null | tr ' ' '\n' | grep -qx plugdev; then
+  echo
+  echo "Note: log out and back in (or reboot) for the new groups of $ACTUAL_USER (SDR / sound card access)."
+fi
 echo
 echo "User guide: https://dabodr.github.io/DABcast-diffusion-software/download/DABcast_Guide.html"
 echo
