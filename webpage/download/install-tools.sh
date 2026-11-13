@@ -42,6 +42,16 @@ command_exists() {
   command -v "$1" >/dev/null 2>&1
 }
 
+# Yes/no question: ask "Question" Y|N (default). Reads the terminal; no answer = the default,
+# never aborts the script (set -e) when there is no terminal.
+ask() {
+  local _def="${2:-N}" _ans=""
+  local _hint="(y/N)"; [[ "$_def" == "Y" ]] && _hint="(Y/n)"
+  if [[ -r /dev/tty ]]; then read -r -p "$1 $_hint " _ans < /dev/tty || _ans=""; fi
+  _ans="${_ans:-$_def}"
+  [[ "$_ans" =~ ^[Yy] ]]
+}
+
 # Install optional packages one by one — skips unavailable ones without aborting
 install_optional() {
   for pkg in "$@"; do
@@ -84,9 +94,7 @@ fi
 if [[ "$OS" != "debian" && "$OS" != "ubuntu" && "$OS" != "raspbian" ]]; then
   echo -e "${YELLOW}Warning: This script is designed for Debian/Ubuntu/Raspbian.${NC}"
   echo -e "${YELLOW}Your OS ($OS) may not be fully supported.${NC}"
-  read -p "Continue anyway? (y/N) " -n 1 -r
-  echo
-  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+  if ! ask "Continue anyway?" N; then
     exit 1
   fi
 fi
@@ -142,25 +150,22 @@ print_section "Installing ODR-mmbTools..."
 
 # Check if we can use PPA (Ubuntu) or backports (Debian)
 if [[ "$OS" == "ubuntu" ]]; then
-  # Ubuntu: software-properties-common required for add-apt-repository (PPA)
+  # Ubuntu: the ODR tools are in the official archive (universe; odr-audioenc in multiverse, as it
+  # uses fdk-aac) — Ubuntu 26.04 LTS or newer for odr-audioenc. The former opendigitalradio PPA
+  # no longer exists.
   install_optional software-properties-common
-
-  # Ubuntu: use PPA
-  if ! grep -q "opendigitalradio/mmbtools" /etc/apt/sources.list.d/*.list 2>/dev/null; then
-    echo "Adding OpenDigitalRadio PPA for Ubuntu..."
-    if command_exists add-apt-repository; then
-      add-apt-repository -y ppa:opendigitalradio/mmbtools
-      apt-get update
-    else
-      echo -e "${YELLOW}⚠ add-apt-repository not available (software-properties-common missing)${NC}"
-      echo -e "${YELLOW}  The OpenDigitalRadio PPA could not be added.${NC}"
-      echo -e "${YELLOW}  Install software-properties-common manually then re-run the script.${NC}"
-    fi
+  if command_exists add-apt-repository; then
+    add-apt-repository -y universe || true
+    add-apt-repository -y multiverse || true
+    apt-get update
   else
-    echo "OpenDigitalRadio PPA already added"
+    echo -e "${YELLOW}⚠ add-apt-repository not available: make sure universe and multiverse are enabled${NC}"
   fi
-
-  apt-get install -y odr-dabmux odr-audioenc odr-padenc odr-dabmod
+  install_optional odr-dabmux odr-audioenc odr-padenc odr-dabmod
+  if ! command_exists odr-audioenc; then
+    echo -e "${YELLOW}⚠ odr-audioenc is not available on $PRETTY_NAME (it is in Ubuntu 26.04 LTS and newer, multiverse).${NC}"
+    echo -e "${YELLOW}  Use Ubuntu 26.04+ or Debian 12 / 13, or build ODR-AudioEnc from its sources.${NC}"
+  fi
 
 elif [[ "$OS" == "debian" || "$OS" == "raspbian" ]]; then
   CODENAME="${VERSION_CODENAME:-}"
@@ -171,14 +176,18 @@ elif [[ "$OS" == "debian" || "$OS" == "raspbian" ]]; then
   fi
   CODENAME="${CODENAME,,}"
 
-  # Tested and supported codenames (no warning)
-  _KNOWN="buster bullseye bookworm trixie"
+  # Debian 10 / 11 have no ODR package (and their backports are archived)
+  if [[ "$CODENAME" == "buster" || "$CODENAME" == "bullseye" ]]; then
+    echo -e "${RED}$PRETTY_NAME is too old: the ODR tools exist for Debian 12 (bookworm, backports) and 13 (trixie) or newer.${NC}"
+    echo -e "${RED}Upgrade the system (Raspberry Pi: Raspberry Pi OS 64-bit based on bookworm or trixie).${NC}"
+    exit 1
+  fi
+  # Tested and supported codenames (no warning); newer ones (forky, sid) use the standard repository
+  _KNOWN="bookworm trixie"
   if [[ ! " $_KNOWN " =~ " $CODENAME " ]]; then
     echo -e "${YELLOW}Warning: $PRETTY_NAME has not been tested with this script.${NC}"
     echo -e "${YELLOW}Tested versions: $_KNOWN${NC}"
-    read -p "Continue anyway? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    if ! ask "Continue anyway?" N; then
       exit 1
     fi
   fi
@@ -218,8 +227,8 @@ elif [[ "$OS" == "debian" || "$OS" == "raspbian" ]]; then
     echo "  1) Remove source binaries and install apt packages (recommended)"
     echo "  2) Keep source binaries and update via 'git pull + make install'"
     echo "  3) Continue anyway (source binaries will remain active)"
-    read -p "Your choice [1/2/3]: " -n 1 -r _ODR_CHOICE
-    echo
+    _ODR_CHOICE=""
+    if [[ -r /dev/tty ]]; then read -r -p "Your choice [1/2/3]: " _ODR_CHOICE < /dev/tty || _ODR_CHOICE=""; fi
     case "$_ODR_CHOICE" in
       1)
         # Remove only binaries that have an apt equivalent
@@ -260,52 +269,29 @@ elif [[ "$OS" == "debian" || "$OS" == "raspbian" ]]; then
     echo -e "${RED}Raspbian not supported (32-bit architecture).${NC}"
     exit 1
 
-  else
-    # Debian : via backports
-    COMPONENTS="main contrib non-free"
-    if [[ "$CODENAME" == "bookworm" || "$CODENAME" == "trixie" ]]; then
-      COMPONENTS+=" non-free-firmware"
-    fi
-
+  elif [[ "$CODENAME" == "bookworm" ]]; then
+    # Debian 12: ODR tools from bookworm-backports (odr-audioenc in non-free)
     BACKPORTS_LIST="/etc/apt/sources.list.d/${CODENAME}-backports.list"
     echo "Adding/updating Debian backports: $BACKPORTS_LIST"
-    echo "deb http://deb.debian.org/debian ${CODENAME}-backports ${COMPONENTS}" > "$BACKPORTS_LIST"
+    echo "deb http://deb.debian.org/debian ${CODENAME}-backports main contrib non-free non-free-firmware" > "$BACKPORTS_LIST"
     apt-get update
+    echo "Installing ODR tools from ${CODENAME}-backports: ${ODR_PKGS[*]}"
+    apt-get install -y -t "${CODENAME}-backports" "${ODR_PKGS[@]}"
 
-    # On trixie/sid, ODR packages may be in the main repository (testing)
-    # → try package by package: standard repository first, then backports, then
-    #   bookworm-backports as last resort (ODR packages not yet migrated to trixie)
-    if [[ "$CODENAME" == "trixie" || "$CODENAME" == "sid" ]]; then
-      BOOKWORM_BP_LIST="/etc/apt/sources.list.d/bookworm-backports.list"
-      if [[ ! -f "$BOOKWORM_BP_LIST" ]]; then
-        echo "Adding bookworm-backports as fallback repository..."
-        echo "deb http://deb.debian.org/debian bookworm-backports main contrib non-free non-free-firmware" > "$BOOKWORM_BP_LIST"
-        # Pin bookworm-backports at low priority: only used when explicitly requested
-        # via -t, never automatically by apt-get upgrade
-        cat > /etc/apt/preferences.d/bookworm-backports-pin <<'PINEOF'
-Package: *
-Pin: release a=bookworm-backports
-Pin-Priority: 100
-PINEOF
-        apt-get update -qq
+  else
+    # Debian 13 (trixie) and newer: ODR tools in the standard repository (the versions DABcast is
+    # tested with) — no backports, never packages of another Debian release.
+    # odr-audioenc is in non-free, not enabled by a default installation.
+    # madison lists the installable versions (apt-cache show also succeeds for a package only referred to)
+    if [[ -z "$(apt-cache madison odr-audioenc 2>/dev/null)" ]]; then
+      echo -e "${YELLOW}odr-audioenc is in the Debian 'non-free' component, which is not enabled on this system.${NC}"
+      if ask "Enable 'non-free' for ${CODENAME} (file /etc/apt/sources.list.d/dabcast-non-free.list)?" Y; then
+        echo "deb http://deb.debian.org/debian ${CODENAME} non-free" > /etc/apt/sources.list.d/dabcast-non-free.list
+        apt-get update
       fi
-
-      echo "Installing ODR (${CODENAME}): attempting package by package..."
-      for pkg in "${ODR_PKGS[@]}"; do
-        if apt-get install -y "$pkg" 2>/dev/null; then
-          echo -e "  ${GREEN}✓${NC} $pkg (${CODENAME})"
-        elif apt-get install -y -t "${CODENAME}-backports" "$pkg" 2>/dev/null; then
-          echo -e "  ${GREEN}✓${NC} $pkg (${CODENAME}-backports)"
-        elif apt-get install -y -t bookworm-backports "$pkg" 2>/dev/null; then
-          echo -e "  ${GREEN}✓${NC} $pkg (bookworm-backports)"
-        else
-          echo -e "  ${YELLOW}⚠ $pkg not available on ${CODENAME}, ${CODENAME}-backports or bookworm-backports, skipped${NC}"
-        fi
-      done
-    else
-      echo "Installing ODR tools from ${CODENAME}-backports: ${ODR_PKGS[*]}"
-      apt-get install -y -t "${CODENAME}-backports" "${ODR_PKGS[@]}"
     fi
+    echo "Installing ODR tools (${CODENAME}): ${ODR_PKGS[*]}"
+    install_optional "${ODR_PKGS[@]}"
   fi
 fi
 
@@ -325,16 +311,30 @@ which convert && convert --version | head -1
 print_section "Installing monitoring tools..."
 install_optional dablin socat wmctrl xdotool ffmpeg
 
-# Install HackRF support (optional)
-print_section "Installing HackRF support..."
-read -p "Install HackRF support (libhackrf, hackrf tools)? (y/N) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-  apt-get install -y libhackrf-dev hackrf
-  which hackrf_transfer && hackrf_transfer --version || echo "hackrf_transfer installed"
-  echo -e "${GREEN}HackRF support installed${NC}"
+# SDR support (optional): the SDR output of DABcast — odr-dabmod drives the device through SoapySDR
+print_section "SDR support (SoapySDR) — for an SDR plugged into this server"
+if ask "Install SDR support (SoapySDR tools, then a choice of drivers)?" N; then
+  install_optional soapysdr-tools
+  if ask "  HackRF (SoapySDR driver + hackrf tools)?" Y; then
+    install_optional soapysdr0.8-module-hackrf hackrf
+  fi
+  if ask "  LimeSDR (SoapySDR driver + LimeSuite)?" N; then
+    install_optional soapysdr0.8-module-lms7 limesuite
+  fi
+  if ask "  BladeRF (SoapySDR driver + bladeRF tools)?" N; then
+    install_optional soapysdr0.8-module-bladerf bladerf
+  fi
+  if ask "  All other SoapySDR drivers (USRP/UHD, RTL-SDR, Airspy…)?" N; then
+    install_optional soapysdr0.8-module-all
+  fi
+  echo -e "  ${BLUE}PlutoSDR:${NC} no Debian package for its SoapySDR driver — build SoapyPlutoSDR from"
+  echo "    https://github.com/pothosware/SoapyPlutoSDR (needs libiio-dev libad9361-dev libsoapysdr-dev cmake)."
+  echo "    A stock PlutoSDR does not go below 325 MHz (DAB Band III = 174-240 MHz)."
+  if command_exists SoapySDRUtil; then
+    echo "SoapySDR drivers installed: $(SoapySDRUtil --info 2>/dev/null | grep -i 'Available factories' | cut -d. -f4- | sed 's/^ *//')"
+  fi
 else
-  echo "Skipping HackRF installation"
+  echo "Skipping SDR support (DABcast works without it: network outputs only)"
 fi
 
 # ── DABcast npm dependencies (development mode only) ─────────────────────────
@@ -362,8 +362,8 @@ echo -e "${GREEN}✓${NC} odr-padenc: $(which odr-padenc 2>/dev/null || echo 'no
 echo -e "${GREEN}✓${NC} odr-dabmod: $(which odr-dabmod 2>/dev/null || echo 'not found')"
 echo -e "${GREEN}✓${NC} ImageMagick: $(which convert 2>/dev/null || echo 'not found')"
 
-if command_exists hackrf_transfer; then
-  echo -e "${GREEN}✓${NC} HackRF: $(which hackrf_transfer)"
+if command_exists SoapySDRUtil; then
+  echo -e "${GREEN}✓${NC} SoapySDR (SDR output): $(which SoapySDRUtil)"
 fi
 
 if command_exists dablin; then
@@ -374,14 +374,25 @@ if command_exists ffmpeg; then
   echo -e "${GREEN}✓${NC} ffmpeg (web Player): $(which ffmpeg)"
 fi
 
+_MISSING=()
+for _t in odr-dabmux odr-audioenc odr-padenc; do command_exists "$_t" || _MISSING+=("$_t"); done
+_DEB_ARCH=$(dpkg --print-architecture 2>/dev/null || echo amd64)
+
 echo
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}ODR tools installed successfully!${NC}"
+if [[ ${#_MISSING[@]} -eq 0 ]]; then
+  echo -e "${GREEN}ODR tools installed successfully!${NC}"
+else
+  echo -e "${RED}Missing required ODR tools: ${_MISSING[*]}${NC}"
+  echo -e "${RED}DABcast cannot go on air without them — see the messages above.${NC}"
+fi
 echo -e "${BLUE}========================================${NC}"
 echo
-echo "Next step: install DABcast"
-echo "  sudo dpkg -i dabcast_X.Y.Z_amd64.deb"
-echo "  Then open http://localhost:9090"
+echo "Next step: install DABcast (package for this machine: ${_DEB_ARCH})"
+echo "  https://github.com/DABodr/DABcast-diffusion-software/releases/latest"
+echo "  sudo dpkg -i dabcast_X.Y.Z_${_DEB_ARCH}.deb"
+echo "  sudo systemctl enable --now dabcast"
+echo "  Then open http://<server-ip>:9090"
 echo
-echo "For more information, see build/INSTALL.md"
+echo "User guide: https://dabodr.github.io/DABcast-diffusion-software/download/DABcast_Guide.html"
 echo
