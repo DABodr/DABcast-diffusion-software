@@ -396,7 +396,7 @@ fi
 if [[ -n "$ACTUAL_USER" && "$ACTUAL_USER" != "root" ]] && id -u "$ACTUAL_USER" >/dev/null 2>&1; then
   for _grp in $_GROUPS; do
     if getent group "$_grp" >/dev/null && ! id -nG "$ACTUAL_USER" | tr ' ' '\n' | grep -qx "$_grp"; then
-      usermod -aG "$_grp" "$ACTUAL_USER" && echo -e "  ${GREEN}✓${NC} $ACTUAL_USER added to group $_grp"
+      usermod -aG "$_grp" "$ACTUAL_USER" && echo -e "  ${GREEN}✓${NC} $ACTUAL_USER added to group $_grp" && _GROUPS_ADDED=true
     fi
   done
 fi
@@ -495,6 +495,7 @@ else
       if dpkg -i "$_DEB"; then
         echo -e "  ${GREEN}✓${NC} DABcast ${_LATEST} installed"
         _DABCAST_OK=true
+        [[ -z "$_INSTALLED" ]] && _DABCAST_FIRST=true   # first installation: default sign-in shown below
       else
         echo -e "${YELLOW}⚠ DABcast package installation failed — see the messages above and /var/log/dabcast-install.log${NC}"
       fi
@@ -517,7 +518,7 @@ else
 fi
 if [[ "$_DABCAST_OK" == "true" ]]; then
   echo -e "${GREEN}DABcast is installed: open http://${_IP:-<server-ip>}:9090${NC}"
-  echo "  First sign-in: admin / dabcast — a new password is asked at once."
+  [[ "${_DABCAST_FIRST:-false}" == "true" ]] && echo "  First sign-in: admin / dabcast — a new password is asked at once."
 fi
 echo -e "${BLUE}========================================${NC}"
 if [[ "$_DABCAST_OK" != "true" && "$TOOLS_ONLY" != "true" && "${_DABCAST_SKIPPED:-false}" != "true" ]]; then
@@ -525,7 +526,7 @@ if [[ "$_DABCAST_OK" != "true" && "$TOOLS_ONLY" != "true" && "${_DABCAST_SKIPPED
   echo "Next step: install DABcast"
   _MANUAL_STEPS
 fi
-if id -nG "$ACTUAL_USER" 2>/dev/null | tr ' ' '\n' | grep -qx plugdev; then
+if [[ "${_GROUPS_ADDED:-false}" == "true" ]]; then   # only when a group was really added above
   echo
   echo "Note: log out and back in (or reboot) for the new groups of $ACTUAL_USER (SDR / sound card access)."
 fi
