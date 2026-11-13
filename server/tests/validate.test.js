@@ -71,7 +71,7 @@ describe('validateService', () => {
   it('rejects HE-AAC v2 (PS) with mono channels', () => {
     const svc = { ...validSvc, audio: { codec: 'HE-AAC v2 (PS)', channels: 1 } };
     const { errors } = validateService(svc, ALLOWED_BITRATES_KBPS);
-    assert.ok(errors.some((e) => e.includes('PS') && e.includes('stéréo')));
+    assert.ok(errors.some((e) => e.includes('PS') && e.includes('stereo')));
   });
 
   it('accepts HE-AAC v2 (PS) with stereo channels', () => {

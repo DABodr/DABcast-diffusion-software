@@ -2,9 +2,26 @@
 
 Modern web interface for managing DAB/DAB+ multiplexes with ODR-mmbTools.
 
-Version: **1.3.1**
+[![Tests](https://github.com/DABodr/DABcast-diffusion-software/actions/workflows/tests.yml/badge.svg)](https://github.com/DABodr/DABcast-diffusion-software/actions/workflows/tests.yml)
+**[Latest release](https://github.com/DABodr/DABcast-diffusion-software/releases/latest)** ·
+**[Website](https://dabodr.github.io/DABcast-diffusion-software/)** ·
+**[User guide](https://dabodr.github.io/DABcast-diffusion-software/download/DABcast_Guide.html)**
 
-> *Free software — GNU AGPL v3.*
+> *Free software — GNU AGPL v3.* DABcast drives the ODR-mmbTools (odr-audioenc, odr-padenc,
+> odr-dabmux, odr-dabmod) for the usual cases of a DAB+ multiplex; it does not replace their
+> advanced configuration.
+
+### Tested on
+
+| | Status |
+|---|---|
+| Debian 12 (bookworm) / Debian 13 (trixie), amd64 | ✅ in production |
+| Raspberry Pi OS 64-bit (arm64), Raspberry Pi 5 | ✅ |
+| Ubuntu 26.04 LTS | ⚠️ not tested yet (ODR packages in universe / multiverse) |
+| EasyDAB V2 (ZMQ output) | ✅ |
+| HackRF One (SDR output, SoapySDR) | ✅ on air |
+| LimeSDR / BladeRF / PlutoSDR (SDR output) | ⚠️ offered, **not tested** — feedback welcome |
+| Commercial modulators / converters (EDI, ETI) | ⚠️ outputs follow the ODR formats, not tested with commercial hardware |
 
 ![DABcast screenshot](webpage/screenshot.png)
 
@@ -19,6 +36,9 @@ Version: **1.3.1**
 - [Features](#-features)
 - [Configuration](#️-configuration)
 - [Project structure](#-project-structure)
+- [Tests](#-tests)
+- [Security](#-security)
+- [Contributing](#-contributing)
 - [Third-Party Software](#third-party-software)
 - [License](#license)
 
@@ -30,7 +50,7 @@ Version: **1.3.1**
 
 | Dependency | Description |
 |------------|-------------|
-| **Node.js** | JavaScript runtime (v18+) |
+| **Node.js** | Only to run from the sources (v24); the .deb embeds its own Node.js 24 |
 | **odr-dabmux** | DAB multiplexer |
 | **odr-audioenc** | DAB+ audio encoder |
 | **odr-padenc** | PAD encoder (metadata) |
@@ -45,96 +65,52 @@ Version: **1.3.1**
 
 | Dependency | Description | Usage |
 |------------|-------------|-------|
-| **libhackrf** | HackRF One support | HackRF TX transmission mode |
+| **SoapySDR** + driver module (`soapysdr-tools`, `soapysdr0.8-module-hackrf` / `-lms7` / `-bladerf`…) | SDR plugged into the server | SDR output (HackRF, LimeSDR, BladeRF, PlutoSDR…) |
+| **dablin**, **ffmpeg** | Decoding the multiplex | Web Player |
 
 ---
 
 ## 🚀 Installation
 
-### Automatic installation (Debian/Ubuntu)
-
-An automatic installation script is provided for Debian and Ubuntu:
+### Recommended: install script + .deb package
 
 ```bash
-# Clone the repository
-git clone https://github.com/DABodr/DABcast-diffusion-software.git
-cd DABcast-diffusion-software
+# 1. ODR-mmbTools and the other tools (Debian 12 / 13, Raspberry Pi OS 64-bit, Ubuntu 26.04+)
+wget https://dabodr.github.io/DABcast-diffusion-software/download/install-tools.sh
+sudo bash install-tools.sh
 
-# Run the installation script
-sudo ./install-tools.sh
+# 2. DABcast (arm64 package on a Raspberry Pi) — from the latest release
+sudo dpkg -i dabcast_X.Y.Z_amd64.deb
+# Open http://<server-ip>:9090 — first sign-in: admin / dabcast, a new password is required
 ```
 
-The script automatically installs:
-- ✅ Node.js v18+ (NodeSource)
+The script installs:
 - ✅ ODR-mmbTools (odr-dabmux, odr-audioenc, odr-padenc, odr-dabmod)
-  - **Ubuntu**: via OpenDigitalRadio PPA
-  - **Debian**: via backports (bookworm-backports, buster-backports)
-- ✅ ImageMagick (SLS conversion)
-- ✅ Dablin (DAB+ player for monitoring)
-- ✅ Monitoring tools (socat, wmctrl, xdotool)
-- ✅ Runtime dependencies (libzmq, libboost, libfdk-aac, libvlc, etc.)
-- ✅ Node.js dependencies (npm install)
-- ❓ HackRF support (optional, prompted during installation)
+  - **Debian 13+**: standard repository; offers to enable `non-free` (odr-audioenc uses fdk-aac)
+  - **Debian 12**: bookworm-backports
+  - **Ubuntu 26.04+**: universe / multiverse
+- ✅ ImageMagick (SLS conversion), Dablin and ffmpeg (web Player), monitoring tools
+- ❓ SDR support (optional, asked): SoapySDR tools, then one question per driver (HackRF, LimeSDR, BladeRF, all others)
 
-### Manual installation
+Updates: the web interface offers new releases and installs them in one click.
 
-If you prefer to install manually:
-
-#### 1. Install Node.js v18+
+### From the sources (development)
 
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo bash -
-sudo apt-get install -y nodejs
-```
-
-#### 2. Install ODR-mmbTools
-
-**Ubuntu:**
-```bash
-sudo add-apt-repository ppa:opendigitalradio/mmbtools
-sudo apt-get update
-sudo apt-get install odr-dabmux odr-audioenc odr-padenc odr-dabmod
-```
-
-**Debian (bookworm/buster):**
-```bash
-# Add backports with non-free
-echo "deb http://deb.debian.org/debian bookworm-backports main contrib non-free non-free-firmware" | sudo tee /etc/apt/sources.list.d/bookworm-backports.list
-sudo apt-get update
-sudo apt-get install -y -t bookworm-backports odr-dabmux odr-audioenc odr-padenc odr-dabmod
-```
-
-#### 3. Install dependencies
-
-```bash
-sudo apt-get install -y \
-  imagemagick \
-  libzmq3-dev \
-  libboost-system-dev \
-  libcurl4-openssl-dev \
-  libasound2-dev \
-  libfdk-aac-dev \
-  libvlc-dev \
-  libusb-1.0-0-dev
-```
-
-#### 4. Install Node.js dependencies
-
-```bash
-cd DABcast/server
-npm install
+# Node.js 24 and the ODR-mmbTools (install-tools.sh above) are needed
+git clone https://github.com/DABodr/DABcast-diffusion-software.git
+cd DABcast-diffusion-software/server
+npm ci
+npm start          # http://localhost:9090
+npm test           # 298 tests
 ```
 
 ---
 
 ## ⚡ Quick start
 
-```bash
-cd server
-npm start
-```
-
-Then open in a browser: **http://localhost:9090**
+Open **http://<server-ip>:9090**, sign in (first time: `admin` / `dabcast`, then choose a password),
+add your services, add a transmitter output in **Multiplex & modulator**, then **Start**.
 
 ### Demo preset
 
@@ -292,18 +268,25 @@ The `dabcast.service` file at the root contains commented `Environment=` lines f
 
 - ✅ **Integrated player (Dablin)**: real-time listening to the DAB+ multiplex
 
-### Transmission modes
+### Transmitter outputs
 
-- ✅ **EASYDAB**: ZMQ output for EasyDAB (testing/development)
-  - ZMQ output on port 18081
-  - Raw ETI TCP output on port 9901
-- ✅ **EDI**: Ensemble Distribution Interface over TCP
-  - Configurable EDI port (default: 13000)
-- ✅ **HackRF TX**: direct transmission via HackRF One
-  - Automatic hackrf_transfer detection
-  - TX gain and DAB Band III frequency configuration
-  - FIR filtering included
-  - Error message if HackRF not connected
+One or several transmitters fed at once by the same multiplex (**Multiplex & modulator** panel):
+
+- ✅ **ZMQ — EasyDAB V2** (dabmux listens), optional timestamps
+- ✅ **EDI/UDP** to a commercial modulator (unicast or multicast, PFT / FEC)
+- ✅ **EDI/TCP** for transmitters, converters (digris-edi-tcp-converter) or a remote odr-dabmod
+- ✅ **ETI/TCP** (raw ETI)
+- ✅ **SDR on the server** (HackRF, LimeSDR, BladeRF, PlutoSDR or any SoapySDR device): odr-dabmod
+  drives the device itself through SoapySDR; *Check device* lists it (`SoapySDRUtil --find`)
+- ✅ Connection state of every output; a raw ETI copy (port 9901) is always kept for the Player / Dablin
+
+### Supervision and alerts
+
+- ✅ **SDR**: the watchdog reads the frames sent by odr-dabmod; unplugged or stalled device → one error,
+  odr-dabmod alone restarted every 30 s until it transmits again (the rest of the multiplex stays on air)
+- ✅ **Network outputs**: a transmitter that was connected and is gone for 15 s is reported
+- ✅ **Telegram**: errors forwarded to a bot (minimum level, silent mode, test button), optional
+  ✅ RESOLVED messages when a transmitter output or a service is back on air
 
 ### Robustness and security
 
@@ -375,7 +358,7 @@ The `data/settings.json` file is automatically generated on first launch with de
 |-----------|-------------|---------|
 | `port` | WebUI port | 9090 |
 | `odrBinDir` | ODR binaries path (if not in PATH) | `""` |
-| `txMode` | Transmission mode (`EASYDAB`, `EDI`, `HACKRF`, `NETWORK`; `USRP1` is no longer offered) | `EASYDAB` |
+| `txMode` | `NETWORK` = the transmitter outputs list `dabmux.outputs` (what the web UI uses). `EASYDAB`, `EDI`, `HACKRF` are kept for older settings (shown as outputs in the UI); `USRP1` is no longer offered | `EASYDAB` |
 | `easyDabOutput.port` | ZMQ port for EasyDAB | 18081 |
 | `easyDabOutput.netPort` | TCP port for the raw ETI monitoring stream (Dablin/socat, including EDI mode) | 9901 |
 | `ediTcpListenPort` | EDI-over-TCP port | 13000 |
@@ -440,12 +423,14 @@ DABcast/
 │   │   │   ├── processManager.js   # ODR process management
 │   │   │   ├── muxBuilder.js       # .mux file generation
 │   │   │   ├── dabmuxStats.js      # dabmux management port client (ZMQ, read-only)
+│   │   │   ├── outputs.js          # transmitter outputs (ZMQ, EDI, ETI, SDR): validation, .mux lines
+│   │   │   ├── dabmodRc.js         # odr-dabmod remote control client (read-only, SDR supervision)
 │   │   │   └── commandBuilder.js   # ODR command building
 │   │   └── utils/
 │   │       ├── validate.js   # ETSI validation
 │   │       ├── dlplus.js     # DL+ parsing and tag generation
 │   │       └── logger.js     # Timestamped logs
-│   ├── tests/                # Unit tests (178 tests)
+│   ├── tests/                # Unit tests (298 tests)
 │   └── package.json
 ├── web/                      # Vanilla JS frontend
 │   ├── index.html
@@ -469,16 +454,14 @@ DABcast/
 
 ## 🧪 Tests
 
-### DABcast unit tests
-
 ```bash
 cd server
-npm test
-# → 178 tests
+npm test           # 298 tests, run on every pull request by GitHub Actions
 ```
 
-Covering: ETSI validation, CU calculation (EEP-A/B), .mux generation,
-ODR command building, import/export, DL+ parsing, metadata log filtering.
+Covering: ETSI validation, CU calculation (EEP-A/B), .mux / dabmod.ini generation, ODR command
+building, transmitter outputs, watchdog / failover / SDR supervision, import/export, DL+ parsing,
+metadata, slide conversion, sessions, Telegram.
 
 ---
 
@@ -496,37 +479,25 @@ ODR command building, import/export, DL+ parsing, metadata log filtering.
 
 ---
 
-## 🆕 What's new in v0.8.0
+## 🔒 Security
 
-### UI/UX
-- About dialog with real-time system info (CPU, RAM, uptime, versions)
-- Automatic SLS thumbnail rotation (5s slideshow)
-- Clickable slide preview at full size (320x240)
-- DL+ column with green badge displayed only if tags active
-- Compact metadata fields (grid-keys layout)
-- "Show default DLS" as Yes/No dropdown
-- Mono/Stereo display instead of 1/2 in the Channels column
-- Mono VU meter: single "M" bar instead of duplicated L/R
+- **Do not expose port 9090 directly on the Internet.** The interface is served over plain HTTP:
+  use it on a trusted network, through a VPN (e.g. `tailscale serve --bg 9090` gives HTTPS with a
+  valid certificate) or behind a reverse proxy with HTTPS (Caddy, nginx).
+- Sign-in with bcrypt-hashed password, signed `HttpOnly` / `SameSite=Strict` session cookie,
+  rate-limited login, password change required at first sign-in.
+- One-click update: a root helper (sudo rule installed by the package) downloads the **official**
+  GitHub release itself and checks the package before installing it.
+- Report a vulnerability privately: see [SECURITY.md](SECURITY.md).
 
-### Metadata
-- JSON mode with dot-path, arrays, fallbacks (artist|name) support
-- Automatic cover.jpg download with per-track cache-buster
-- Detailed metadata logs (fetch, parse, download, resize)
-- `/api/metadata/test/json` and `/api/logs/metadata` endpoints
-- Automatic cover.jpg cleanup on mode change
-- Clear DLS file when "Show default DLS = No"
-- Runtime reset (currentSlsUrl, dlplusActive) on config changes
+## 📰 Release notes
 
-### Robustness
-- Missing binary detection (ODR-mmbTools, libhackrf) with clear error messages
-- Toast notifications 5s instead of blocking alert()
-- `child.on('error')` handler to prevent ENOENT crashes
-- HackRF not connected detection via stderr parsing
-- Mono VU meter parsing (`[======]`) in addition to stereo (`[======|======]`)
+See the [GitHub Releases](https://github.com/DABodr/DABcast-diffusion-software/releases).
 
-### Transmission
-- HackRF TX mode support with gain/frequency configuration
-- HackRF FIR filtering included in `data/filtertaps.txt`
+## 🤝 Contributing
+
+Bug reports, hardware feedback (SDR, modulators, converters) and pull requests are welcome —
+see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 

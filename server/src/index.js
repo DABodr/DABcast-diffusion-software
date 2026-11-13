@@ -956,17 +956,17 @@ app.post('/api/dablin/start', (req, res) => {
       // Dablin is already running, bring window to front
       try {
         execSync('wmctrl -a dablin', { stdio: 'ignore' });
-        logger.line('web', 'Dablin déjà lancé - fenêtre ramenée au premier plan');
+        logger.line('web', 'Dablin already running - window brought to the front');
         return res.json({ ok: true });
       } catch (wmctrlErr) {
         // wmctrl not available, try xdotool as fallback
         try {
           execSync('xdotool search --name dablin windowactivate', { stdio: 'ignore' });
-          logger.line('web', 'Dablin déjà lancé - fenêtre ramenée au premier plan (xdotool)');
+          logger.line('web', 'Dablin already running - window brought to the front (xdotool)');
           return res.json({ ok: true });
         } catch (xdotoolErr) {
           // No tool available, just notify that it's already running
-          logger.line('web', 'Dablin déjà lancé (aucun outil de gestion de fenêtre disponible)');
+          logger.line('web', 'Dablin already running (no window management tool available)');
           return res.json({ ok: true });
         }
       }

@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: User guide
+    url: https://dabodr.github.io/DABcast-diffusion-software/download/DABcast_Guide.html
+    about: Installation, transmitter outputs, metadata, troubleshooting
+  - name: ODR-mmbTools (Opendigitalradio)
+    url: https://www.opendigitalradio.org/
+    about: Questions about odr-dabmux, odr-audioenc, odr-padenc or odr-dabmod themselves

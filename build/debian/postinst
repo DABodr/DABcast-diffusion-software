@@ -3,11 +3,11 @@ set -e
 
 LOGFILE=/var/log/dabcast-install.log
 
-# Rediriger stderr vers le log — toutes les erreurs de commandes y seront capturées
+# stderr goes to the log file: every command error is recorded there
 exec 2>>"$LOGFILE"
 
-# En cas d'échec inattendu (set -e), noter la ligne dans le log
-trap 'echo "$(date "+%Y-%m-%d %H:%M:%S") [ECHEC] postinst interrompu (code: $?)" >> "$LOGFILE"' ERR
+# Unexpected failure (set -e): note it in the log
+trap 'echo "$(date "+%Y-%m-%d %H:%M:%S") [FAILED] postinst interrupted (code: $?)" >> "$LOGFILE"' ERR
 
 log() {
   echo "[dabcast] $1"
@@ -17,13 +17,13 @@ log() {
 case "$1" in
   configure)
     log "=== Installation DABcast ==="
-    log "Version dpkg : $2 -> $1"
-    log "Architecture : $(dpkg --print-architecture 2>/dev/null || echo inconnue)"
-    log "Systeme      : $(uname -r)"
+    log "dpkg version  : $2 -> $1"
+    log "Architecture : $(dpkg --print-architecture 2>/dev/null || echo unknown)"
+    log "Kernel       : $(uname -r)"
     log ""
 
-    # --- Résolution de l'utilisateur du service ---
-    # Priorité : RUN_AS_USER dans /etc/default/dabcast > SUDO_USER > premier user UID≥1000
+    # --- Service user ---
+    # Priority: RUN_AS_USER in /etc/default/dabcast > SUDO_USER > first user with UID >= 1000
     RUN_AS_USER=""
     if [ -f /etc/default/dabcast ]; then
       # shellcheck disable=SC1091
@@ -31,35 +31,35 @@ case "$1" in
     fi
 
     if [ -z "$RUN_AS_USER" ]; then
-      # Auto-détection : utilisateur qui a lancé sudo dpkg -i
+      # Auto-detection: the user who ran sudo dpkg -i
       if [ -n "$SUDO_USER" ] && id -u "$SUDO_USER" >/dev/null 2>&1; then
         RUN_AS_USER="$SUDO_USER"
-        log "[1/5] Utilisateur auto-detecte via SUDO_USER : $RUN_AS_USER"
+        log "[1/5] User detected from SUDO_USER: $RUN_AS_USER"
       else
-        # Dernier recours : premier compte non-système (UID >= 1000)
+        # Last resort: first non-system account (UID >= 1000)
         RUN_AS_USER=$(getent passwd | awk -F: '$3 >= 1000 && $3 < 65534 {print $1; exit}')
-        log "[1/5] Utilisateur auto-detecte (premier UID>=1000) : $RUN_AS_USER"
+        log "[1/5] User detected (first UID >= 1000): $RUN_AS_USER"
       fi
     else
-      log "[1/5] Utilisateur configure dans /etc/default/dabcast : $RUN_AS_USER"
+      log "[1/5] User set in /etc/default/dabcast: $RUN_AS_USER"
     fi
 
     if [ -z "$RUN_AS_USER" ] || ! id -u "$RUN_AS_USER" >/dev/null 2>&1; then
-      log "  ERREUR : impossible de determiner l'utilisateur du service."
-      log "  Definissez RUN_AS_USER dans /etc/default/dabcast et reinstallez."
+      log "  ERROR: cannot determine the service user."
+      log "  Set RUN_AS_USER in /etc/default/dabcast and install again."
       exit 1
     fi
     RUN_AS_GROUP=$(id -gn "$RUN_AS_USER")
-    log "  -> Utilisateur : $(id "$RUN_AS_USER")"
-    log "  -> Groupe principal : $RUN_AS_GROUP"
+    log "  -> User: $(id "$RUN_AS_USER")"
+    log "  -> Primary group: $RUN_AS_GROUP"
 
-    # Patcher le service systemd avec le bon utilisateur
+    # Service unit patched with that user
     sed -i "s/^User=.*/User=$RUN_AS_USER/" /lib/systemd/system/dabcast.service
     sed -i "s/^Group=.*/Group=$RUN_AS_GROUP/" /lib/systemd/system/dabcast.service
-    log "  -> Service patche : User=$RUN_AS_USER Group=$RUN_AS_GROUP"
+    log "  -> Service unit: User=$RUN_AS_USER Group=$RUN_AS_GROUP"
 
-    # --- Repertoires de donnees ---
-    log "[2/5] Creation des repertoires de donnees..."
+    # --- Data directories ---
+    log "[2/5] Creating the data directories..."
     for dir in /var/lib/dabcast/presets \
                 /var/lib/dabcast/logs \
                 /var/lib/dabcast/runtime \
@@ -69,7 +69,7 @@ case "$1" in
     done
 
     # --- Permissions ---
-    log "[3/5] Application des permissions..."
+    log "[3/5] Setting permissions..."
     chown -R "$RUN_AS_USER:$RUN_AS_GROUP" /var/lib/dabcast
     chmod 750 /var/lib/dabcast
     chmod 755 /opt/dabcast/bin/dabcast
@@ -78,36 +78,36 @@ case "$1" in
     log "  -> /opt/dabcast/bin/dabcast : $(stat -c '%U:%G %a' /opt/dabcast/bin/dabcast)"
     log "  -> /etc/default/dabcast : $(stat -c '%U:%G %a' /etc/default/dabcast)"
 
-    # --- Verification binaire ---
-    log "[4/5] Verification du binaire..."
+    # --- Binary check ---
+    log "[4/5] Checking the binary..."
     BINFILE=/opt/dabcast/bin/dabcast
     if [ -f "$BINFILE" ]; then
-      log "  -> Taille  : $(du -sh "$BINFILE" | cut -f1)"
-      log "  -> Type    : $(file "$BINFILE" | cut -d: -f2-)"
+      log "  -> Size: $(du -sh "$BINFILE" | cut -f1)"
+      log "  -> Type:$(file "$BINFILE" | cut -d: -f2-)"
     else
-      log "  ERREUR : binaire absent : $BINFILE"
+      log "  ERROR: binary missing: $BINFILE"
     fi
 
     # --- Systemd ---
-    log "[5/5] Configuration systemd..."
-    log "  -> Fichier service : $(ls -lh /lib/systemd/system/dabcast.service 2>/dev/null || echo ABSENT)"
-    log "  -> /etc/default/dabcast : $(ls -lh /etc/default/dabcast 2>/dev/null || echo ABSENT)"
+    log "[5/5] systemd service..."
+    log "  -> Unit file: $(ls -lh /lib/systemd/system/dabcast.service 2>/dev/null || echo ABSENT)"
+    log "  -> /etc/default/dabcast: $(ls -lh /etc/default/dabcast 2>/dev/null || echo ABSENT)"
     systemctl daemon-reload
     systemctl enable dabcast.service
-    log "  -> Service active"
+    log "  -> Service enabled"
 
     # systemd is running when /run/systemd/system exists (standard test). 'is-system-running' is not
     # used any more: it fails on a "degraded" system (any other failed unit), and the service was
     # then left stopped after an install or a one-click update.
     if [ -d /run/systemd/system ]; then
-      log "  -> Demarrage du service..."
-      systemctl start dabcast.service || log "  AVERTISSEMENT : demarrage echoue (voir : journalctl -u dabcast -n 30)"
+      log "  -> Starting the service..."
+      systemctl start dabcast.service || log "  WARNING: start failed (see: journalctl -u dabcast -n 30)"
     else
-      log "  -> systemd non disponible en mode live, demarrage ignore"
+      log "  -> systemd not running (container / live system): service not started"
     fi
 
-    # --- Script de mise a jour privilegiee ---
-    log "[+] Installation du helper de mise a jour..."
+    # --- Privileged update helper ---
+    log "[+] Installing the update helper..."
     cat > /opt/dabcast/bin/dabcast-install-update << 'UPDATER'
 #!/bin/bash
 # dabcast-install-update X.Y.Z — run as root by the dabcast service (sudo rule below) for the
@@ -159,30 +159,30 @@ echo "INSTALLING"
 dpkg -i "$PKG"
 UPDATER
     chmod 755 /opt/dabcast/bin/dabcast-install-update
-    log "  -> /opt/dabcast/bin/dabcast-install-update installe"
+    log "  -> /opt/dabcast/bin/dabcast-install-update installed"
 
-    # Regle sudoers : autoriser l'utilisateur du service a lancer uniquement ce script
+    # sudoers rule: the service user may run this helper only
     SUDOERS_FILE=/etc/sudoers.d/dabcast-update
     echo "$RUN_AS_USER ALL=(root) NOPASSWD: /opt/dabcast/bin/dabcast-install-update" > "$SUDOERS_FILE"
     chmod 440 "$SUDOERS_FILE"
     if visudo -c -f "$SUDOERS_FILE" >/dev/null 2>&1; then
-      log "  -> Regle sudoers installee pour $RUN_AS_USER"
+      log "  -> sudoers rule installed for $RUN_AS_USER"
     else
       rm -f "$SUDOERS_FILE"
-      log "  AVERTISSEMENT : regle sudoers invalide, mise a jour automatique non disponible"
+      log "  WARNING: invalid sudoers rule, one-click update not available"
     fi
 
     log ""
-    log "=== Installation terminee ==="
-    log "Chemins installs :"
-    log "  Binaire      : /opt/dabcast/bin/dabcast"
-    log "  Interface web: /opt/dabcast/web/"
-    log "  Donnees      : /var/lib/dabcast/ (proprietaire : $RUN_AS_USER)"
+    log "=== Installation complete ==="
+    log "Installed paths:"
+    log "  Binary       : /opt/dabcast/bin/dabcast"
+    log "  Web UI       : /opt/dabcast/web/"
+    log "  Data         : /var/lib/dabcast/ (owner: $RUN_AS_USER)"
     log "  Service      : /lib/systemd/system/dabcast.service"
-    log "  Config env   : /etc/default/dabcast"
-    log "  Ce log       : $LOGFILE"
+    log "  Environment  : /etc/default/dabcast"
+    log "  This log     : $LOGFILE"
     log ""
-    log "En cas de probleme :"
+    log "If something goes wrong:"
     log "  journalctl -u dabcast -n 50 --no-pager"
     log "  systemctl status dabcast"
     log "  sudo -u $RUN_AS_USER env DABCAST_DATA_DIR=/var/lib/dabcast /opt/dabcast/bin/dabcast"

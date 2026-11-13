@@ -4,7 +4,7 @@ Architecture: amd64
 Maintainer: DABodr <contact@dabordr.fr>
 Section: net
 Priority: optional
-Homepage: https://github.com/DABodr/DABcast
+Homepage: https://github.com/DABodr/DABcast-diffusion-software
 Description: DABcast DAB+ Web UI
  Web interface for DAB+ multiplexing via ODR-mmbTools.
  Provides a browser-based control panel to manage DAB+ ensembles,

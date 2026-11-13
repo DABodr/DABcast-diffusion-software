@@ -38,33 +38,33 @@ export function validateService(service, allowedBitrates) {
 
   const ps8 = String(service.identity?.ps8 || '');
   const ps16 = String(service.identity?.ps16 || '');
-  if (ps8.length > 8) errors.push('PS8 doit contenir au maximum 8 caractères.');
-  if (ps16.length > 16) errors.push('PS16 doit contenir au maximum 16 caractères.');
+  if (ps8.length > 8) errors.push('PS8 must be at most 8 characters.');
+  if (ps16.length > 16) errors.push('PS16 must be at most 16 characters.');
   if (ps8 && ps16 && shortLabelMismatch(ps8, ps16)) {
-    errors.push('PS16 doit contenir tous les caractères de PS8.');
+    errors.push('PS16 must contain all the characters of PS8, in the same order.');
   }
 
   if (!allowedBitrates.includes(Number(service.dab?.bitrateKbps))) {
-    errors.push('Bitrate non autorisé.');
+    errors.push('Bitrate not allowed.');
   }
 
   // HE-AAC v2 (PS) requires stereo
   const codec = String(service.audio?.codec || '');
   const channels = Number(service.audio?.channels);
   if (codec === 'HE-AAC v2 (PS)' && channels !== 2) {
-    errors.push('HE-AAC v2 (PS) nécessite le mode stéréo (2 canaux).');
+    errors.push('HE-AAC v2 (PS) requires stereo (2 channels).');
   }
 
   const port = Number(service.network?.ediOutputTcp?.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    errors.push('Port EDI invalide.');
+    errors.push('Invalid input port (1-65535).');
   }
 
   // Warning: VLC mode with HTTP/HTTPS streams (GStreamer recommended)
   const mode = String(service.input?.mode || '').toUpperCase();
   const uri = String(service.input?.uri || '');
   if (mode === 'VLC' && /^https?:\/\//i.test(uri)) {
-    warnings.push('Mode VLC avec flux HTTP/HTTPS : GStreamer est recommandé pour plus de stabilité.');
+    warnings.push('VLC input with an HTTP/HTTPS stream: GStreamer is recommended for stability.');
   }
 
   return { errors, warnings, normalized };

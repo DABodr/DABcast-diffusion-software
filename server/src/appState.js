@@ -1116,7 +1116,7 @@ export class AppState {
       const res = await fetch(url, { signal: ctrl.signal });
       if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
       const contentType = res.headers.get('content-type') || 'image/jpeg';
-      if (contentType.includes('svg')) return { ok: false, error: 'SVG non supporté par odr-padenc (JPEG/PNG uniquement)' };
+      if (contentType.includes('svg')) return { ok: false, error: 'SVG is not supported by odr-padenc (JPEG / PNG only)' };
       const arr = await res.arrayBuffer();
       const bytes = arr.byteLength;
       if (bytes > 500 * 1024) return { ok: false, error: `Image too large: ${Math.round(bytes / 1024)} KB (max 500 KB)` };
@@ -1715,7 +1715,7 @@ export class AppState {
 
   async startMux() {
     if (this.muxRunning) {
-      throw new Error('Mux déjà en cours (ON AIR).');
+      throw new Error('The multiplex is already running (ON AIR).');
     }
     this.muxStatus = 'off';
     this.lastError = null;
