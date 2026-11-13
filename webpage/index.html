@@ -74,7 +74,7 @@
           <div class="feature-card">
             <div class="feature-icon">📡</div>
             <h3>Full ODR-mmbTools integration</h3>
-            <p>Manages odr-audioenc, odr-padenc, odr-dabmux and odr-dabmod in a coordinated process chain. Supports EASYDAB, EDI, HackRF and USRP output modes.</p>
+            <p>Manages odr-audioenc, odr-padenc, odr-dabmux and odr-dabmod in a coordinated process chain. Feeds several transmitters at once: EasyDAB V2 (ZMQ), commercial modulators (EDI/UDP, multicast), converters and remote sites (EDI/TCP), raw ETI — with their connection state.</p>
           </div>
 
           <div class="feature-card">
@@ -86,7 +86,7 @@
           <div class="feature-card">
             <div class="feature-icon">🔔</div>
             <h3>Telegram bot notifications</h3>
-            <p>Forwards logs and critical broadcast alerts to your Telegram bot. Choose the minimum log level, enable silent messages and verify the connection with a built-in test.</p>
+            <p>Forwards logs and critical broadcast alerts to your Telegram bot — encoder crash, failover, an SDR that stops transmitting, a transmitter that disconnects — and, if you wish, a ✅ RESOLVED message when it is back on air. Minimum level, silent messages and a built-in test.</p>
           </div>
 
           <div class="feature-card">
@@ -97,8 +97,8 @@
 
           <div class="feature-card">
             <div class="feature-icon">⚡</div>
-            <h3>Lightweight &amp; Raspberry Pi ready</h3>
-            <p>Runs on amd64 servers and Raspberry Pi 4/5 (arm64). Ships as a self-contained .deb package — no Node.js installation required on the target system.</p>
+            <h3>Lightweight, Raspberry Pi ready, one-click updates</h3>
+            <p>Runs on amd64 servers and Raspberry Pi 4/5 (arm64) as a self-contained .deb package — no Node.js to install. New releases are found automatically and installed with a single click: the service restarts and the page reloads on its own.</p>
           </div>
 
           <div class="feature-card">
@@ -120,9 +120,9 @@
           </div>
 
           <div class="feature-card">
-            <div class="feature-icon">🔁</div>
-            <h3>One-click over-the-air updates</h3>
-            <p>DABcast checks for new releases automatically. When an update is available, install it with a single click — the service restarts and the page reloads on its own.</p>
+            <div class="feature-icon">📻</div>
+            <h3>SDR output — HackRF, LimeSDR… <span class="new-badge">New</span></h3>
+            <p>Transmit from the server itself: odr-dabmod drives the SDR through SoapySDR, alongside the network outputs. If the device is unplugged, DABcast notices it, keeps the rest of the multiplex on air and restarts the SDR as soon as it is back.</p>
           </div>
 
           <div class="feature-card">
