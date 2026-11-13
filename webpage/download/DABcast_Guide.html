@@ -384,7 +384,7 @@
   </tr>
   <tr>
     <td><strong>Telegram notifications</strong></td>
-    <td>Forwards logs and critical broadcast alerts to a Telegram bot, with configurable severity, silent delivery and a built-in connection test.</td>
+    <td>Forwards logs and critical broadcast alerts to a Telegram bot, with configurable severity, silent delivery and a built-in connection test — and, optionally, a ✅ RESOLVED message when a transmitter or a service is back on air.</td>
   </tr>
   <tr>
     <td><strong>Live metadata — DLS, DL+ &amp; SLS</strong></td>
@@ -420,18 +420,19 @@
   </tr>
   <tr>
     <td><strong>Transmitter outputs</strong></td>
-    <td>One or several transmitters at once, each added as an output: EasyDAB V2 (ZMQ), commercial modulators (EDI/UDP), converters and remote sites (EDI/TCP), raw ETI, and a HackRF plugged into the server — with their connection state.</td>
+    <td>One or several transmitters at once, each added as an output: EasyDAB V2 (ZMQ), commercial modulators (EDI/UDP), converters and remote sites (EDI/TCP), raw ETI, and an SDR plugged into the server (HackRF, LimeSDR, BladeRF, PlutoSDR… through SoapySDR) — with their connection state, an alert when a transmitter goes away and an automatic restart of the local SDR.</td>
   </tr>
 </table>
 
 <h2>ODR Process Chain</h2>
 <p>DABcast manages the following ODR-mmbTools process chain:</p>
-<pre>odr-audioenc × N  ──ZMQ──► odr-dabmux ──EDI──► [odr-dabmod ──► hackrf_transfer]
-odr-padenc × N   ──FIFO──► odr-audioenc</pre>
+<pre>odr-audioenc × N  ──ZMQ──► odr-dabmux ──EDI──► [odr-dabmod ──SoapySDR──► SDR]
+odr-padenc × N   ──FIFO──► odr-audioenc          └──► EasyDAB, modulators, converters…</pre>
 
 <p>Each radio service (programme) runs its own <code>odr-audioenc</code> and <code>odr-padenc</code>
-instance. All audio streams are fed into a single <code>odr-dabmux</code> instance. With a HackRF
-(HACKRF mode or HackRF output), <code>odr-dabmod</code> generates the RF signal.</p>
+instance. All audio streams are fed into a single <code>odr-dabmux</code> instance. With an SDR output,
+<code>odr-dabmod</code> generates the RF signal and drives the SDR itself through SoapySDR (a HackRF output
+saved by an earlier version still uses <code>hackrf_transfer</code> until it is saved again).</p>
 </div>
 
 <!-- Page 2: System Requirements & Installation -->
@@ -502,11 +503,10 @@ or the web port, or to sign out.</p>
 <h2>Multiplex Settings</h2>
 <p>Click <strong>Multiplex</strong> in the top bar to configure your multiplex:</p>
 <ul>
-  <li><strong>Ensemble name:</strong> the DAB+ ensemble label broadcast to receivers</li>
-  <li><strong>EID:</strong> Ensemble Identifier (hex, e.g. <code>0x1001</code>)</li>
-  <li><strong>Frequency:</strong> transmit frequency in MHz (for HACKRF/USRP mode)</li>
-  <li><strong>Transmitter outputs:</strong> one or several transmitters — see <em>Transmitter Outputs</em></li>
-  <li><strong>Gain:</strong> RF output gain (HACKRF mode)</li>
+  <li><strong>Short label (PS8) / Label (PS16):</strong> the DAB+ ensemble name broadcast to receivers; the counters and a ⚠ hint show at once when the Label does not contain the characters of the Short label</li>
+  <li><strong>Ensemble ID:</strong> 4 hex digits (e.g. <code>F401</code>); its first digit is the country code (with the ECC) — a ⚠ hint shows when it is 0 or differs from the first digit of the services' PI codes</li>
+  <li><strong>Transmitter outputs:</strong> one or several transmitters, including an SDR on this server (DAB block / frequency, TX gain) — see <em>Transmitter Outputs</em></li>
+  <li>ON AIR, a banner tells when a change needs a multiplex restart (applied on Save, after confirmation)</li>
 </ul>
 
 <h2>Adding a Service (Radio Programme)</h2>
@@ -530,8 +530,8 @@ or the web port, or to sign out.</p>
 <ol>
   <li>Start one <code>odr-audioenc</code> + <code>odr-padenc</code> per enabled service</li>
   <li>Start <code>odr-dabmux</code> with the generated <code>.mux</code> config</li>
-  <li>In HACKRF mode: wait 500ms, then start <code>odr-dabmod</code> and <code>hackrf_transfer</code></li>
-  <li>In EDI/HACKRF mode: expose a separate raw ETI monitoring stream for DABlin, even when PFT/FEC is enabled</li>
+  <li>With an SDR output: wait 500 ms, then start <code>odr-dabmod</code> (it drives the SDR through SoapySDR; plus <code>hackrf_transfer</code> for a HackRF output saved by a former version)</li>
+  <li>Always expose a separate raw ETI monitoring stream for the Player and DABlin, even when PFT/FEC is enabled</li>
   <li>Activate the watchdog and metadata update loop</li>
 </ol>
 
@@ -567,7 +567,7 @@ or the web port, or to sign out.</p>
 <div class="page" id="outputs">
 <h1>Transmitter Outputs</h1>
 
-<p>The <strong>Multiplex</strong> dialog lists the <strong>transmitter outputs</strong>: add one output per transmitter (EasyDAB V2, commercial modulator, converter, remote site, HackRF plugged into this server). They all carry the same multiplex, at the same time.</p>
+<p>The <strong>Multiplex</strong> dialog lists the <strong>transmitter outputs</strong>: add one output per transmitter (EasyDAB V2, commercial modulator, converter, remote site, SDR plugged into this server). They all carry the same multiplex, at the same time.</p>
 <p>Configurations made with a former version (TX mode EASYDAB, EDI or HackRF) are shown as the equivalent output when the dialog opens — same address, port and settings — and only saved that way when you press Save: an updated server keeps broadcasting exactly as before. A raw ETI copy (port 9901) is always kept for the Player and Dablin.</p>
 
 <h2>Outputs</h2>
@@ -579,12 +579,34 @@ or the web port, or to sign out.</p>
   <tr><td><strong>EDI/UDP multicast</strong></td><td>DABcast sends to a group</td><td>Several transmitters join the multicast group (e.g. 239.20.10.1) on the same network; set the TTL for routed networks</td></tr>
   <tr><td><strong>EDI/TCP</strong></td><td>The transmitter, a converter or a remote odr-dabmod connects to DABcast</td><td>EDI source = this server, port of the output (13000 by default)</td></tr>
   <tr><td><strong>ETI/TCP</strong></td><td>The receiver connects to DABcast</td><td>Raw ETI over TCP, for equipment that reads ETI</td></tr>
-  <tr><td><strong>HackRF — local SDR</strong></td><td>odr-dabmod on this server (internal EDI port)</td><td>A HackRF plugged into the DABcast server: same chain and settings as the former HackRF mode (DAB block, TX gain, gain mode, digital gain, sample rate). Only one HackRF output; its state shows whether odr-dabmod and hackrf_transfer are running.</td></tr>
+  <tr><td><strong>SDR — HackRF, LimeSDR, BladeRF, PlutoSDR…</strong></td><td>odr-dabmod on this server (internal EDI port)</td><td>An SDR plugged into the DABcast server, driven by odr-dabmod through SoapySDR (see <em>SDR output</em> below). Only one SDR output.</td></tr>
 </table>
 <p>Two outputs cannot listen on the same port, and the ports already used by DABcast (service inputs, ETI copy, dabmux control ports, web interface) are refused when you save. ON AIR, an invalid change is refused <em>before</em> the multiplex is stopped.</p>
 
-<h2>Connection state</h2>
+<h2>SDR output</h2>
+<p>odr-dabmod modulates the multiplex and drives the SDR itself through <strong>SoapySDR</strong> (one process, no <code>hackrf_transfer</code>). Choose the <strong>Device</strong>: its starting values are filled in and can be changed.</p>
+<table>
+  <tr><th>Device</th><th>TX gain</th><th>Master clock</th><th>Notes</th></tr>
+  <tr><td><strong>HackRF</strong> (tested)</td><td>61 = VGA 47 + 14 dB amplifier (0–61)</td><td>0</td><td>Bandwidth 1.75 MHz; same level as the former HackRF output with TX gain 47</td></tr>
+  <tr><td>LimeSDR (not tested)</td><td>40</td><td>32768000</td><td>Module <code>soapysdr0.8-module-lms7</code></td></tr>
+  <tr><td>BladeRF (not tested)</td><td>20</td><td>0</td><td>Module <code>soapysdr0.8-module-bladerf</code></td></tr>
+  <tr><td>PlutoSDR (not tested)</td><td>40</td><td>0</td><td>Module SoapyPlutoSDR. A stock PlutoSDR does not go below 325 MHz: Band III (174–240 MHz) needs the well-known AD9364 modification</td></tr>
+  <tr><td>Other (SoapySDR args)</td><td>20</td><td>0</td><td>Any SoapySDR device, e.g. <code>driver=uhd,type=b200</code></td></tr>
+</table>
+<ul>
+  <li><strong>Extra args</strong>: added to the device string, e.g. <code>serial=…</code> to pick one device among several. <strong>TX antenna</strong> and <strong>Bandwidth</strong> (0 = automatic) are passed as they are.</li>
+  <li><strong>Check device</strong> lists the matching devices with <code>SoapySDRUtil --find</code> (never transmits). The device needs its SoapySDR module: <code>SoapySDRUtil --info</code> lists the installed ones.</li>
+  <li>Devices other than the HackRF have not been tested on air yet: start with a low TX gain and a dummy load.</li>
+  <li>A HackRF output saved by an earlier version (<code>hackrf_transfer</code> chain) is shown as the SDR HackRF (TX gain + 14) and saved that way at the next Save; ON AIR the restart banner shows, the new chain is applied by the restart.</li>
+</ul>
+
+<h2>Connection state and supervision</h2>
 <p>While the multiplex is ON AIR, each output of the Multiplex dialog shows who is connected, refreshed every 5 seconds: <strong>"1 connected: 192.168.1.85"</strong> (green), <strong>"no transmitter connected"</strong> (orange), or <strong>"sending to …"</strong> for EDI/UDP (UDP has no connection: DABcast cannot tell whether the transmitter receives). A connected transmitter is not a proof that it is on air (its amplifier may be off), but a disconnection is seen at once.</p>
+<ul>
+  <li><strong>SDR</strong>: every 5 s the watchdog reads the number of frames sent by odr-dabmod (its remote control, read-only) — an unplugged SDR leaves odr-dabmod running without any error. No frame for 15 s, or odr-dabmod stopped: one ERROR is logged, the output turns <strong>red</strong> (<em>Device seems unplugged — NOT transmitting</em>) and odr-dabmod alone is restarted every 30 s until it transmits again; the encoders, odr-dabmux and the other outputs stay on air. While another output is ON, the multiplex stays <strong>ON AIR</strong>; with the SDR as only output it shows <strong>FAIL</strong>.</li>
+  <li><strong>ZMQ / EDI/TCP / ETI/TCP</strong>: when a transmitter that was connected has been gone for 15 s, an ERROR is logged (<em>EasyDAB V2 disconnected…</em>), and its return (<em>connected again</em>) as INFO. No alert for an output nobody connected to since the Start, nor around a Stop / Start.</li>
+  <li>These lines are in <strong>Logs › Watchdog</strong> (and <strong>odr-dabmod / SDR</strong>); the ERRORs are sent by Telegram, the returns too when <em>Transmitter output back</em> is ticked.</li>
+</ul>
 
 <h2>PFT / FEC and TIST offset</h2>
 <ul>
@@ -624,6 +646,7 @@ output=soapysdr
 
 [soapyoutput]
 device=driver=hackrf
+master_clock_rate=0   ; HackRF: no settable clock
 channel=5A
 txgain=40</pre>
 <p>Start from the complete <code>example.ini</code> of ODR-DabMod and validate the RF settings (gain, filter, channel) on the real hardware.</p>
@@ -757,6 +780,26 @@ txgain=40</pre>
   <li><strong>Account:</strong> username and password (at least 10 characters, common passwords refused). Changing them signs out the other sessions.</li>
   <li><strong>Web server:</strong> the port of the web interface (9090 by default). <strong>Save &amp; restart</strong> checks the port first (1024–65535, not used by the broadcast chain or by another program), asks for confirmation, then restarts DABcast; the page reopens at the new address. <strong>ON AIR, the restart cuts the multiplex for about 10 s</strong> (it comes back on air if <em>Start multiplex at startup</em> is ticked). A <code>PORT=</code> line in <code>/etc/default/dabcast</code> takes precedence and locks the field.</li>
 </ul>
+
+<h1>Telegram Notifications</h1>
+<p>The <strong>Telegram</strong> button forwards log lines to a Telegram bot (your phone, a group):</p>
+<ol>
+  <li>Create a bot with <strong>@BotFather</strong> and copy its <strong>token</strong>; write to the bot (or add it to a group) and get the <strong>chat ID</strong>: open <code>https://api.telegram.org/bot&lt;token&gt;/getUpdates</code> and read <code>chat.id</code> (<code>-100…</code> for a group).</li>
+  <li>Tick <strong>Enable Telegram notifications</strong>, enter the token and the chat ID, choose the <strong>minimum level</strong> (<em>Errors only</em> is recommended), then <strong>Send test</strong> and <strong>Save</strong>.</li>
+</ol>
+<ul>
+  <li>Errors sent include encoder crashes, failover, an SDR that stops transmitting and a transmitter that disconnects from its output — once per incident.</li>
+  <li><strong>When the problem is over</strong> (off by default): <em>Transmitter output back</em> (SDR transmitting again, EasyDAB / modulator reconnected) and <em>Service back on air</em> (encoder running again for 30 s, back on its main stream) send a <strong>✅ RESOLVED</strong> message, whatever the minimum level.</li>
+  <li><em>Send without notification sound</em> delivers silently. The token is stored in <code>/var/lib/dabcast/.telegram.json</code> (readable by DABcast only) and is never shown again nor exported; a Telegram failure never affects the logs or the broadcast.</li>
+</ul>
+
+<h1>Logs</h1>
+<p>The <strong>Logs</strong> button shows the DABcast log, refreshed every 3 seconds. It opens on the latest lines and follows the new ones; scroll up to read, it stays there (back at the bottom: it follows again).</p>
+<ul>
+  <li><strong>Tabs:</strong> All, odr-dabmux, odr-dabmod / SDR, odr-audioenc / odr-padenc, Metadata, Watchdog (crashes, failover, transmitter outputs), Running process (spawn / stop / exit), Errors.</li>
+  <li><strong>Raw output (DEBUG)</strong> adds the console output of the ODR tools (e.g. the SoapySDR settings of odr-dabmod); the <strong>service</strong> menu keeps one service; <strong>Search</strong> filters the lines as you type (Esc clears it). ERROR lines are red, WARN yellow.</li>
+  <li>The window holds the last 1 MB of the file; <strong>Download (.log)</strong> gives the whole file. <strong>Clear Log</strong> empties it (after confirmation).</li>
+</ul>
 </div>
 
 <!-- Page 5: Troubleshooting & ODR hints -->
@@ -777,6 +820,14 @@ txgain=40</pre>
   <li>For HTTPS streams, use <strong>GStreamer</strong> input mode (not VLC)</li>
   <li>Ensure enough bandwidth — streams above 320 kbps may saturate slow connections</li>
   <li>Check DABcast logs with the <strong>Logs</strong> button</li>
+</ul>
+
+<h2>The SDR / HackRF does not transmit</h2>
+<ul>
+  <li><strong>Check device</strong> in its output: "No device found" = USB cable / port (<code>lsusb</code>) or missing SoapySDR module (<code>SoapySDRUtil --info</code>)</li>
+  <li>Red output <em>Device seems unplugged</em>: DABcast restarts odr-dabmod every 30 s; the transmission comes back by itself once the device is plugged in again</li>
+  <li>A HackRF that disconnects when it starts transmitting usually lacks power: plug it directly into the computer or into a powered hub, with a short cable</li>
+  <li>Look at <strong>Logs › odr-dabmod / SDR</strong> with <em>Raw output</em> ticked: the <em>SoapySDR: Actual …</em> lines show the frequency, rate and gain really applied</li>
 </ul>
 
 <h2>No audio in the DAB+ signal</h2>
