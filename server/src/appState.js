@@ -1528,7 +1528,9 @@ export class AppState {
     const freqHz = DAB_FREQ_TABLE[dabBlock];
     if (!freqHz) throw new Error(`Unknown DAB block: ${dabBlock}`);
 
-    const rate = hk.rate || 4096000;
+    // numbers only: these values are written into dabmod.ini (the legacy HackRF settings are not normalized)
+    const num = (v, d) => (Number.isFinite(Number(v)) && v !== '' && v !== null ? Number(v) : d);
+    const rate = num(hk.rate, 0) || 4096000;
     const soapy = this._localSoapy();   // NETWORK 'sdr' output; HACKRF mode / 'hackrf' output = hackrf_transfer
     const fifoPath = path.resolve(this.runtimeDir, 'ofdm.fifo');
     const filtertapsPath = path.resolve(this.runtimeDir, 'filtertaps.txt');
@@ -1550,9 +1552,9 @@ export class AppState {
     const ediPort = localHk.ediPort;
     const dabmodConfig = buildDabModConfig({
       source: `tcp://localhost:${ediPort}`,
-      maxFramesQueued: hk.maxFramesQueued || 580,
-      gainmode: hk.gainmode ?? 2,
-      digitalGain: hk.digitalGain ?? 1,
+      maxFramesQueued: num(hk.maxFramesQueued, 0) || 580,
+      gainmode: num(hk.gainmode, 2),
+      digitalGain: num(hk.digitalGain, 1),
       rate,
       filtertapsPath,
       fifoPath,
