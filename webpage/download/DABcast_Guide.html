@@ -456,30 +456,46 @@ saved by an earlier version still uses <code>hackrf_transfer</code> until it is 
 
 <div class="box box-warn">
   <div class="box-label">Important</div>
-  The ODR-mmbTools must be installed <strong>before</strong> DABcast.
-  Use the provided <code>install-tools.sh</code> script to install all required dependencies automatically.
+  The ODR-mmbTools must be installed <strong>before</strong> DABcast: the <code>install-tools.sh</code>
+  script installs them, then DABcast, in one go (see below).
 </div>
 
 <h1>Installation</h1>
 
-<h2>Step 1 — Install ODR-mmbTools and dependencies</h2>
-<p>Run the provided script as root (or with sudo). It will install all required tools:</p>
-<pre>sudo bash install-tools.sh</pre>
-<p>The script installs: <code>odr-audioenc</code>, <code>odr-padenc</code>, <code>odr-dabmux</code>,
-<code>odr-dabmod</code> (optional), <code>dablin</code> and <code>ffmpeg</code> (web player), <code>imagemagick</code> (slides), and required libraries.</p>
+<h2>Quick install — the tools and DABcast in one command</h2>
+<p><strong>The script installs DABcast itself as well</strong>: there is no package to download
+separately. It ends with the latest DABcast release for the machine (amd64 or arm64), started as a
+service, ready at <code>http://&lt;server-ip&gt;:9090</code>. Before that, it installs everything DABcast can use:
+the ODR-mmbTools (<code>odr-audioenc</code>, <code>odr-padenc</code>, <code>odr-dabmux</code>,
+<code>odr-dabmod</code>), <code>dablin</code> and <code>ffmpeg</code> (web Player), ImageMagick (slides),
+the build tools, <code>sudo</code> (one-click updates) and a time synchronisation if none is running.
+Only three questions are asked, each with a default (<em>Yes</em>, just press Enter):</p>
+<ol>
+  <li><strong>SDR support</strong>: SoapySDR with every driver (HackRF, LimeSDR, BladeRF, USRP, RTL-SDR…);</li>
+  <li><strong>Update the ODR tools</strong> — only when they are already installed and a newer version exists; the installed and available versions are shown;</li>
+  <li><strong>Install (or update) DABcast</strong>: the latest release for the machine (amd64 or arm64), started as a service — not asked when it is already up to date.</li>
+</ol>
+<pre>wget https://dabodr.github.io/DABcast-diffusion-software/download/install-tools.sh
+sudo bash install-tools.sh</pre>
+<ul>
+  <li>Debian 13: the <code>non-free</code> component is enabled automatically (<code>odr-audioenc</code> uses fdk-aac).</li>
+  <li>The user who runs the script is added to the <code>plugdev</code> (SDR) and <code>audio</code> groups; DABcast runs as this user.</li>
+  <li>If ODR tools compiled from sources are found, the script asks whether to keep or replace them.</li>
+  <li><code>--yes</code> answers every question with its default (unattended installation).</li>
+  <li>Running the script again is safe: it updates the tools and installs a newer DABcast if there is one.</li>
+</ul>
 
-<h2>Step 2 — Install the DABcast package</h2>
+<h2>Or by hand</h2>
+<p>To install the DABcast package yourself: the tools only with <code>--tools-only</code> (DABcast is then not installed), then the package of your machine:</p>
+<pre>sudo bash install-tools.sh --tools-only
+# PC / server (amd64)
+sudo dpkg -i dabcast_1.10.2_amd64.deb
+# Raspberry Pi (arm64)
+sudo dpkg -i dabcast_1.10.2_arm64.deb</pre>
+<p>The packages are on the <a href="https://github.com/DABodr/DABcast-diffusion-software/releases/latest">latest release</a> page.
+The service is enabled and started by the package (<code>sudo systemctl status dabcast</code> to check).</p>
 
-<h3>On x86-64 / amd64 (PC, server)</h3>
-<pre>sudo dpkg -i dabcast_1.10.2_amd64.deb</pre>
-
-<h3>On Raspberry Pi (arm64)</h3>
-<pre>sudo dpkg -i dabcast_1.10.2_arm64.deb</pre>
-
-<h2>Step 3 — Enable and start the service</h2>
-<pre>sudo systemctl enable --now dabcast</pre>
-
-<h2>Step 4 — Access the web interface</h2>
+<h2>Access the web interface</h2>
 <p>Open a browser on any device on the same local network:</p>
 <pre>http://&lt;server-ip&gt;:9090</pre>
 

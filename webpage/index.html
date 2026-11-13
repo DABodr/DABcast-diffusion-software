@@ -151,7 +151,7 @@
     <section class="download" id="download">
       <div class="section-inner">
         <h2>Download DABcast v1.10.2</h2>
-        <p class="download-sub">Choose the package for your platform. Requires Debian 12 / 13, Raspberry Pi OS 64-bit or Ubuntu 26.04+, and the ODR-mmbTools suite (installed by install-tools.sh).</p>
+        <p class="download-sub">The simplest: <strong>install-tools.sh installs everything, DABcast included</strong> (Quick install below). Or choose the package for your platform. Requires Debian 12 / 13, Raspberry Pi OS 64-bit or Ubuntu 26.04+, and the ODR-mmbTools suite.</p>
         <div class="download-grid">
 
           <div class="download-card">
@@ -193,7 +193,7 @@
             <div class="dl-icon">⚙️</div>
             <div class="dl-info">
               <div class="dl-title">install-tools.sh</div>
-              <div class="dl-desc">ODR-mmbTools installer script</div>
+              <div class="dl-desc">Installs the ODR-mmbTools, the SDR drivers and DABcast</div>
             </div>
             <a href="download/install-tools.sh" class="btn btn-ghost">
               Download
@@ -202,16 +202,22 @@
         </div>
 
         <div class="install-block">
-          <div class="install-label">Quick install</div>
-          <pre><code># 1. Install the ODR-mmbTools first (odr-audioenc, odr-padenc, odr-dabmux…)
-chmod +x install-tools.sh
-sudo ./install-tools.sh
+          <div class="install-label">Quick install — the tools and DABcast in one command</div>
+          <pre><code># Installs the ODR-mmbTools, the SDR drivers AND DABcast itself (latest release, amd64 or arm64),
+# then starts DABcast as a service. Debian 12 / 13, Raspberry Pi OS 64-bit, Ubuntu 26.04+
+wget https://dabodr.github.io/DABcast-diffusion-software/download/install-tools.sh
+sudo bash install-tools.sh
+# Open http://&lt;server-ip&gt;:9090 — first login admin / dabcast, a new password is asked at once</code></pre>
+        </div>
 
-# 2. Then install DABcast (arm64 package on a Raspberry Pi)
-sudo dpkg -i dabcast_1.10.2_amd64.deb
-sudo systemctl enable --now dabcast
-# Open http://&lt;server-ip&gt;:9090
-# Default login: admin / dabcast  — change the password on first login</code></pre>
+        <div class="install-block">
+          <div class="install-label">Or by hand — the tools, then the DABcast package yourself</div>
+          <pre><code># 1. The tools only, without DABcast (ODR-mmbTools, SDR drivers…)
+sudo bash install-tools.sh --tools-only
+
+# 2. The DABcast package — on a Raspberry Pi take the arm64 one (button above)
+wget https://github.com/DABodr/DABcast-diffusion-software/releases/download/v1.10.2/dabcast_1.10.2_amd64.deb
+sudo dpkg -i dabcast_1.10.2_amd64.deb</code></pre>
         </div>
 
       </div>
