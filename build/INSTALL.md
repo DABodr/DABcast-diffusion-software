@@ -102,9 +102,9 @@ file /opt/dabcast/bin/dabcast
 Si la machine est ARM, il faut recompiler pour la bonne cible dans `build.sh` :
 
 ```bash
-# node18-linux-x64   → amd64 (PC standard)
-# node18-linux-arm64 → Raspberry Pi 64 bits
-# node18-linux-armv7 → Raspberry Pi 32 bits
+# node24-linux-x64   → amd64 (PC standard)
+# node24-linux-arm64 → Raspberry Pi 64 bits
+# (32-bit Raspberry Pi: not supported, no ODR packages)
 ```
 
 ### Le service ne démarre pas automatiquement après installation
@@ -133,7 +133,7 @@ sudo dpkg -i dabcast_X.Y.Z_amd64.deb
 ```
 /opt/dabcast/
 ├── bin/
-│   └── dabcast          ← binaire auto-contenu (Node.js 18 embarqué, ~50-80 MB)
+│   └── dabcast          ← binaire auto-contenu (Node.js 24 embarqué, ~50-80 MB)
 ├── web/
 │   ├── index.html
 │   ├── app.js

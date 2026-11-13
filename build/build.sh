@@ -15,8 +15,9 @@ DEB_STAGE="$DIST_DIR/deb-stage"
 # Usage: ./build.sh [amd64|arm64]
 ARCH="${1:-amd64}"
 case "$ARCH" in
-  amd64) PKG_TARGET="node18-linux-x64" ;;
-  arm64) PKG_TARGET="node18-linux-arm64" ;;
+  # Node.js 24 LTS embedded (supported until April 2028; Node 18 reached end of life in April 2025)
+  amd64) PKG_TARGET="node24-linux-x64" ;;
+  arm64) PKG_TARGET="node24-linux-arm64" ;;
   *) echo "Architecture inconnue: $ARCH (valeurs valides: amd64, arm64)"; exit 1 ;;
 esac
 
@@ -42,7 +43,7 @@ npx esbuild "$SERVER_DIR/src/index.js" \
   --bundle \
   --platform=node \
   --format=cjs \
-  --target=node18 \
+  --target=node24 \
   --outfile="$DIST_DIR/server.cjs" \
   --external:bcrypt \
   --loader:.jwk=text \
@@ -50,9 +51,9 @@ npx esbuild "$SERVER_DIR/src/index.js" \
   --define:__APP_VERSION__='"'"$VERSION"'"'
 
 # ── 3. Package server binary with pkg ─────────────────────────────────────────
-echo "[3/5] Packaging binary with @yao-pkg/pkg (Node.js 18 embedded)..."
+echo "[3/5] Packaging binary with @yao-pkg/pkg (Node.js 24 embedded)..."
 echo "      (First run may download pkg targets — please wait)"
-npx @yao-pkg/pkg@5.16.1 "$DIST_DIR/server.cjs" \
+npx @yao-pkg/pkg@6.25.0 "$DIST_DIR/server.cjs" \
   --targets "$PKG_TARGET" \
   --no-bytecode --public \
   --output "$DIST_DIR/dabcast-bin"

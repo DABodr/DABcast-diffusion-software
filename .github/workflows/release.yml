@@ -19,10 +19,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Node.js 18
+      - name: Set up Node.js 24
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '24'
           cache: 'npm'
           cache-dependency-path: server/package-lock.json
 
@@ -80,7 +80,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.pkg-cache
-          key: pkg-node18-${{ runner.os }}
+          key: pkg-node24-${{ runner.os }}
 
       - name: Build amd64
         run: chmod +x build/build.sh && ./build/build.sh amd64
