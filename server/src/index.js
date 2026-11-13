@@ -1724,6 +1724,17 @@ app.post('/api/services/:id/logo/upload', async (req, res) => {
 });
 
 // Serve MOT/SLS demo assets for preview (logo, slideshow directory, etc.)
+// :svcId of the /api/mot routes names a folder of data/mot (PI code, or an older fifoName / PS8):
+// one path segment only — no "/" or "\\" (Express decodes %2F), no "." / "..", no control character —
+// so that it can never reach a file outside data/mot (security review).
+app.param('svcId', (req, res, next, value) => {
+  const v = String(value || '');
+  if (!v || v.length > 32 || /[/\\\u0000-\u001f]/.test(v) || /^\.+$/.test(v)) {
+    return res.status(400).json({ error: 'Invalid service id' });
+  }
+  next();
+});
+
 app.get('/api/mot/:svcId/logo', (req, res) => {
   try {
     const svcId = String(req.params.svcId || '').toUpperCase();
