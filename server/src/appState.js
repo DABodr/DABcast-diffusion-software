@@ -1855,6 +1855,8 @@ export class AppState {
           const hasDistinctBackup = svc.input.backupUri && svc.input.backupUri !== svc.input.uri;
           const okMain = await headOk(svc.input.uri);
           const okBackup = hasDistinctBackup ? await headOk(svc.input.backupUri) : false;
+          // Stop pressed during the HTTP checks above: the encoders were stopped on purpose, not crashed
+          if (!this.muxRunning) break;
 
           // --- CRASH DETECTION (transition-based) ---
           // Only count a NEW crash on alive→dead transition
