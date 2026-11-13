@@ -72,25 +72,35 @@ Modern web interface for managing DAB/DAB+ multiplexes with ODR-mmbTools.
 
 ## 🚀 Installation
 
-### Recommended: install script + .deb package
+### Recommended: one command
 
 ```bash
-# 1. ODR-mmbTools and the other tools (Debian 12 / 13, Raspberry Pi OS 64-bit, Ubuntu 26.04+)
+# Debian 12 / 13, Raspberry Pi OS 64-bit, Ubuntu 26.04+
 wget https://dabodr.github.io/DABcast-diffusion-software/download/install-tools.sh
 sudo bash install-tools.sh
-
-# 2. DABcast (arm64 package on a Raspberry Pi) — from the latest release
-sudo dpkg -i dabcast_X.Y.Z_amd64.deb
 # Open http://<server-ip>:9090 — first sign-in: admin / dabcast, a new password is required
 ```
 
-The script installs:
+The script installs everything DABcast can use, so that adding a desktop or an SDR later needs nothing more:
 - ✅ ODR-mmbTools (odr-dabmux, odr-audioenc, odr-padenc, odr-dabmod)
-  - **Debian 13+**: standard repository; offers to enable `non-free` (odr-audioenc uses fdk-aac)
+  - **Debian 13+**: standard repository, `non-free` enabled automatically (odr-audioenc uses fdk-aac)
   - **Debian 12**: bookworm-backports
   - **Ubuntu 26.04+**: universe / multiverse
-- ✅ ImageMagick (SLS conversion), Dablin and ffmpeg (web Player), monitoring tools
-- ❓ SDR support (optional, asked): SoapySDR tools, then one question per driver (HackRF, LimeSDR, BladeRF, all others)
+- ✅ ImageMagick (SLS conversion), Dablin and ffmpeg (web Player), Dablin window helpers
+- ❓ SDR support (asked, default yes): SoapySDR and every driver (HackRF, LimeSDR, BladeRF, USRP, RTL-SDR…); the user is added to `plugdev` / `audio`
+- ✅ `sudo` (one-click updates), a time synchronisation if none runs, the build tools
+- ❓ **DABcast** (asked, default yes, unless already up to date): the latest release for the machine (amd64 / arm64), started as a service
+
+ODR tools already installed: the installed / available versions are shown and the update is asked. ODR
+tools compiled from sources: keep or replace them (asked). `--yes` answers every question with its default.
+
+### By hand
+
+```bash
+sudo bash install-tools.sh --tools-only        # the tools only
+# then the package of your machine from https://github.com/DABodr/DABcast-diffusion-software/releases/latest
+sudo dpkg -i dabcast_X.Y.Z_amd64.deb            # dabcast_X.Y.Z_arm64.deb on a Raspberry Pi
+```
 
 Updates: the web interface offers new releases and installs them in one click.
 
