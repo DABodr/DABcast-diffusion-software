@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { parsePpm, composeSlide, convertToSlide, blackBandWidths, removeBlackBands } from '../src/slideImage.js';
+import { parsePpm, composeSlide, convertToSlide, blackBandWidths, removeBlackBands, imageCoder } from '../src/slideImage.js';
 
 // w x h PPM, colour of each pixel given by fn(x, y) → [r, g, b]
 const ppm = (w, h, fn) => {
@@ -108,6 +108,31 @@ describe('slideImage — removing black bands (ImageMagick)', { skip: !hasConver
     for (const x of [3, 316]) for (const v of px(x)) assert.ok(v > 235, `pixel ${x},120 should be white, got ${px(x)}`);
     assert.deepEqual(fs.readdirSync(slideDir), ['logo.jpg'], 'nothing else written in the slide dir');
     assert.equal(fs.readdirSync(dir).filter((f) => f.startsWith('.bands_')).length, 0, 'temp file removed');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe('slideImage — accepted input formats (security)', () => {
+  it('recognises JPEG / PNG / GIF / WebP from their first bytes, nothing else', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-coder-'));
+    const w = (name, bytes) => { const f = path.join(dir, name); fs.writeFileSync(f, Buffer.from(bytes)); return f; };
+    assert.equal(imageCoder(w('a.bin', [0xff, 0xd8, 0xff, 0xe0, 0, 0])), 'JPEG');
+    assert.equal(imageCoder(w('b.bin', [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0])), 'PNG');
+    assert.equal(imageCoder(w('c.bin', [...Buffer.from('GIF89a'), 0])), 'GIF');
+    assert.equal(imageCoder(w('d.bin', [...Buffer.from('RIFF'), 0, 0, 0, 0, ...Buffer.from('WEBP')])), 'WEBP');
+    // ImageMagick scripts / vector formats named like a picture: refused
+    assert.equal(imageCoder(w('evil.png', [...Buffer.from('push graphic-context\nimage over 0,0 0,0 "text:/etc/passwd"')])), null);
+    assert.equal(imageCoder(w('evil.jpg', [...Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>')])), null);
+    assert.equal(imageCoder(path.join(dir, 'missing')), null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  it('convertToSlide refuses a script named like a picture without running ImageMagick', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-coder-'));
+    const src = path.join(dir, 'cover.png');
+    fs.writeFileSync(src, 'push graphic-context\nviewbox 0 0 640 480\npop graphic-context\n');
+    let ran = false;
+    assert.throws(() => convertToSlide(src, path.join(dir, 'out.jpg'), { exec: () => { ran = true; return Buffer.alloc(0); } }), /not a JPEG/);
+    assert.equal(ran, false);
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });

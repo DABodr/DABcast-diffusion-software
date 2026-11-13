@@ -19,7 +19,7 @@ import { OutputMonitor } from './outputMonitor.js';
 import { OdrProcessManager } from './odr/processManager.js';
 import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
-import { convertToSlide as convertSlideImage, removeBlackBands } from './slideImage.js';
+import { convertToSlide as convertSlideImage, removeBlackBands, imageCoder } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
 import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy, sdrDeviceString } from './odr/outputs.js';
@@ -291,7 +291,9 @@ function writeSlideImage(slideDir, filename, buf) {
   try {
     fs.writeFileSync(raw, buf);
     if (convertToSlideFile(raw, conv)) fs.renameSync(conv, path.join(slideDir, filename));
-    else fs.renameSync(raw, path.join(slideDir, filename));
+    // as received only if it really is a JPEG / PNG / GIF / WebP (odr-padenc reads the slide dir too)
+    else if (imageCoder(raw)) fs.renameSync(raw, path.join(slideDir, filename));
+    else throw new Error('not a JPEG / PNG / GIF / WebP picture');
   } finally {
     for (const f of [raw, conv]) { try { fs.unlinkSync(f); } catch { /* already moved */ } }
   }
@@ -379,8 +381,11 @@ const state = new AppState({ settings, dataDir, logger, processManager: pm });
 
 // static web
 app.use('/', express.static(webDir));
+// /data: only the pictures of the services (data/mot/…/*.jpg|png|webp). settings.json (password hash),
+// logs, presets and runtime files are not served (security review; the web UI uses /api/mot).
 app.use('/data', (req, res, next) => {
   if (path.basename(req.path).startsWith('.')) return res.status(404).end();
+  if (!/^\/mot\/[^/]+\/(?:[^/]+\/)*[^/]+\.(?:jpe?g|png|webp)$/i.test(req.path)) return res.status(404).end();
   next();
 }, express.static(dataDir));
 
@@ -659,6 +664,25 @@ app.get('/api/export/full', (req, res) => {
 app.post('/api/import/full', (req, res) => {
   try {
     const payload = req.body || {};
+    // An imported file gets the same checks as the Settings screen (PATCH /api/settings), BEFORE
+    // anything is written: its text ends up in the .mux / dabmod.ini (security review).
+    if (payload.settings?.dabmux) {
+      const imp = payload.settings.dabmux;
+      if (imp.outputs !== undefined) imp.outputs = normalizeOutputs(imp.outputs);
+      if (imp.ediOptions !== undefined) imp.ediOptions = normalizeEdiOptions(imp.ediOptions);
+      const next = { ...settings.dabmux, ...imp };
+      if (String(next.txMode || '').toUpperCase() === 'NETWORK') {
+        const errors = validateOutputs(normalizeOutputs(next.outputs), {
+          reserved: reservedForOutputs(next),
+          ediOptions: normalizeEdiOptions(next.ediOptions),
+        });
+        if (errors.length) throw new Error(`Transmitter outputs: ${errors.join(' · ')}`);
+      }
+    }
+    // logos: one per service PI code (4 hex digits) — never a path (no "../")
+    const logoEntries = payload.logos && typeof payload.logos === 'object' ? Object.entries(payload.logos) : [];
+    const badLogo = logoEntries.find(([k]) => !/^(0x)?[0-9A-F]{4}$/i.test(k));
+    if (badLogo) throw new Error(`Invalid logo key "${String(badLogo[0]).slice(0, 40)}" (expected a PI code)`);
     if (payload.settings) {
       settings.ensemble = { ...settings.ensemble, ...payload.settings.ensemble };
       settings.dabmux = { ...settings.dabmux, ...payload.settings.dabmux };
@@ -668,9 +692,10 @@ app.post('/api/import/full', (req, res) => {
       if (payload.settings.dabmux?.hackrf) {
         settings.dabmux.hackrf = { ...(settings.dabmux.hackrf || {}), ...payload.settings.dabmux.hackrf };
       }
-      if (payload.settings.odrBinDir !== undefined) {
-        settings.odrBinDir = payload.settings.odrBinDir;
-        pm.odrBinDir = settings.odrBinDir;
+      // odrBinDir (where the ODR programs are started from) is never taken from an imported file:
+      // a crafted file could otherwise make DABcast start other programs (security review)
+      if (payload.settings.odrBinDir !== undefined && payload.settings.odrBinDir !== settings.odrBinDir) {
+        logger.line('export', `Import: odrBinDir "${String(payload.settings.odrBinDir).slice(0, 80)}" ignored (kept "${settings.odrBinDir || ''}")`, 'WARN');
       }
       writeJson(settingsPath, settings);
     }
@@ -679,8 +704,9 @@ app.post('/api/import/full', (req, res) => {
     }
 
     // Import logos if present
-    if (payload.logos && typeof payload.logos === 'object') {
-      for (const [svcId, logoBase64] of Object.entries(payload.logos)) {
+    if (logoEntries.length) {
+      for (const [key, logoBase64] of logoEntries) {
+        const svcId = key.replace(/^0x/i, '').toUpperCase();   // checked above: 4 hex digits
         try {
           const motDir = path.join(dataDir, 'mot', svcId);
           const slideDir = path.join(motDir, 'slide');
@@ -1701,6 +1727,17 @@ app.post('/api/services/:id/logo/upload', async (req, res) => {
 });
 
 // Serve MOT/SLS demo assets for preview (logo, slideshow directory, etc.)
+// :svcId of the /api/mot routes names a folder of data/mot (PI code, or an older fifoName / PS8):
+// one path segment only — no "/" or "\\" (Express decodes %2F), no "." / "..", no control character —
+// so that it can never reach a file outside data/mot (security review).
+app.param('svcId', (req, res, next, value) => {
+  const v = String(value || '');
+  if (!v || v.length > 32 || /[/\\\u0000-\u001f]/.test(v) || /^\.+$/.test(v)) {
+    return res.status(400).json({ error: 'Invalid service id' });
+  }
+  next();
+});
+
 app.get('/api/mot/:svcId/logo', (req, res) => {
   try {
     const svcId = String(req.params.svcId || '').toUpperCase();
@@ -1743,7 +1780,9 @@ app.post('/api/mot/:svcId/logo', (req, res) => {
     try {
       fs.writeFileSync(raw, buf);
       if (convertToSlideFile(raw, conv)) fs.renameSync(conv, path.resolve(dir, 'logo.jpg'));
-      else fs.renameSync(raw, path.resolve(dir, `logo.${ext}`));
+      // as received only if it really is a picture (odr-padenc reads the slide dir too)
+      else if (imageCoder(raw)) fs.renameSync(raw, path.resolve(dir, `logo.${ext}`));
+      else return res.status(400).json({ error: 'Not a JPEG / PNG / GIF / WebP picture' });
     } finally {
       for (const f of [raw, conv]) { try { fs.unlinkSync(f); } catch { /* moved */ } }
     }
@@ -1976,41 +2015,40 @@ app.post('/api/update/apply', async (req, res) => {
   _updateState = { status: 'downloading', progress: 0, error: null, version: _releaseCache.latestVersion };
   res.json({ ok: true, arch, asset: asset.name });
 
-  _doUpdate(asset).catch(err => {
+  _doUpdate(asset, _releaseCache.latestVersion).catch(err => {
     logger.line('update', `Update failed: ${err.message || err}`, 'ERROR');
     _updateState = { status: 'error', progress: 0, error: String(err.message || err), version: null };
   });
 });
 
-async function _doUpdate(asset) {
-  const tmpPath = path.join(os.tmpdir(), `dabcast-update_${asset.name}`);
-
-  // Stream download with progress
-  const r = await fetch(asset.url, {
-    headers: { 'User-Agent': 'DABcast' },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(180000)
-  });
-  if (!r.ok) throw new Error(`Download failed: ${r.status} ${r.statusText}`);
-
-  const total = Number(r.headers.get('content-length') || asset.size || 0);
-  let received = 0;
-  const dest = fs.createWriteStream(tmpPath);
-  for await (const chunk of r.body) {
-    dest.write(chunk);
-    received += chunk.byteLength;
-    if (total > 0) _updateState.progress = Math.round((received / total) * 100);
-  }
-  await new Promise((ok, fail) => { dest.end(); dest.on('finish', ok); dest.on('error', fail); });
-
-  _updateState = { ..._updateState, status: 'installing', progress: 100 };
-  logger.line('update', `Installing ${asset.name}...`);
-
+// The root helper (dabcast-install-update, sudo rule of the package) downloads the official release
+// itself and checks it: the service only gives the version number, never a file (security).
+// Its "PROGRESS n" lines drive the progress bar, "INSTALLING" switches to the installing step.
+async function _doUpdate(asset, version) {
+  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(String(version || ''))) throw new Error(`Invalid release version: ${version}`);
+  logger.line('update', `Downloading and installing ${asset.name} (v${version})...`);
+  let errText = '';
   await new Promise((ok, fail) => {
-    const child = spawn('sudo', ['/opt/dabcast/bin/dabcast-install-update'], {
-      stdio: ['ignore', 'inherit', 'inherit']
+    const child = spawn('sudo', ['-n', '/opt/dabcast/bin/dabcast-install-update', version], {
+      stdio: ['ignore', 'pipe', 'pipe']
     });
-    child.on('exit', code => code === 0 ? ok() : fail(new Error(`Installer exited with code ${code}`)));
+    let buf = '';
+    child.stdout.on('data', (d) => {
+      buf += d.toString();
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        const m = /^PROGRESS (\d+)$/.exec(line);
+        if (m) _updateState.progress = Math.min(100, Number(m[1]));
+        else if (line === 'INSTALLING') {
+          _updateState = { ..._updateState, status: 'installing', progress: 100 };
+          logger.line('update', `Installing ${asset.name}...`);
+        } else if (line) logger.line('update', line, 'DEBUG');
+      }
+    });
+    child.stderr.on('data', (d) => { errText = (errText + d.toString()).slice(-500); });
+    child.on('exit', (code) => (code === 0 ? ok() : fail(new Error(`Installer exited with code ${code}${errText.trim() ? `: ${errText.trim().split('\n').pop()}` : ''}`))));
     child.on('error', fail);
   });
 

@@ -16,6 +16,30 @@ import path from 'node:path';
 export const SLIDE_W = 320;
 export const SLIDE_H = 240;
 
+// Input formats, recognised from the first bytes of the file and given explicitly to ImageMagick
+// ("JPEG:file[0]"). Otherwise ImageMagick guesses the format from the content and also reads script
+// formats (MVG, MSL, SVG, TEXT…) that the Debian policy still allows: a cover sent by a third-party
+// metadata API must never be read as one (security review). null = not an accepted picture.
+export function imageCoder(file) {
+  const b = Buffer.alloc(12);
+  let n = 0;
+  try {
+    const fd = fs.openSync(file, 'r');
+    try { n = fs.readSync(fd, b, 0, 12, 0); } finally { fs.closeSync(fd); }
+  } catch { return null; }
+  if (n >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'JPEG';
+  if (n >= 8 && b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'PNG';
+  if (n >= 6 && /^GIF8[79]a$/.test(b.subarray(0, 6).toString('latin1'))) return 'GIF';
+  if (n >= 12 && b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') return 'WEBP';
+  return null;
+}
+// "<FORMAT>:<file>[0]" for ImageMagick, or throws (callers keep their fallback / logging)
+function imageInput(file) {
+  const coder = imageCoder(file);
+  if (!coder) throw new Error('not a JPEG / PNG / GIF / WebP picture');
+  return `${coder}:${file}[0]`;
+}
+
 // Binary PPM (P6, maxval 255) → { w, h, data, offset }
 export function parsePpm(buf) {
   let pos = 0;
@@ -88,7 +112,7 @@ export function composeSlide(img) {
 
 // Throws on failure (callers keep their own fallback / logging).
 export function convertToSlide(srcPath, destPath, { quality = 85, exec = execFileSync } = {}) {
-  const ppm = exec('convert', [`${srcPath}[0]`, '-background', 'black', '-alpha', 'remove', '-alpha', 'off',
+  const ppm = exec('convert', [imageInput(srcPath), '-background', 'black', '-alpha', 'remove', '-alpha', 'off',
     '-resize', `${SLIDE_W}x${SLIDE_H}`, '-depth', '8', 'ppm:-'], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 });   // 8-bit: Q16 builds may write 16-bit PPM
   exec('convert', ['ppm:-', '-quality', String(quality), destPath], { input: composeSlide(parsePpm(ppm)), timeout: 10000 });
 }
@@ -120,7 +144,7 @@ export function blackBandWidths(img, { dark = 40, minWidth = 8 } = {}) {
 // again (bands in the edge colours) into `outFile`. Temp file in `tmpDir` (never in the slide dir,
 // whose images go on air). Returns true if `outFile` was written.
 export function removeBlackBands(file, outFile, tmpDir, { exec = execFileSync } = {}) {
-  const img = parsePpm(exec('convert', [`${file}[0]`, '-depth', '8', 'ppm:-'], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
+  const img = parsePpm(exec('convert', [imageInput(file), '-depth', '8', 'ppm:-'], { timeout: 10000, maxBuffer: 8 * 1024 * 1024 }));
   const bands = blackBandWidths(img);
   if (!bands) return false;
   // 8 more pixels on each side (one JPEG block): JPEG blended the old black band into the first
@@ -129,7 +153,7 @@ export function removeBlackBands(file, outFile, tmpDir, { exec = execFileSync } 
   const w = img.w - bands.left - bands.right - 2 * inset;
   const tmp = path.join(tmpDir, `.bands_${process.pid}_${Date.now()}.png`);
   try {
-    exec('convert', [`${file}[0]`, '-crop', `${w}x${img.h}+${bands.left + inset}+0`, '+repage', tmp], { timeout: 10000 });
+    exec('convert', [imageInput(file), '-crop', `${w}x${img.h}+${bands.left + inset}+0`, '+repage', tmp], { timeout: 10000 });
     convertToSlide(tmp, outFile, { exec });
   } finally {
     try { fs.unlinkSync(tmp); } catch { /* ignore */ }

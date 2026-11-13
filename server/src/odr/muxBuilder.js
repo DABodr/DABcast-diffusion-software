@@ -1,7 +1,8 @@
 import { buildOutputLines } from './outputs.js';
 
 function escapeLabel(value) {
-  return String(value ?? '').replace(/"/g, "'");
+  // no quote and no line break / control character: a label must never add a line to the .mux
+  return String(value ?? '').replace(/"/g, "'").replace(/[\u0000-\u001f\u007f]/g, ' ');
 }
 
 export function buildMuxConfig({ settings, preset }) {

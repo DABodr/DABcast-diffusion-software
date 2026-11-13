@@ -96,7 +96,10 @@ case "$1" in
     systemctl enable dabcast.service
     log "  -> Service active"
 
-    if systemctl is-system-running --quiet 2>/dev/null; then
+    # systemd is running when /run/systemd/system exists (standard test). 'is-system-running' is not
+    # used any more: it fails on a "degraded" system (any other failed unit), and the service was
+    # then left stopped after an install or a one-click update.
+    if [ -d /run/systemd/system ]; then
       log "  -> Demarrage du service..."
       systemctl start dabcast.service || log "  AVERTISSEMENT : demarrage echoue (voir : journalctl -u dabcast -n 30)"
     else
@@ -107,15 +110,53 @@ case "$1" in
     log "[+] Installation du helper de mise a jour..."
     cat > /opt/dabcast/bin/dabcast-install-update << 'UPDATER'
 #!/bin/bash
-set -e
-PKG=$(ls /tmp/dabcast-update_*.deb 2>/dev/null | sort -V | tail -1)
-if [ -z "$PKG" ]; then
-  echo "dabcast-install-update: no package found in /tmp" >&2
-  exit 1
+# dabcast-install-update X.Y.Z — run as root by the dabcast service (sudo rule below) for the
+# one-click update. It downloads the OFFICIAL release X.Y.Z itself (fixed GitHub address, HTTPS)
+# into a private root-only directory, checks the package name / version / architecture, then
+# installs it. It never installs a file supplied by the caller (former versions installed any
+# /tmp/dabcast-update_*.deb: a local user could get a package installed as root).
+set -euo pipefail
+VERSION="${1:-}"
+if [[ ! "$VERSION" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+  echo "usage: dabcast-install-update X.Y.Z" >&2
+  exit 2
 fi
-echo "dabcast-install-update: installing $PKG"
+ARCH=$(dpkg --print-architecture)
+if [[ "$ARCH" != "amd64" && "$ARCH" != "arm64" ]]; then
+  echo "dabcast-install-update: unsupported architecture $ARCH" >&2
+  exit 2
+fi
+URL="https://github.com/DABodr/DABcast-diffusion-software/releases/download/v${VERSION}/dabcast_${VERSION}_${ARCH}.deb"
+DIR=$(mktemp -d)   # 0700, owned by root
+trap 'rm -rf "$DIR"' EXIT
+PKG="$DIR/dabcast.deb"
+echo "dabcast-install-update: downloading $URL"
+# download with the Node.js embedded in the dabcast binary (no curl / wget needed); "PROGRESS n" lines
+PKG_EXECPATH=PKG_INVOKE_NODEJS DABCAST_UPDATE_URL="$URL" DABCAST_UPDATE_OUT="$PKG" /opt/dabcast/bin/dabcast -e '
+const fs = require("fs");
+(async () => {
+  const r = await fetch(process.env.DABCAST_UPDATE_URL, { redirect: "follow", headers: { "User-Agent": "DABcast-updater" }, signal: AbortSignal.timeout(300000) });
+  if (!r.ok) { console.error("download failed: HTTP " + r.status); process.exit(3); }
+  const total = Number(r.headers.get("content-length") || 0);
+  const out = fs.createWriteStream(process.env.DABCAST_UPDATE_OUT, { mode: 0o600 });
+  let got = 0, last = -1;
+  for await (const chunk of r.body) {
+    out.write(chunk);
+    got += chunk.length;
+    const p = total ? Math.floor(got * 100 / total) : 0;
+    if (p !== last) { last = p; console.log("PROGRESS " + p); }
+  }
+  await new Promise((ok, ko) => { out.end(); out.on("finish", ok); out.on("error", ko); });
+})().catch((e) => { console.error("download failed: " + e.message); process.exit(3); });
+'
+for field in Package:dabcast "Version:$VERSION" "Architecture:$ARCH"; do
+  if [[ "$(dpkg-deb -f "$PKG" "${field%%:*}")" != "${field#*:}" ]]; then
+    echo "dabcast-install-update: unexpected package (${field%%:*} is not ${field#*:}), not installed" >&2
+    exit 4
+  fi
+done
+echo "INSTALLING"
 dpkg -i "$PKG"
-rm -f "$PKG"
 UPDATER
     chmod 755 /opt/dabcast/bin/dabcast-install-update
     log "  -> /opt/dabcast/bin/dabcast-install-update installe"

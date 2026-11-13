@@ -23,6 +23,7 @@ function nowMs() { return Date.now(); }
 // Failover constants
 const FAILOVER_CRASH_THRESHOLD = 1;  // crashes before switching to backup
 const FAILOVER_STABLE_MS = 30000;    // encoder must run 30s before crash counter resets
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;   // largest cover / logo downloaded (_downloadImage)
 // Local modulator (SDR / HackRF) supervision by the watchdog (_superviseLocalModulator)
 const MOD_STALL_MS = 15000;          // SoapySDR: no frame sent for 15 s = stalled (device unplugged)
 const MOD_RETRY_MS = 30000;          // broken / stalled chain restarted every 30 s until it transmits
@@ -1079,8 +1080,18 @@ export class AppState {
         this.logger.line('sls', `download failed ${url}: HTTP ${res.status}`, 'WARN');
         return false;
       }
-      const arr = await res.arrayBuffer();
-      fs.writeFileSync(destPath, Buffer.from(arr));
+      // size limit while reading (a cover / logo is a few hundred kB): a huge or endless answer from a
+      // metadata API must not fill the memory (Raspberry Pi)
+      const declared = Number(res.headers.get('content-length') || 0);
+      if (declared > MAX_IMAGE_BYTES) throw new Error(`image too large (${Math.round(declared / 1048576)} MB, max ${MAX_IMAGE_BYTES / 1048576} MB)`);
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of res.body) {
+        size += chunk.length;
+        if (size > MAX_IMAGE_BYTES) { ctrl.abort(); throw new Error(`image too large (max ${MAX_IMAGE_BYTES / 1048576} MB)`); }
+        chunks.push(chunk);
+      }
+      fs.writeFileSync(destPath, Buffer.concat(chunks));
       return true;
     } catch (err) {
       this.logger.line('sls', `download error ${url}: ${err.message}`, 'ERROR');
@@ -1528,7 +1539,9 @@ export class AppState {
     const freqHz = DAB_FREQ_TABLE[dabBlock];
     if (!freqHz) throw new Error(`Unknown DAB block: ${dabBlock}`);
 
-    const rate = hk.rate || 4096000;
+    // numbers only: these values are written into dabmod.ini (the legacy HackRF settings are not normalized)
+    const num = (v, d) => (Number.isFinite(Number(v)) && v !== '' && v !== null ? Number(v) : d);
+    const rate = num(hk.rate, 0) || 4096000;
     const soapy = this._localSoapy();   // NETWORK 'sdr' output; HACKRF mode / 'hackrf' output = hackrf_transfer
     const fifoPath = path.resolve(this.runtimeDir, 'ofdm.fifo');
     const filtertapsPath = path.resolve(this.runtimeDir, 'filtertaps.txt');
@@ -1550,9 +1563,9 @@ export class AppState {
     const ediPort = localHk.ediPort;
     const dabmodConfig = buildDabModConfig({
       source: `tcp://localhost:${ediPort}`,
-      maxFramesQueued: hk.maxFramesQueued || 580,
-      gainmode: hk.gainmode ?? 2,
-      digitalGain: hk.digitalGain ?? 1,
+      maxFramesQueued: num(hk.maxFramesQueued, 0) || 580,
+      gainmode: num(hk.gainmode, 2),
+      digitalGain: num(hk.digitalGain, 1),
       rate,
       filtertapsPath,
       fifoPath,
