@@ -15,9 +15,9 @@
   "dependencies": {
     "archiver": "^7.0.1",
     "bcryptjs": "^3.0.3",
-    "express": "^4.19.2",
+    "express": "^4.22.3",
     "jose": "^5.10.0",
-    "morgan": "^1.10.0",
+    "morgan": "^1.12.1",
     "nanoid": "^5.0.7"
   }
 }
