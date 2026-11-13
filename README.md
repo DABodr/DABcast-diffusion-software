@@ -39,6 +39,7 @@ Modern web interface for managing DAB/DAB+ multiplexes with ODR-mmbTools.
 - [Tests](#-tests)
 - [Security](#-security)
 - [Contributing](#-contributing)
+- [Support DABcast](#-support-dabcast)
 - [Third-Party Software](#third-party-software)
 - [License](#license)
 
@@ -511,6 +512,18 @@ see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
+## ☕ Support DABcast
+
+DABcast is a free, open-source project built with passion to make DAB+ broadcasting more accessible to everyone.
+If DABcast is useful to you and you'd like to help keep it growing, you can buy me a coffee!
+Supporting the project is entirely optional: DABcast is and will always remain free for everyone.
+
+<a href="https://buymeacoffee.com/dabodr"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy me a coffee" height="45"></a>
+
+Thank you for your support! 🙏
+
+---
+
 ## Third-Party Software
 
 DABcast is a management interface that controls external tools from the
@@ -575,7 +588,6 @@ See the [`LICENSE`](LICENSE) file for the complete terms.
 ## 🔗 Useful links
 
 - **Bug reports, questions and suggestions: [GitHub Issues](https://github.com/DABodr/DABcast-diffusion-software/issues)**
-- ☕ **Support the project: [Buy me a coffee](https://buymeacoffee.com/dabodr)** — DABcast stays free, donations help keep it improving
 - [ODR-mmbTools](https://www.opendigitalradio.org/)
 - [ETSI EN 300 401 (DAB standard)](https://www.etsi.org/deliver/etsi_en/300400_300499/300401/)
 - [Dablin](https://github.com/Opendigitalradio/dablin)
