@@ -6,7 +6,9 @@ case "$1" in
     if systemctl is-active --quiet dabcast.service 2>/dev/null; then
       systemctl stop dabcast.service
     fi
-    if systemctl is-enabled --quiet dabcast.service 2>/dev/null; then
+    # disabled only when the package is removed: on an upgrade the service stays enabled, so that an
+    # interrupted upgrade never leaves DABcast off after the next reboot
+    if [ "$1" = "remove" ] && systemctl is-enabled --quiet dabcast.service 2>/dev/null; then
       systemctl disable dabcast.service
     fi
     ;;
