@@ -11,7 +11,8 @@ import { execSync, execFileSync, execFile, spawn } from 'node:child_process';
 import archiver from 'archiver';
 import bcrypt from 'bcryptjs';
 
-import { DEFAULT_SETTINGS, WEAK_PASSWORDS, MIN_PASSWORD_LENGTH } from './defaults.js';
+import { DEFAULT_SETTINGS, WEAK_PASSWORDS, MIN_PASSWORD_LENGTH, DAB_FREQ_TABLE } from './defaults.js';
+import { getDabmodValue, setDabmodValue } from './odr/dabmodRc.js';
 import { ensureDir, readJson, writeJson } from './fsutil.js';
 import { FileLogger } from './logger.js';
 import { TelegramLogNotifier } from './telegramNotifier.js';
@@ -1277,10 +1278,67 @@ app.post('/api/sdr/check', (req, res) => {
     if (err && err.code === 'ENOENT') return res.json({ ok: false, message: 'SoapySDRUtil not installed (sudo apt install soapysdr-tools)' });
     const label = (/^\s*label\s*=\s*(.+)$/m.exec(out) || [])[1]?.trim();
     if (!/Found device/i.test(out)) {
-      return res.json({ ok: false, message: `No device found for ${device}: check the USB / network link and that its SoapySDR module is installed (SoapySDRUtil --info)` });
+      return res.json({ ok: false, message: `No device found for ${device}: unplugged, used by another program, or its SoapySDR module is missing (SoapySDRUtil --info)` });
     }
-    res.json({ ok: true, message: `Found: ${label || device}` });
+    if (o.device !== 'hackrf') return res.json({ ok: true, message: `Found: ${label || device}` });
+    // HackRF: board, revision and firmware as the former 'Check HackRF' (hackrf_info, read-only)
+    execFile('hackrf_info', [], { timeout: 6000 }, (e2, so, se) => {
+      const info = `${so || ''}${se || ''}`;
+      const pick = (re) => (re.exec(info) || [])[1]?.trim() || '';
+      const board = [pick(/Board ID Number:\s*\d+\s*\(([^)]+)\)/i), pick(/Hardware Revision:\s*(.+)/i)].filter(Boolean).join(' ');
+      const firmware = pick(/Firmware Version:\s*(.+)/i);
+      const serial = pick(/Serial number:\s*(\S+)/i).replace(/^0+/, '');
+      res.json({ ok: true, message: `Found: ${board || label || device}${firmware ? ` · firmware ${firmware}` : ''}${serial ? ` · serial …${serial.slice(-8)}` : ''}` });
+    });
   });
+});
+
+// SDR output 'Apply now' (Multiplex & modulator): DAB block (frequency), TX gain and digital gain of an
+// SDR output are saved and — when the multiplex is ON AIR with this output — applied live through the
+// odr-dabmod remote control, without restarting the multiplex. Each value is read back to confirm it.
+app.post('/api/sdr/apply', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const dm = settings.dabmux || {};
+    const list = Array.isArray(dm.outputs) ? dm.outputs : [];
+    const idx = list.findIndex((x) => x.id === body.id && x.type === 'sdr');
+    if (String(dm.txMode || '').toUpperCase() !== 'NETWORK' || idx < 0) {
+      return res.status(404).json({ error: 'This SDR output is not saved yet: press Save first' });
+    }
+    const changed = { ...list[idx] };
+    if (body.dabBlock !== undefined) changed.dabBlock = String(body.dabBlock);
+    if (body.txGain !== undefined) changed.txGain = Number(body.txGain);
+    if (body.digitalGain !== undefined) changed.digitalGain = Number(body.digitalGain);
+    const outputs = list.map((x, i) => (i === idx ? changed : x));
+    const errors = validateOutputs(normalizeOutputs(outputs), { reserved: reservedForOutputs(dm), ediOptions: normalizeEdiOptions(dm.ediOptions) });
+    if (errors.length) return res.status(400).json({ error: errors.join(' · ') });
+    const o = normalizeOutput(changed, idx);
+    settings.dabmux.outputs = list.map((x, i) => (i === idx ? { ...x, dabBlock: o.dabBlock, txGain: o.txGain, digitalGain: o.digitalGain } : x));
+    writeJson(settingsPath, settings);
+    const what = `${o.dabBlock} (${(DAB_FREQ_TABLE[o.dabBlock] / 1e6).toFixed(3)} MHz), TX gain ${o.txGain}, digital gain ${o.digitalGain}`;
+    const local = state._localHackrf();
+    const live = state.muxRunning && state._localSoapy() && local?.hk?.id === o.id && pm.isRunning('mux:odr-dabmod');
+    if (!live) {
+      logger.line('settings', `SDR output "${o.name}": ${what} saved (used at the next Start)`);
+      return res.json({ ok: true, live: false });
+    }
+    const failed = [];
+    for (const [c, p, want] of [['sdr', 'freq', DAB_FREQ_TABLE[o.dabBlock]], ['sdr', 'txgain', o.txGain], ['gain', 'digital', o.digitalGain]]) {
+      await setDabmodValue(c, p, String(want));
+      const got = Number(await getDabmodValue(c, p));
+      if (!(Number.isFinite(got) && Math.abs(got - want) <= Math.max(0.01, Math.abs(want) * 0.001))) {
+        failed.push(`${c} ${p}: asked ${want}, now ${Number.isFinite(got) ? got : 'unknown'}`);
+      }
+    }
+    if (failed.length) {
+      logger.line('settings', `SDR output "${o.name}": live change incomplete (${failed.join(' · ')}) — saved, applied in full at the next Start`, 'WARN');
+      return res.json({ ok: false, live: true, error: `Saved, but not applied live: ${failed.join(' · ')} — restart the multiplex to apply` });
+    }
+    logger.line('settings', `SDR output "${o.name}": ${what} applied live (no restart)`);
+    res.json({ ok: true, live: true });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
 });
 
 app.get('/api/mux/outputs', async (req, res) => {

@@ -1772,7 +1772,7 @@ const NET_HELP = {
   'edi-tcp': 'The transmitter, a digris-edi-tcp-converter or a remote odr-dabmod connects to this server on this port (EDI over TCP).',
   zmq: 'The EasyDAB V2 (or ODR-DabMod) connects to this server on this port (ZMQ client).',
   'eti-tcp': 'The receiver connects to this server on this port and reads raw ETI.',
-  sdr: 'SDR plugged into this server: odr-dabmod modulates (through the internal EDI port) and drives it through SoapySDR, one process (the device needs its SoapySDR module, see Check device). TX gain = SoapySDR overall gain in dB: HackRF 0-61 (VGA 0-47 + 14 dB amplifier), other devices: their own range — devices other than the HackRF are not tested yet, start low. Master clock 0 = driver default (LimeSDR: 32768000). PlutoSDR: Band III (174-240 MHz) is below the stock 325 MHz limit. Extra args: e.g. serial=… to pick one device. Only one SDR output.',
+  sdr: 'SDR plugged into this server: odr-dabmod modulates (through the internal EDI port) and drives it through SoapySDR, one process (the device needs its SoapySDR module, see Check device). Apply now = DAB block, TX gain and digital gain changed while ON AIR, without restarting the multiplex. TX gain = SoapySDR overall gain in dB: HackRF 0-61 (VGA 0-47 + 14 dB amplifier), other devices: their own range — devices other than the HackRF are not tested yet, start low. Master clock 0 = driver default (LimeSDR: 32768000). PlutoSDR: Band III (174-240 MHz) is below the stock 325 MHz limit. Extra args: e.g. serial=… to pick one device. Only one SDR output.',
   hackrf: 'HackRF plugged into this server: odr-dabmod modulates (through the internal EDI port) and hackrf_transfer transmits — same chain and settings as the HackRF TX mode. Only one HackRF output.',
 };
 const serverHost = () => location.hostname || 'this server';
@@ -1871,7 +1871,8 @@ function renderNetOutputs() {
         + sel('rate', 'Sample rate', fromSel('m_hackrf_rate', o.rate))
         + netField(o, i, 'maxFramesQueued', 'Max frames queued', 'type="number" min="1" max="2000"')
         + netField(o, i, 'port', 'Internal EDI port', 'type="number" min="1024" max="65535"')
-        + `<span class="net-inline"><button type="button" class="btn btn-sm" data-sdr-check="${i}">Check device</button></span><span class="net-help hackrf-check-result"></span>`;
+        + `<span class="net-inline"><button type="button" class="btn btn-sm" data-sdr-check="${i}">Check device</button></span><span class="net-help hackrf-check-result"></span>`
+        + `<span class="net-inline"><button type="button" class="btn btn-sm btn-primary" data-sdr-apply="${i}" title="DAB block, TX gain and digital gain: saved, and applied at once while ON AIR — no restart of the multiplex">Apply now</button></span><span class="net-help sdr-apply-result"></span>`;
     } else {
       fields = netField(o, i, 'ip', 'Listen IP', 'placeholder="0.0.0.0" class="net-ip"') + netField(o, i, 'port', 'Port', 'type="number" min="1024" max="65535"')
         + (o.type === 'zmq' ? `<label class="check-row net-inline"><input type="checkbox" data-net="${i}" data-key="allowMetadata" ${o.allowMetadata ? 'checked' : ''} /> send timestamps (metadata)</label>` : '');
@@ -1967,7 +1968,33 @@ document.getElementById('dlgMux')?.addEventListener('click', (e) => {
   if (b) checkHackrf(b.closest('.net-fields, .hackrf-check-row').querySelector('.hackrf-check-result'));
   const sb = e.target.closest('[data-sdr-check]');
   if (sb) checkSdr(NET_OUTPUTS[Number(sb.dataset.sdrCheck)], sb.closest('.net-fields').querySelector('.hackrf-check-result'));
+  const ab = e.target.closest('[data-sdr-apply]');
+  if (ab) applySdrNow(NET_OUTPUTS[Number(ab.dataset.sdrApply)], ab.closest('.net-fields').querySelector('.sdr-apply-result'));
 });
+// 'Apply now' of the SDR output: DAB block, TX gain and digital gain saved and, ON AIR, applied live by
+// odr-dabmod (remote control) without restarting the multiplex. Those three values then no longer
+// count as changes needing a restart.
+async function applySdrNow(o, resultEl) {
+  if (!o || !resultEl) return;
+  resultEl.className = 'net-help sdr-apply-result';
+  resultEl.textContent = 'Applying…';
+  try {
+    const r = await api('/api/sdr/apply', { method: 'POST', body: JSON.stringify({ id: o.id, dabBlock: o.dabBlock, txGain: o.txGain, digitalGain: o.digitalGain }) });
+    if (r.ok === false) throw new Error(r.error || 'not applied');
+    resultEl.textContent = r.live ? `✓ Applied live: ${o.dabBlock}, TX gain ${o.txGain}, digital gain ${o.digitalGain}` : '✓ Saved — used at the next Start';
+    resultEl.classList.add('ok');
+    try {   // the restart banner compares with the values of the opening: these three are now applied
+      const at = MUX_DLG_RESTART_FIELDS.length;
+      const snap = JSON.parse(muxRestartSnapshot?.[at] || 'null');
+      const it = Array.isArray(snap) ? snap.find((x) => x.id === o.id) : null;
+      if (it) { Object.assign(it, { dabBlock: o.dabBlock, txGain: o.txGain, digitalGain: o.digitalGain }); muxRestartSnapshot[at] = JSON.stringify(snap); }
+    } catch { /* banner only */ }
+    updateMuxRestartWarn();
+  } catch (err) {
+    resultEl.textContent = `⚠ ${err.message || err}`;
+    resultEl.classList.add('err');
+  }
+}
 // 'Check device' of the SDR output: SoapySDRUtil --find on the server (read-only, never transmits)
 async function checkSdr(o, resultEl) {
   if (!o || !resultEl) return;
