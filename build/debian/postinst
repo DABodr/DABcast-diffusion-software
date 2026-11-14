@@ -156,7 +156,23 @@ for field in Package:dabcast "Version:$VERSION" "Architecture:$ARCH"; do
   fi
 done
 echo "INSTALLING"
-dpkg -i "$PKG"
+# From here the package's prerm stops the dabcast service, which reads this output through a pipe:
+# a write to that broken pipe killed dpkg with SIGPIPE in the middle of the installation (package
+# half-installed, service stopped and disabled). Output now goes to a log file, hang-up / broken pipe
+# ignored.
+trap '' HUP PIPE
+exec >>/var/log/dabcast-update.log 2>&1
+echo "$(date '+%F %T') installing DABcast $VERSION ($ARCH)"
+if dpkg -i "$PKG"; then
+  rc=0
+else
+  rc=$?
+  echo "$(date '+%F %T') dpkg failed (code $rc)"
+fi
+# the package starts the service; in any case it must not stay stopped / disabled
+systemctl enable dabcast.service >/dev/null 2>&1 || true
+systemctl start dabcast.service >/dev/null 2>&1 || true
+exit $rc
 UPDATER
     chmod 755 /opt/dabcast/bin/dabcast-install-update
     log "  -> /opt/dabcast/bin/dabcast-install-update installed"
