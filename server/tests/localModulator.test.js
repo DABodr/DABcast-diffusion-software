@@ -5,7 +5,7 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { AppState } from '../src/appState.js';
-import { parseRcReply, getDabmodValue } from '../src/odr/dabmodRc.js';
+import { parseRcReply, getDabmodValue, setDabmodValue } from '../src/odr/dabmodRc.js';
 
 describe('odr-dabmod remote control client', () => {
   it('reads the value between the prompts', () => {
@@ -134,5 +134,40 @@ describe('local modulator supervision (watchdog)', () => {
     f.pm.stop = async () => { f.muxRunning = false; };   // stopMux happened while stopping
     await f.tick();
     assert.equal(f.spawned.length, 0);
+  });
+});
+
+describe('odr-dabmod remote control: live settings (SDR Apply now)', () => {
+  let server;
+  const received = [];
+  const values = { 'sdr txgain': '61', 'sdr freq': '197648000' };
+  before(async () => {
+    server = net.createServer((sock) => {
+      sock.write("ODR-DabMod Remote Control CLI\n**********\n> ");
+      sock.on('data', (d) => {
+        const line = String(d).trim();
+        received.push(line);
+        const [verb, c, p, v] = line.split(' ');
+        if (verb === 'set' && `${c} ${p}` in values) { values[`${c} ${p}`] = v; sock.write('ok> '); }
+        else if (verb === 'set') sock.write(`error: parameter ${p} not exported> `);
+        else sock.write(`${values[`${c} ${p}`] ?? 'error'}> `);
+      });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+  });
+  after(() => server.close());
+  const opts = () => ({ port: server.address().port });
+
+  it('sets a value, then reads it back', async () => {
+    assert.deepEqual(await setDabmodValue('sdr', 'txgain', '40', opts()), { ok: true, reply: 'ok' });
+    assert.equal(await getDabmodValue('sdr', 'txgain', opts()), '40');
+  });
+  it('an error reply is not reported as applied', async () => {
+    assert.equal((await setDabmodValue('sdr', 'bogus', '1', opts())).ok, false);
+  });
+  it('never sends a line break or a second command', async () => {
+    const before = received.length;
+    for (const v of ['40\nset sdr freq 1', '40; rm', '', 'a b']) assert.equal((await setDabmodValue('sdr', 'txgain', v, opts())).ok, false);
+    assert.equal(received.length, before, 'nothing sent to odr-dabmod');
   });
 });

@@ -872,6 +872,9 @@ input.just-filled { border-color: var(--green) !important; box-shadow: 0 0 0 3px
 .hackrf-check-result.ok { color: var(--green); }
 .hackrf-check-result.err { color: var(--yellow); font-weight: 600; }
 .net-fields .hackrf-check-result { flex-basis: 100%; }
+.sdr-apply-result.ok { color: var(--green); }
+.sdr-apply-result.err { color: var(--yellow); font-weight: 600; }
+.net-fields .sdr-apply-result { flex-basis: 100%; }
 /* Multiplex panel above the services: summary line + settings unfolded in place */
 .mux-panel { margin-bottom: 14px; }
 .mux-summary { display: flex; align-items: center; gap: 6px 12px; flex-wrap: wrap; padding: 6px 14px; min-height: 34px; cursor: pointer; user-select: none; }
