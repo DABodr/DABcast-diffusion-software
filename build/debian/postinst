@@ -108,7 +108,10 @@ case "$1" in
 
     # --- Privileged update helper ---
     log "[+] Installing the update helper..."
-    cat > /opt/dabcast/bin/dabcast-install-update << 'UPDATER'
+    # written next to the old one, then moved into place in one step (new inode): during a one-click
+    # update the former helper is still running from this file, and bash reads a script as it goes —
+    # overwriting it in place could make it run lines of the new file as root
+    cat > /opt/dabcast/bin/dabcast-install-update.new << 'UPDATER'
 #!/bin/bash
 # dabcast-install-update X.Y.Z — run as root by the dabcast service (sudo rule below) for the
 # one-click update. It downloads the OFFICIAL release X.Y.Z itself (fixed GitHub address, HTTPS)
@@ -163,18 +166,27 @@ echo "INSTALLING"
 trap '' HUP PIPE
 exec >>/var/log/dabcast-update.log 2>&1
 echo "$(date '+%F %T') installing DABcast $VERSION ($ARCH)"
-if dpkg -i "$PKG"; then
-  rc=0
-else
-  rc=$?
-  echo "$(date '+%F %T') dpkg failed (code $rc)"
-fi
+# dpkg busy (PackageKit / unattended-upgrades on a desktop): retry every 10 s, 3 minutes at most
+attempt=0
+while :; do
+  out=$(LC_ALL=C dpkg -i "$PKG" 2>&1) && rc=0 || rc=$?
+  printf '%s\n' "$out"
+  if [[ $rc -ne 0 && "$out" == *"lock"* && $attempt -lt 18 ]]; then
+    attempt=$((attempt + 1))
+    echo "$(date '+%F %T') dpkg is busy (lock), retry $attempt/18 in 10 s"
+    sleep 10
+    continue
+  fi
+  break
+done
+[[ $rc -eq 0 ]] || echo "$(date '+%F %T') dpkg failed (code $rc)"
 # the package starts the service; in any case it must not stay stopped / disabled
 systemctl enable dabcast.service >/dev/null 2>&1 || true
 systemctl start dabcast.service >/dev/null 2>&1 || true
 exit $rc
 UPDATER
-    chmod 755 /opt/dabcast/bin/dabcast-install-update
+    chmod 755 /opt/dabcast/bin/dabcast-install-update.new
+    mv -f /opt/dabcast/bin/dabcast-install-update.new /opt/dabcast/bin/dabcast-install-update
     log "  -> /opt/dabcast/bin/dabcast-install-update installed"
 
     # sudoers rule: the service user may run this helper only
