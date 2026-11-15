@@ -11,6 +11,10 @@ DLPLUS_INTEGRATION.md
 # Generated MOT assets (local only)
 /data/mot/**
 !/data/mot/.gitkeep
+# example service slide shipped with the default preset (DABcast logo)
+!/data/mot/F001/
+!/data/mot/F001/slide/
+!/data/mot/F001/slide/logo.jpg
 
 # Node dependencies
 /node_modules/

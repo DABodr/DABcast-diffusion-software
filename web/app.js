@@ -1261,12 +1261,30 @@ async function checkForUpdate() {
   } catch (_) { /* non-critical */ }
 }
 
+// Version of the interface loaded in this page. When the server runs another version (update by the
+// button, by dpkg, from another browser tab), the page reloads once so that the new app.js / style.css
+// are used — not deferred while a window (dialog) is open, so nothing being typed is lost.
+let loadedAppVersion = null;
+function reloadIfNewVersion() {
+  const v = STATE?.appVersion;
+  if (!v) return false;
+  if (!loadedAppVersion) { loadedAppVersion = v; return false; }
+  if (v === loadedAppVersion || document.querySelector('dialog[open]')) return false;
+  let done = null;
+  try { done = sessionStorage.getItem('dabcastReloadedFor'); } catch { /* storage blocked */ }
+  if (done === v) return false;   // already reloaded once for this version: never loop
+  try { sessionStorage.setItem('dabcastReloadedFor', v); } catch { /* storage blocked */ }
+  location.reload();
+  return true;
+}
+
 async function refresh() {
   // Abort any previous in-flight refresh
   if (refreshAbort) refreshAbort.abort();
   refreshAbort = new AbortController();
   try {
     STATE = await api('/api/state', { signal: refreshAbort.signal });
+    if (reloadIfNewVersion()) return;
     render();
     if (dlgMux.open) updateMuxRestartWarn();   // banner follows a Start / Stop while the panel is open
     maybeFetchMuxStats();
@@ -1659,6 +1677,9 @@ function openMuxDialog() {
   updateTxModeVisibility();
   // shown in the page (Multiplex panel above the services), not as a modal window
   dlgMux.show();
+  // show() focuses the first field (ensemble ID): on a phone that opens the keyboard and iOS zooms in
+  // (field text below 16 px). The panel itself takes the focus instead, in the same click.
+  dlgMux.focus({ preventScroll: true });
   $('#muxPanel')?.classList.add('open');
   netStartStatus();
 }
@@ -2420,7 +2441,9 @@ function plEnsureAudio() {
   PL.audio.addEventListener('ended', () => onFail('Stream ended (multiplex stopped or restarted)'));
   PL.audio.addEventListener('error', () => onFail('Stream unavailable'));
   try {
-    PL.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    // 'playback': larger audio output buffer — the default ('interactive', ~10 ms) crackles when the
+    // PC is busy (Chrome on a loaded machine); latency does not matter for listening to the multiplex
+    PL.ctx = new (window.AudioContext || window.webkitAudioContext)({ latencyHint: 'playback' });
     const src = PL.ctx.createMediaElementSource(PL.audio);
     const split = PL.ctx.createChannelSplitter(2);
     PL.an = [PL.ctx.createAnalyser(), PL.ctx.createAnalyser()];

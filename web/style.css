@@ -829,6 +829,11 @@ input[type="file"]::file-selector-button { background: var(--surface3); color: v
 .meta-mode-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .meta-live-dlp-on { display: flex; margin-bottom: 2px; }
 /* Detect keys: field just filled in */
+/* Chrome autofill (e.g. Username in Settings, filled from the saved sign-in) paints its own light
+   background over the dark theme: keep the theme colours */
+input:-webkit-autofill, input:-webkit-autofill:hover, input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 1000px var(--surface2) inset; -webkit-text-fill-color: var(--text); caret-color: var(--text);
+}
 input.just-filled { border-color: var(--green) !important; box-shadow: 0 0 0 3px rgba(46, 204, 113, .25); }
 .json-status { color: var(--muted); font-size: 12px; }
 .json-status.ok { color: var(--green); font-weight: 600; }
@@ -897,6 +902,8 @@ input.just-filled { border-color: var(--green) !important; box-shadow: 0 0 0 3px
 .mux-pill.err { border-color: rgba(231, 76, 60, .6); color: #fecaca; }
 dialog.mux-inline { position: static; display: none; width: 100%; max-width: none; margin: 0; padding: 0; border: 0; border-top: 1px solid var(--border); background: transparent; color: inherit; }
 dialog.mux-inline[open] { display: block; }
+/* opened: the panel itself gets the focus, not its first field — iOS zooms on a focused field below 16 px */
+dialog.mux-inline:focus { outline: none; }
 .mux-form { padding: 12px 14px 14px; }
 /* Multiplex panel: ensemble fields and control ports on one line each, sized to their content */
 .mux-row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; }
@@ -923,3 +930,20 @@ dialog.mux-inline[open] { display: block; }
 .stat-val-sm { line-height: 1.5; }
 .stat-bar { height: 4px; margin: 2px 0 1px; }
 .stat-sub { margin-top: 1px; }
+
+/* ── Mobile header: buttons in a grid (equal widths, aligned), readable, finger-sized ──
+   row 1: Levels · Logs · Player · Telegram   row 2: Sys. info · ⏻ · ?   row 3: Stop · Start · ON AIR */
+@media (max-width: 820px) {
+  .top .actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; width: 100%; }
+  .top .actions::after { display: none; }
+  .top .actions .btn { min-height: 40px; padding: 6px 4px; font-size: 13.5px; font-weight: 600; color: var(--text);
+    background: var(--surface2); border: 1px solid rgba(148, 163, 184, .28); border-radius: 8px; white-space: nowrap; }
+  .top .actions .btn:active { background: var(--surface3); }
+  .top .actions .btn-about { width: auto; height: auto; border-radius: 8px; line-height: normal; font-size: 16px; }
+  #btnAbout { grid-column: span 2; }
+  .top .actions .btn-danger { background: rgba(220, 38, 38, .9); border-color: transparent; color: #fff; }
+  .top .actions .btn-success { background: rgba(22, 163, 74, .9); border-color: transparent; color: #fff; }
+  .top .actions .btn:disabled { opacity: .35; }
+  .onair-group { grid-column: span 2; justify-content: center; gap: 8px; min-height: 40px; }
+  .onair-group .onair { flex: 1; text-align: center; padding: 9px 8px; font-size: 13px; }
+}

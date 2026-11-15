@@ -9,7 +9,7 @@ import { AppState } from '../src/appState.js';
 import { DEFAULT_SETTINGS } from '../src/defaults.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const demoPreset = path.resolve(__dirname, '../../data/presets/demo.json');
+const demoPreset = path.resolve(__dirname, 'fixtures/preset-7-services.json');
 
 describe('setService — pendingRestart hint', () => {
   let dir, state, svcId, running;

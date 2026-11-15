@@ -10,7 +10,7 @@ import { AppState, parseTimeMs, parseDurationMs, trackEndMs, TRACK_END_GRACE_MS,
 import { DEFAULT_SETTINGS } from '../src/defaults.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const demoPreset = path.resolve(__dirname, '../../data/presets/demo.json');
+const demoPreset = path.resolve(__dirname, 'fixtures/preset-7-services.json');
 
 describe('metadata loop', () => {
   let dir, state;

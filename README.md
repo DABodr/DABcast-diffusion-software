@@ -130,9 +130,13 @@ npm test           # 298 tests
 Open **http://<server-ip>:9090**, sign in (first time: `admin` / `dabcast`, then choose a password),
 add your services, add a transmitter output in **Multiplex & modulator**, then **Start**.
 
-### Demo preset
+### First configuration
 
-A **DemoMux** preset with 6 services is included to quickly test the interface.
+A new installation starts with **one example service, OFF**: public domain classical music from
+[Public Domain Radio](https://en.publicdomainproject.org/) (`http://relay.publicdomainradio.org/classical.mp3`),
+for tests. Turn it ON and press **Start** to hear a first multiplex, then replace its stream URL
+with yours (or add your own services) — use streams you have the rights to broadcast. Nothing is
+broadcast until a service is ON. Existing installations keep their configuration.
 
 MOT directories (DLS/SLS) are in `data/mot/*`.
 
