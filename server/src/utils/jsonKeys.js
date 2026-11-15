@@ -18,6 +18,7 @@ const RE = {
   big: /(large|big|xl|full|original|hires|hi_res|600|640|800|1000|1200)/i,
   small: /(small|thumb|tiny|mini|xs|icon|50|60|64|75|100)/i,
   logo: /(logo|station|channel|brand)/i,
+  subtitle: /^(subtitle|sub_title|subtitles|sub-title)$/i,
 };
 
 // All scalar leaves: { path: ['a', 0, 'b'], key, parentKey, value }
@@ -65,6 +66,8 @@ function textCandidates(all, kind) {
       s = 10;
     } else if (RE[kind].test(l.parentKey) && !RE[other].test(k) && /^(text|value|label|display|displayname|display_name)$/i.test(k)) {
       s = 6;
+    } else if (kind === 'artist' && RE.subtitle.test(k)) {
+      s = 3;   // fallback: { title, subtitle } feeds put the artist in subtitle (Crooner Radio); a real artist key wins
     }
     if (s < 0) return null;
     if (RE.logo.test(l.path.join('.'))) s -= 4;     // station.name is not the artist

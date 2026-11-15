@@ -28,6 +28,18 @@ describe('detectJsonKeys', () => {
     assert.equal(resolveFirst(d, r.titleKey), 'Now Title', 'keys work with resolveFirst');
   });
 
+  it('{ title, subtitle } feed: the artist is in subtitle (Crooner Radio), unless a real artist key exists', () => {
+    const crooner = { crooner: [
+      { title: 'Blues In The Night', subtitle: 'Quincy Jones And His Orchestra', cover_big: 'https://x.fr/big/a.jpg', isCurrent: true },
+      { title: 'You Never Can Tell', subtitle: 'Joe Stilgoe', cover_big: 'https://x.fr/big/b.jpg', isCurrent: false },
+    ] };
+    const r = detectJsonKeys(crooner);
+    assert.equal(r.artistKey, 'crooner.0.subtitle');
+    assert.equal(r.artist, 'Quincy Jones And His Orchestra');
+    assert.equal(r.titleKey, 'crooner.0.title');
+    assert.equal(detectJsonKeys({ now: { title: 'T', subtitle: 'Album X', artist: 'A' } }).artistKey, 'now.artist');
+  });
+
   it('artist.name and a numeric-looking title', () => {
     const r = detectJsonKeys({ title: '1999', artist: { name: 'Prince', id: 42 }, started_at: '2026-01-01T10:00:00Z' });
     assert.equal(r.artistKey, 'artist.name');
