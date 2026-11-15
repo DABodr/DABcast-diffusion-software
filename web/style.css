@@ -518,6 +518,7 @@ label.check-row.tg-recovery { align-items: flex-start; }
 .legal-ver { font-size: 13px; color: var(--blue); font-weight: 600; margin-left: 4px; }
 .legal-grid a, .legal-text a { color: var(--blue); }
 .legal-sep { margin: 16px 0 10px; }
+.legal-logo { display: block; width: 100%; max-width: 360px; height: auto; margin: 6px auto 16px; }
 .legal-title { font-size: 11px; color: var(--muted); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; margin: 12px 0 4px; }
 .legal-text { font-size: 13px; line-height: 1.5; margin: 0; color: var(--text); }
 .mux-stats-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 10px; }
