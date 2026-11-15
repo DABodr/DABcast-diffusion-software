@@ -124,9 +124,9 @@ export const DEFAULT_SETTINGS = {
 
   // Default ensemble parameters (editable later)
   ensemble: {
-    idHex: "0xFEFE",
+    idHex: "0xFFFF",
     eccHex: "0xE1",
-    label: "DABcast WebUI",
+    label: "DABcast Demo",
     shortlabel: "DABcast",
     internationalTable: 1,
     localTimeOffset: "auto"

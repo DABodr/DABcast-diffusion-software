@@ -1,0 +1,568 @@
+{
+  "id": "demo",
+  "createdAt": "2026-01-16T00:00:00.000Z",
+  "services": [
+    {
+      "id": "FBFE",
+      "enabled": true,
+      "identity": {
+        "pi": "0xFBFE",
+        "serviceIdHex": "0xFBFE",
+        "ps8": "StationB",
+        "ps16": "La Station B",
+        "languageHex": "0x0F",
+        "pty": 10
+      },
+      "dab": {
+        "bitrateKbps": 88,
+        "protectionLevel": 3,
+        "eepMode": "A",
+        "padSize": 58
+      },
+      "input": {
+        "mode": "GSTREAMER",
+        "uri": "https://stream.lastationb.fr/stationb",
+        "backupUri": "https://stream.lastationb.fr/stationb",
+        "zmqBuffer": 40,
+        "zmqPrebuffering": 20,
+        "encoderBufferMs": 200
+      },
+      "audio": {
+        "channels": 2,
+        "sampleRateHz": 48000,
+        "gainDb": 0,
+        "codec": "HE-AAC v1 (SBR)"
+      },
+      "pad": {
+        "enabled": true,
+        "fifoName": "FBFE",
+        "dlsFile": "FBFE.dls",
+        "slideDir": "slide",
+        "motDir": "./data/mot/FBFE",
+        "sls": {
+          "enabled": true,
+          "logoPath": null
+        }
+      },
+      "network": {
+        "ediOutputTcp": {
+          "host": "127.0.0.1",
+          "port": 9007
+        }
+      },
+      "watchdog": {
+        "enabled": true,
+        "silenceThresholdSec": 10,
+        "warningThresholdSec": 5,
+        "switchToBackupOnSilence": true,
+        "returnToMainAfterSec": 60
+      },
+      "metadata": {
+        "mode": "NONE",
+        "intervalSec": 10,
+        "url": "https://paas-out.rplusd.io/56e30fc3-d991-480e-99ef-a00c1c9800e1/",
+        "artistKey": "artist",
+        "titleKey": "title",
+        "slsKey": "slide",
+        "defaultDls": "La Station B",
+        "slsUrl": null,
+        "slsBackColor": "",
+        "slsFontColor": "",
+        "defaultDlsAllowed": true,
+        "defaultSlsAllowed": true,
+        "dlsIncluded": true
+      },
+      "ui": {
+        "order": 1
+      },
+      "dlplus": {
+        "enabled": true,
+        "offsetMode": "bytes",
+        "maxLen": 128
+      }
+    },
+    {
+      "id": "F9A3",
+      "enabled": true,
+      "identity": {
+        "pi": "0xF9A3",
+        "serviceIdHex": "0xF9A3",
+        "ps8": "F3 Gold",
+        "ps16": "Fréquence 3 Gold",
+        "languageHex": "0x0F",
+        "pty": 10
+      },
+      "dab": {
+        "bitrateKbps": 72,
+        "protectionLevel": 2,
+        "eepMode": "A",
+        "padSize": 58
+      },
+      "input": {
+        "mode": "GSTREAMER",
+        "uri": "https://frequence3.net-radio.fr/frequence3gold.mp3",
+        "backupUri": "https://frequence3.net-radio.fr/frequence3gold.flac",
+        "zmqBuffer": 40,
+        "zmqPrebuffering": 20,
+        "encoderBufferMs": 200
+      },
+      "audio": {
+        "channels": 1,
+        "sampleRateHz": 48000,
+        "gainDb": 0,
+        "codec": "HE-AAC v1 (SBR)"
+      },
+      "pad": {
+        "enabled": true,
+        "fifoName": "F9A3",
+        "dlsFile": "F9A3.dls",
+        "slideDir": "slide",
+        "motDir": "./data/mot/F9A3",
+        "sls": {
+          "enabled": true,
+          "logoPath": null
+        }
+      },
+      "network": {
+        "ediOutputTcp": {
+          "host": "127.0.0.1",
+          "port": 9005
+        }
+      },
+      "watchdog": {
+        "enabled": true,
+        "silenceThresholdSec": 10,
+        "warningThresholdSec": 5,
+        "switchToBackupOnSilence": true,
+        "returnToMainAfterSec": 60
+      },
+      "metadata": {
+        "mode": "STREAM",
+        "intervalSec": 10,
+        "url": null,
+        "artistKey": "artist",
+        "titleKey": "title",
+        "slsKey": "slide",
+        "defaultDls": "Le meilleur son des années 80 et 90 sans pub !",
+        "slsUrl": null,
+        "slsBackColor": "",
+        "slsFontColor": "",
+        "defaultDlsAllowed": true,
+        "defaultSlsAllowed": true,
+        "dlsIncluded": true
+      },
+      "ui": {
+        "order": 2
+      },
+      "dlplus": {
+        "enabled": true,
+        "offsetMode": "bytes",
+        "maxLen": 128
+      }
+    },
+    {
+      "id": "F789",
+      "enabled": true,
+      "identity": {
+        "pi": "0xF789",
+        "serviceIdHex": "0xF789",
+        "ps8": "KINK",
+        "ps16": "KINK",
+        "languageHex": "0x0F",
+        "pty": 11
+      },
+      "dab": {
+        "bitrateKbps": 56,
+        "protectionLevel": 3,
+        "eepMode": "A",
+        "padSize": 58
+      },
+      "input": {
+        "mode": "GSTREAMER",
+        "uri": "https://22663.live.streamtheworld.com/KINK_SC",
+        "backupUri": "https://22613.live.streamtheworld.com/KINKAAC_SC",
+        "zmqBuffer": 40,
+        "zmqPrebuffering": 20,
+        "encoderBufferMs": 200
+      },
+      "audio": {
+        "channels": 2,
+        "sampleRateHz": 48000,
+        "gainDb": 0,
+        "codec": "HE-AAC v2 (PS)"
+      },
+      "pad": {
+        "enabled": true,
+        "fifoName": "F789",
+        "dlsFile": "F789.dls",
+        "slideDir": "slide",
+        "motDir": "./data/mot/F789",
+        "sls": {
+          "enabled": true,
+          "logoPath": null
+        }
+      },
+      "network": {
+        "ediOutputTcp": {
+          "host": "127.0.0.1",
+          "port": 9003
+        }
+      },
+      "watchdog": {
+        "enabled": true,
+        "silenceThresholdSec": 10,
+        "warningThresholdSec": 5,
+        "switchToBackupOnSilence": true,
+        "returnToMainAfterSec": 60
+      },
+      "metadata": {
+        "mode": "JSON",
+        "intervalSec": 10,
+        "url": "https://paas-out-dev.rplusd.io/f4ce7c27-e569-4826-b9bd-d1fcefa503af",
+        "artistKey": "artist",
+        "titleKey": "title",
+        "slsKey": "slide",
+        "defaultDls": "Alternative Rock Radio",
+        "slsUrl": null,
+        "slsBackColor": "",
+        "slsFontColor": "",
+        "defaultDlsAllowed": true,
+        "defaultSlsAllowed": true,
+        "dlsIncluded": true
+      },
+      "ui": {
+        "order": 3
+      },
+      "dlplus": {
+        "enabled": true,
+        "offsetMode": "bytes",
+        "maxLen": 128
+      }
+    },
+    {
+      "id": "F9C8",
+      "enabled": true,
+      "identity": {
+        "pi": "0xF9C8",
+        "serviceIdHex": "0xF9C8",
+        "ps8": "B Cactus",
+        "ps16": "Big Cactus Radio",
+        "languageHex": "0x0F",
+        "pty": 10
+      },
+      "dab": {
+        "bitrateKbps": 88,
+        "protectionLevel": 3,
+        "eepMode": "A",
+        "padSize": 58
+      },
+      "input": {
+        "mode": "GSTREAMER",
+        "uri": "https://radio10.pro-fhi.net/radio/9038/stream.mp3",
+        "backupUri": "https://radio10.pro-fhi.net:19040/bcc96.mp3",
+        "zmqBuffer": 40,
+        "zmqPrebuffering": 20,
+        "encoderBufferMs": 200
+      },
+      "audio": {
+        "channels": 2,
+        "sampleRateHz": 48000,
+        "gainDb": 0,
+        "codec": "HE-AAC v1 (SBR)"
+      },
+      "pad": {
+        "enabled": true,
+        "fifoName": "F9C8",
+        "dlsFile": "F9C8.dls",
+        "slideDir": "slide",
+        "motDir": "mot/F9C8",
+        "sls": {
+          "enabled": true,
+          "logoPath": null
+        }
+      },
+      "network": {
+        "ediOutputTcp": {
+          "host": "127.0.0.1",
+          "port": 9006
+        }
+      },
+      "watchdog": {
+        "enabled": true,
+        "silenceThresholdSec": 10,
+        "warningThresholdSec": 5,
+        "switchToBackupOnSilence": true,
+        "returnToMainAfterSec": 60
+      },
+      "metadata": {
+        "mode": "STREAM",
+        "intervalSec": 10,
+        "url": null,
+        "artistKey": "artist",
+        "titleKey": "title",
+        "slsKey": "slide",
+        "defaultDls": "Big Cactus Radio - Kickin' & Rockin' Country 24/24",
+        "slsUrl": null,
+        "slsBackColor": "",
+        "slsFontColor": "",
+        "defaultDlsAllowed": true,
+        "defaultSlsAllowed": true,
+        "dlsIncluded": true
+      },
+      "ui": {
+        "order": 4
+      },
+      "dlplus": {
+        "enabled": true,
+        "offsetMode": "bytes",
+        "maxLen": 128
+      }
+    },
+    {
+      "id": "FEE8",
+      "enabled": true,
+      "identity": {
+        "pi": "0xFEE8",
+        "serviceIdHex": "0xFEE8",
+        "ps8": "Crooner",
+        "ps16": "Crooner Radio",
+        "languageHex": "0x0F",
+        "pty": 12
+      },
+      "dab": {
+        "bitrateKbps": 104,
+        "protectionLevel": 3,
+        "eepMode": "A",
+        "padSize": 58
+      },
+      "input": {
+        "mode": "GSTREAMER",
+        "uri": "https://croonerradio.ice.infomaniak.ch/croonerradio-hifi.aac",
+        "backupUri": "https://croonerradio.ice.infomaniak.ch/croonerradio-midfi.mp3",
+        "zmqBuffer": 40,
+        "zmqPrebuffering": 20,
+        "encoderBufferMs": 200
+      },
+      "audio": {
+        "channels": 2,
+        "sampleRateHz": 48000,
+        "gainDb": 0,
+        "codec": "HE-AAC v1 (SBR)"
+      },
+      "pad": {
+        "enabled": true,
+        "fifoName": "FEE8",
+        "dlsFile": "FEE8.dls",
+        "slideDir": "slide",
+        "motDir": "./data/mot/FEE8",
+        "sls": {
+          "enabled": true,
+          "logoPath": null
+        }
+      },
+      "network": {
+        "ediOutputTcp": {
+          "host": "127.0.0.1",
+          "port": 9004
+        }
+      },
+      "watchdog": {
+        "enabled": true,
+        "silenceThresholdSec": 10,
+        "warningThresholdSec": 5,
+        "switchToBackupOnSilence": true,
+        "returnToMainAfterSec": 60
+      },
+      "metadata": {
+        "mode": "JSON",
+        "intervalSec": 20,
+        "url": "https://paas-out-dev.rplusd.io/237c986e-01df-46d2-832f-f9f9b33f9663/",
+        "artistKey": "artist",
+        "titleKey": "title",
+        "slsKey": "slide",
+        "defaultDls": "Les plus grands standards de la variété internationale",
+        "slsUrl": null,
+        "slsBackColor": "",
+        "slsFontColor": "",
+        "defaultDlsAllowed": true,
+        "defaultSlsAllowed": true,
+        "dlsIncluded": true
+      },
+      "ui": {
+        "order": 5
+      },
+      "dlplus": {
+        "enabled": true,
+        "offsetMode": "bytes",
+        "maxLen": 128
+      }
+    },
+    {
+      "id": "42F1",
+      "enabled": true,
+      "identity": {
+        "pi": "0x42F1",
+        "serviceIdHex": "0x42F1",
+        "ps8": "SwissPop",
+        "ps16": "Swiss Pop",
+        "languageHex": "0x0F",
+        "pty": 10
+      },
+      "dab": {
+        "bitrateKbps": 88,
+        "protectionLevel": 3,
+        "eepMode": "A",
+        "padSize": 58
+      },
+      "input": {
+        "mode": "GSTREAMER",
+        "uri": "https://stream.srg-ssr.ch/m/rsp/mp3_128",
+        "backupUri": "https://stream.srg-ssr.ch/m/rsp/aacp_96",
+        "zmqBuffer": 40,
+        "zmqPrebuffering": 20,
+        "encoderBufferMs": 200
+      },
+      "audio": {
+        "channels": 2,
+        "sampleRateHz": 48000,
+        "gainDb": 0,
+        "codec": "HE-AAC v1 (SBR)"
+      },
+      "pad": {
+        "enabled": true,
+        "fifoName": "42F1",
+        "dlsFile": "42F1.dls",
+        "slideDir": "slide",
+        "motDir": "./data/mot/42F1",
+        "sls": {
+          "enabled": true,
+          "logoPath": null
+        }
+      },
+      "network": {
+        "ediOutputTcp": {
+          "host": "127.0.0.1",
+          "port": 9002
+        }
+      },
+      "watchdog": {
+        "enabled": true,
+        "silenceThresholdSec": 10,
+        "warningThresholdSec": 5,
+        "switchToBackupOnSilence": true,
+        "returnToMainAfterSec": 60
+      },
+      "metadata": {
+        "mode": "JSON",
+        "intervalSec": 10,
+        "url": "https://paas-out-dev.rplusd.io/137e05dc-6b12-4390-9b7b-024fbf9ae1ab",
+        "artistKey": "artist",
+        "titleKey": "title",
+        "slsKey": "slide",
+        "defaultDls": "Vous écoutez Radio Swiss Pop",
+        "slsUrl": null,
+        "slsBackColor": "",
+        "slsFontColor": "",
+        "defaultDlsAllowed": true,
+        "defaultSlsAllowed": true,
+        "dlsIncluded": true
+      },
+      "ui": {
+        "order": 6
+      },
+      "dlplus": {
+        "enabled": true,
+        "offsetMode": "bytes",
+        "maxLen": 128
+      }
+    },
+    {
+      "id": "4DB0",
+      "enabled": true,
+      "identity": {
+        "pi": "0x4DB0",
+        "serviceIdHex": "0x4DB0",
+        "ps8": "MaXXima",
+        "ps16": "MaXXima",
+        "languageHex": "0x0F",
+        "pty": 15
+      },
+      "dab": {
+        "bitrateKbps": 88,
+        "protectionLevel": 3,
+        "eepMode": "A",
+        "padSize": 58
+      },
+      "input": {
+        "mode": "GSTREAMER",
+        "uri": "https://maxxima.mine.nu/maxxima.mp3",
+        "backupUri": "https://maxxima.mine.nu/maxxima.mp3",
+        "zmqBuffer": 40,
+        "zmqPrebuffering": 20,
+        "encoderBufferMs": 200
+      },
+      "audio": {
+        "channels": 2,
+        "sampleRateHz": 48000,
+        "gainDb": 0,
+        "codec": "HE-AAC v1 (SBR)"
+      },
+      "pad": {
+        "enabled": true,
+        "fifoName": "4DB0",
+        "dlsFile": "4DB0.dls",
+        "slideDir": "slide",
+        "motDir": "./data/mot/4DB0",
+        "sls": {
+          "enabled": true,
+          "logoPath": null
+        }
+      },
+      "network": {
+        "ediOutputTcp": {
+          "host": "127.0.0.1",
+          "port": 9001
+        }
+      },
+      "watchdog": {
+        "enabled": true,
+        "silenceThresholdSec": 10,
+        "warningThresholdSec": 5,
+        "switchToBackupOnSilence": true,
+        "returnToMainAfterSec": 60
+      },
+      "metadata": {
+        "mode": "JSON",
+        "intervalSec": 10,
+        "url": "https://paas-out-dev.rplusd.io/fcd35bd2-8973-4738-9c33-56c161f27aa0",
+        "artistKey": "artist",
+        "titleKey": "title",
+        "slsKey": "slide",
+        "defaultDls": "La radio des nouvelles musiques",
+        "slsUrl": null,
+        "slsBackColor": "",
+        "slsFontColor": "",
+        "defaultDlsAllowed": true,
+        "defaultSlsAllowed": true,
+        "dlsIncluded": true
+      },
+      "ui": {
+        "order": 7
+      },
+      "dlplus": {
+        "enabled": true,
+        "offsetMode": "bytes",
+        "maxLen": 128
+      }
+    }
+  ],
+  "name": "demo",
+  "ensemble": {
+    "idHex": "0xFEFE",
+    "eccHex": "0xE1",
+    "label": "DABcast WebUI",
+    "shortlabel": "DABcast",
+    "internationalTable": 1,
+    "localTimeOffset": "auto"
+  }
+}
