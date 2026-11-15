@@ -1264,6 +1264,7 @@ app.post('/api/hackrf/check', (req, res) => {
   });
 });
 
+let lastHackrfInfo = null;   // { serial, board, firmware } of the last HackRF read while free (Check device)
 // 'Check device' of the SDR output: SoapySDRUtil --find only enumerates devices (never transmits).
 // While odr-dabmod drives a SoapySDR device it holds it: reported as in use.
 app.post('/api/sdr/check', (req, res) => {
@@ -1271,7 +1272,14 @@ app.post('/api/sdr/check', (req, res) => {
   const device = sdrDeviceString(o);
   if (!device || !/^[A-Za-z0-9_=,.:/ -]+$/.test(device)) return res.json({ ok: false, message: 'Enter the SoapySDR device args (e.g. driver=lime)' });
   if (pm.isRunning('mux:odr-dabmod') && state._localSoapy()) {
-    return res.json({ ok: true, inUse: true, message: 'SDR in use by odr-dabmod (SoapySDR, transmitting)' });
+    const inUse = 'SDR in use by odr-dabmod (SoapySDR, transmitting)';
+    if (o.device !== 'hackrf') return res.json({ ok: true, inUse: true, message: inUse });
+    // HackRF busy: hackrf_info still lists its serial; board / firmware from the last check while free
+    return execFile('hackrf_info', [], { timeout: 6000 }, (e3, so, se) => {
+      const serial = (/Serial number:\s*(\S+)/i.exec(`${so || ''}${se || ''}`) || [])[1]?.replace(/^0+/, '') || '';
+      const known = serial && lastHackrfInfo?.serial === serial ? lastHackrfInfo : null;
+      res.json({ ok: true, inUse: true, message: `HackRF in use by odr-dabmod (transmitting)${known?.board ? ` — ${known.board}` : ''}${known?.firmware ? ` · firmware ${known.firmware}` : ''}${serial ? ` · serial …${serial.slice(-8)}` : ''}` });
+    });
   }
   execFile('SoapySDRUtil', [`--find=${device}`], { timeout: 10000 }, (err, stdout, stderr) => {
     const out = `${stdout || ''}${stderr || ''}`;
@@ -1288,6 +1296,7 @@ app.post('/api/sdr/check', (req, res) => {
       const board = [pick(/Board ID Number:\s*\d+\s*\(([^)]+)\)/i), pick(/Hardware Revision:\s*(.+)/i)].filter(Boolean).join(' ');
       const firmware = pick(/Firmware Version:\s*(.+)/i);
       const serial = pick(/Serial number:\s*(\S+)/i).replace(/^0+/, '');
+      if (serial && (board || firmware)) lastHackrfInfo = { serial, board, firmware };
       res.json({ ok: true, message: `Found: ${board || label || device}${firmware ? ` · firmware ${firmware}` : ''}${serial ? ` · serial …${serial.slice(-8)}` : ''}` });
     });
   });

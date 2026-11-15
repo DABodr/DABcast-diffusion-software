@@ -154,3 +154,20 @@ describe('outputs — SDR (SoapySDR, local)', () => {
     assert.match(validateOutputs(normalizeOutputs([{ type: 'sdr', device: 'usrp9' }])).join(), /unknown SDR device/);
   });
 });
+
+describe('outputs — SDR gain limits', () => {
+  it('HackRF: TX gain 0-61 (above, the device refuses it and transmits at gain 0); other devices unchanged', () => {
+    const v = (x) => validateOutputs(normalizeOutputs([{ type: 'sdr', ...x }])).join();
+    assert.equal(v({ device: 'hackrf', txGain: 61 }), '');
+    assert.match(v({ device: 'hackrf', txGain: 70 }), /TX gain must be 0-61/);
+    assert.match(v({ device: 'hackrf', txGain: -3 }), /TX gain must be 0-61/);
+    assert.equal(v({ device: 'lime', txGain: 70 }), '');
+  });
+  it('digital gain above 0 and at most 1 (above 1 the signal is clipped)', () => {
+    const v = (x) => validateOutputs(normalizeOutputs([{ type: 'sdr', device: 'hackrf', ...x }])).join();
+    assert.equal(v({ digitalGain: 1 }), '');
+    assert.equal(v({ digitalGain: 0.8 }), '');
+    assert.match(v({ digitalGain: 1.5 }), /digital gain must be above 0 and at most 1/);
+    assert.match(v({ digitalGain: 0 }), /digital gain/);
+  });
+});

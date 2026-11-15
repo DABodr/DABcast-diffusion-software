@@ -21,6 +21,10 @@ EnvironmentFile=-/etc/default/dabcast
 # ODR child processes are spawned detached, so KillMode=process is correct
 # (systemd only kills the dabcast process; the app kills ODR tools itself).
 KillMode=process
+
+# Real-time priority for the ODR tools: odr-dabmux / odr-dabmod ask for it ("Could not set real-time
+# priority" otherwise); it lowers the risk of dropouts on a busy machine (Raspberry Pi)
+LimitRTPRIO=99
 TimeoutStopSec=15s
 
 # Restart automatically on crash, but not on clean exit (systemctl stop)

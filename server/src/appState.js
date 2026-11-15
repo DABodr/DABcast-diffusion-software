@@ -7,7 +7,7 @@ import { ensureDir, readJson, writeJson, safeExists } from './fsutil.js';
 import { buildMuxConfig } from './odr/muxBuilder.js';
 import { convertToSlide as convertSlideImage } from './slideImage.js';
 import { buildAudioEncCommand, buildDabMuxCommand, buildPadEncCommand, buildDabModConfig, buildHackrfTransferCommand, buildProbeCommand } from './odr/commandBuilder.js';
-import { localHackrfOutput, sdrDeviceString } from './odr/outputs.js';
+import { localHackrfOutput, sdrDeviceString, SDR_DEVICES } from './odr/outputs.js';
 import { getDabmodValue } from './odr/dabmodRc.js';
 import { DEFAULT_FILTERTAPS } from './odr/filtertaps.js';
 import { validateService } from './odr/validate.js';
@@ -1561,15 +1561,31 @@ export class AppState {
 
     // Generate dabmod.ini
     const ediPort = localHk.ediPort;
+    // SDR output saved before the gain limits: a TX gain above the device maximum is refused by the device
+    // (the HackRF then transmits at gain 0) and a digital gain above 1 clips the signal — brought back to
+    // the limit, with a warning (the panel refuses those values since 1.10.7)
+    let txGain = hk.txGain;
+    let digitalGain = num(hk.digitalGain, 1);
+    if (soapy && hk.type === 'sdr') {
+      const gmax = SDR_DEVICES[hk.device]?.maxTxGain;
+      if (gmax !== undefined && Number(txGain) > gmax) {
+        this.logger.line('mux', `SDR TX gain ${txGain} above the ${SDR_DEVICES[hk.device].label} maximum: ${gmax} used — set it in Multiplex & modulator`, 'WARN');
+        txGain = gmax;
+      }
+      if (digitalGain > 1) {
+        this.logger.line('mux', `SDR digital gain ${digitalGain} would clip the signal: 1 used — set it in Multiplex & modulator`, 'WARN');
+        digitalGain = 1;
+      }
+    }
     const dabmodConfig = buildDabModConfig({
       source: `tcp://localhost:${ediPort}`,
       maxFramesQueued: num(hk.maxFramesQueued, 0) || 580,
       gainmode: num(hk.gainmode, 2),
-      digitalGain: num(hk.digitalGain, 1),
+      digitalGain,
       rate,
       filtertapsPath,
       fifoPath,
-      ...(soapy ? { soapy: { device: sdrDeviceString(hk), masterClockRate: hk.masterClockRate, txGain: hk.txGain, freqHz, bandwidth: hk.bandwidth, txAntenna: hk.txAntenna } } : {})
+      ...(soapy ? { soapy: { device: sdrDeviceString(hk), masterClockRate: hk.masterClockRate, txGain, freqHz, bandwidth: hk.bandwidth, txAntenna: hk.txAntenna } } : {})
     });
     fs.writeFileSync(dabmodIniPath, dabmodConfig, 'utf8');
     this.logger.line('mux', `generated dabmod.ini: ${dabmodIniPath}`);
@@ -1578,6 +1594,11 @@ export class AppState {
     this.pm.spawn('mux:odr-dabmod', 'odr-dabmod', [dabmodIniPath], {
       ...(soapy ? {
         onStderr: (line) => {
+          // the device may apply another gain than asked (out of its range): never silently
+          const ag = /SoapySDR:Actual TX gain:\s*(-?[\d.]+)/.exec(line);
+          if (ag && Math.abs(Number(ag[1]) - Number(txGain)) > 0.5) {
+            this.logger.line('mux', `SDR TX gain: ${txGain} asked, the device applied ${Number(ag[1])} — check the TX gain range of the device`, 'WARN');
+          }
           if (/Error making SoapySDR device/i.test(line)) {   // once per failed start (not 'Cannot create…', same error)
             const msg = `SDR not detected (SoapySDR ${sdrDeviceString(hk)}) — check the device and its SoapySDR module`;
             if (this._modState?.failing) { this.logger.line('mux', `${msg} (retry ${this._modState.attempts})`, 'WARN'); return; }   // already reported
@@ -1596,7 +1617,7 @@ export class AppState {
         }
       }
     });
-    this.logger.line('mux', `started odr-dabmod (block=${dabBlock}, freq=${freqHz}Hz${soapy ? `, SoapySDR ${sdrDeviceString(hk)}, txGain=${hk.txGain}` : ''})`);
+    this.logger.line('mux', `started odr-dabmod (block=${dabBlock}, freq=${freqHz}Hz${soapy ? `, SoapySDR ${sdrDeviceString(hk)}, txGain=${txGain}, digitalGain=${digitalGain}` : ''})`);
 
     // Start hackrf_transfer (SoapySDR driver: none, odr-dabmod sends to the HackRF itself)
     if (!soapy) {
