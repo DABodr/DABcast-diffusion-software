@@ -356,6 +356,8 @@ h2 {
 .feature-icon { font-size: 28px; margin-bottom: 14px; }
 .feature-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 10px; }
 .feature-card p { font-size: 14px; color: var(--muted); line-height: 1.65; }
+.feature-card ul { margin: 8px 0 0; padding-left: 18px; font-size: 14px; color: var(--muted); line-height: 1.6; }
+.feature-card li strong { color: var(--text); }
 
 /* ── DOWNLOAD ────────────────────────────────────── */
 .download {

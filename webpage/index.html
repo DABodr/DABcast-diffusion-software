@@ -74,7 +74,20 @@
           <div class="feature-card">
             <div class="feature-icon">📡</div>
             <h3>Full ODR-mmbTools integration</h3>
-            <p>Manages odr-audioenc, odr-padenc, odr-dabmux and odr-dabmod in a coordinated process chain. Feeds several transmitters at once: EasyDAB V2 (ZMQ), commercial modulators (EDI/UDP, multicast), converters and remote sites (EDI/TCP), raw ETI — with their connection state.</p>
+            <p>Manages odr-audioenc, odr-padenc, odr-dabmux and odr-dabmod in a coordinated process chain: start, stop, crash detection and restart, all from the interface.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">📶</div>
+            <h3>Multiple modulator outputs at once</h3>
+            <p>One multiplex feeds as many transmitters as you need, each with its live connection state:</p>
+            <ul>
+              <li><strong>SDR</strong> on the server — HackRF, LimeSDR, BladeRF, PlutoSDR or any SoapySDR device</li>
+              <li><strong>ZMQ</strong> — EasyDAB V2, with optional timestamps</li>
+              <li><strong>EDI/UDP</strong> — commercial modulators, unicast or multicast, PFT / FEC</li>
+              <li><strong>EDI/TCP</strong> — transmitters, converters, remote sites or a remote odr-dabmod</li>
+              <li><strong>ETI/TCP</strong> — raw ETI</li>
+            </ul>
           </div>
 
           <div class="feature-card">
