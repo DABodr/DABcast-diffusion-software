@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="webpage/brand/dabcast-logo.png" />
+    <img src="webpage/brand/dabcast-logo-light.png" alt="DABcast — DAB+ broadcast manager for ODR-mmbTools" width="460" />
+  </picture>
+</p>
+
 # DABcast - WebUI for DAB/DAB+ (ODR-mmbTools)
 
 Modern web interface for managing DAB/DAB+ multiplexes with ODR-mmbTools.
