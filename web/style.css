@@ -789,6 +789,9 @@ input, select { background: var(--surface2); border-radius: 6px; padding: 8px 10
 .menu[open] > summary { background: var(--surface2); color: var(--text); }
 .menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 10; min-width: 220px; display: flex; flex-direction: column; gap: 2px; padding: 6px; background: var(--card); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.45); }
 .menu-list .btn { border-color: transparent; text-align: left; width: 100%; }
+/* open menu in a short card (no service yet): not cut by the card frame */
+.card:has(.menu[open]) { overflow: visible; }
+.card:has(.menu[open]) > .card-head { border-radius: 8px 8px 0 0; }
 .menu-sep { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
 .table td.row-actions { display: table-cell; text-align: right; white-space: nowrap; }
 .table td.col-pid, .table td.col-bitrate, .table td.col-cu, .table td.col-prot, .table td.col-sr, .table td.col-port { white-space: nowrap; }

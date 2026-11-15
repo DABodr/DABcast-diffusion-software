@@ -25,7 +25,8 @@ export const OUTPUT_TYPES = ['zmq', 'eti-tcp', 'edi-tcp', 'edi-udp', 'hackrf', '
 // HackRF: 61 = VGA 47 + the 14 dB amplifier (= hackrf_transfer -x 47 -a 1); no settable master clock (the
 // LimeSDR value of the ODR example fails); 1.75 MHz bandwidth as hackrf_transfer -b.
 export const SDR_DEVICES = {
-  hackrf: { label: 'HackRF', driver: 'hackrf', txGain: 61, masterClockRate: 0, bandwidth: 1750000 },
+  // maxTxGain: the HackRF refuses a higher value and then transmits at gain 0 (seen: 70 → "Actual TX gain: 0")
+  hackrf: { label: 'HackRF', driver: 'hackrf', txGain: 61, maxTxGain: 61, masterClockRate: 0, bandwidth: 1750000 },
   lime: { label: 'LimeSDR', driver: 'lime', txGain: 40, masterClockRate: 32768000, bandwidth: 0 },   // ODR example values
   bladerf: { label: 'BladeRF', driver: 'bladerf', txGain: 20, masterClockRate: 0, bandwidth: 0 },
   plutosdr: { label: 'PlutoSDR', driver: 'plutosdr', txGain: 40, masterClockRate: 0, bandwidth: 0 },
@@ -136,7 +137,12 @@ export function validateOutputs(list, { reserved = new Map(), ediOptions = norma
       if (o.device === 'custom' && !o.deviceArgs) errors.push(`${label}: enter the SoapySDR device args (e.g. driver=lime,serial=…)`);
       if (!isIniSafe(o.deviceArgs) || !isIniSafe(o.txAntenna)) errors.push(`${label}: device args / antenna: letters, digits and = , . : / _ - only`);
       if (!DAB_FREQ_TABLE[o.dabBlock]) errors.push(`${label}: unknown DAB block ${o.dabBlock}`);
-      if (!(Number.isFinite(o.txGain) && o.txGain >= -50 && o.txGain <= 100)) errors.push(`${label}: TX gain must be -50 to 100 dB`);
+      const gmax = SDR_DEVICES[o.device]?.maxTxGain;
+      if (gmax !== undefined) {
+        if (!(Number.isFinite(o.txGain) && o.txGain >= 0 && o.txGain <= gmax)) errors.push(`${label}: TX gain must be 0-${gmax} dB for this device`);
+      } else if (!(Number.isFinite(o.txGain) && o.txGain >= -50 && o.txGain <= 100)) errors.push(`${label}: TX gain must be -50 to 100 dB`);
+      // above 1 the samples are clipped (distorted signal, spill on the adjacent channels): raise the TX gain instead
+      if (!(Number.isFinite(o.digitalGain) && o.digitalGain > 0 && o.digitalGain <= 1)) errors.push(`${label}: digital gain must be above 0 and at most 1 (above 1 the signal is clipped: raise the TX gain instead)`);
       if (!(Number.isInteger(o.masterClockRate) && o.masterClockRate >= 0)) errors.push(`${label}: master clock rate must be 0 (not set) or a rate in Hz`);
       if (!(Number.isInteger(o.bandwidth) && o.bandwidth >= 0)) errors.push(`${label}: bandwidth must be 0 (automatic) or a value in Hz`);
       if (!(Number.isInteger(o.maxFramesQueued) && o.maxFramesQueued >= 1 && o.maxFramesQueued <= 2000)) errors.push(`${label}: max frames queued must be 1-2000`);

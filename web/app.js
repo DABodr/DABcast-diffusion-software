@@ -1756,7 +1756,7 @@ const NET_TYPE_LABEL = { 'edi-udp': 'EDI/UDP', 'edi-tcp': 'EDI/TCP', zmq: 'ZMQ',
 // SoapySDR devices of the SDR output: starting values applied when the device is chosen (same as
 // SDR_DEVICES of server/src/odr/outputs.js). Tested on real hardware: HackRF only.
 const SDR_DEVICE_UI = {
-  hackrf: { label: 'HackRF', txGain: 61, masterClockRate: 0, bandwidth: 1750000 },
+  hackrf: { label: 'HackRF', txGain: 61, maxTxGain: 61, masterClockRate: 0, bandwidth: 1750000 },
   lime: { label: 'LimeSDR (not tested)', txGain: 40, masterClockRate: 32768000, bandwidth: 0 },
   bladerf: { label: 'BladeRF (not tested)', txGain: 20, masterClockRate: 0, bandwidth: 0 },
   plutosdr: { label: 'PlutoSDR (not tested)', txGain: 40, masterClockRate: 0, bandwidth: 0 },
@@ -1862,12 +1862,14 @@ function renderNetOutputs() {
       fields = sel('device', 'Device', devices)
         + netField(o, i, 'deviceArgs', o.device === 'custom' ? 'SoapySDR args' : 'Extra args', `placeholder="${o.device === 'custom' ? 'driver=…' : 'serial=… (optional)'}"`)
         + sel('dabBlock', 'DAB block', blocks)
-        + netField(o, i, 'txGain', 'TX gain (dB)', 'type="number" min="-50" max="100" step="any"')
+        + (SDR_DEVICE_UI[o.device]?.maxTxGain !== undefined
+          ? netField(o, i, 'txGain', `TX gain (0-${SDR_DEVICE_UI[o.device].maxTxGain})`, `type="number" min="0" max="${SDR_DEVICE_UI[o.device].maxTxGain}" step="1" title="Above the maximum the device refuses the value and transmits at gain 0"`)
+          : netField(o, i, 'txGain', 'TX gain (dB)', 'type="number" min="-50" max="100" step="any"'))
         + netField(o, i, 'masterClockRate', 'Master clock (Hz)', 'type="number" min="0" step="1"')
         + netField(o, i, 'bandwidth', 'Bandwidth (Hz, 0 = auto)', 'type="number" min="0" step="1"')
         + netField(o, i, 'txAntenna', 'TX antenna', 'placeholder="default"')
         + sel('gainmode', 'Gain mode', fromSel('m_hackrf_gainmode', o.gainmode))
-        + netField(o, i, 'digitalGain', 'Digital gain', 'type="number" min="0" max="10" step="0.1"')
+        + netField(o, i, 'digitalGain', 'Digital gain (≤ 1)', 'type="number" min="0.05" max="1" step="0.05" title="At most 1: above, the signal is clipped (distortion, spill on adjacent channels). For more power raise the TX gain."')
         + sel('rate', 'Sample rate', fromSel('m_hackrf_rate', o.rate))
         + netField(o, i, 'maxFramesQueued', 'Max frames queued', 'type="number" min="1" max="2000"')
         + netField(o, i, 'port', 'Internal EDI port', 'type="number" min="1024" max="65535"')
@@ -1941,7 +1943,15 @@ $('#netOutputs')?.addEventListener('input', (e) => {
   }
   updateMuxRestartWarn();
 });
-$('#netOutputs')?.addEventListener('change', (e) => { if (e.target.matches('[data-net]')) updateMuxRestartWarn(); });
+$('#netOutputs')?.addEventListener('change', (e) => {
+  if (!e.target.matches('[data-net]')) return;
+  // SDR gains blocked to what the device accepts (HackRF above 61 dB: the value is refused, gain 0)
+  const el = e.target;
+  const o = NET_OUTPUTS[Number(el.dataset.net)];
+  const max = el.dataset.key === 'txGain' ? SDR_DEVICE_UI[o?.device]?.maxTxGain : (el.dataset.key === 'digitalGain' && o?.type === 'sdr' ? 1 : undefined);
+  if (max !== undefined && el.value !== '' && Number(el.value) > max) { el.value = max; o[el.dataset.key] = max; }
+  updateMuxRestartWarn();
+});
 $('#netOutputs')?.addEventListener('click', (e) => {
   const b = e.target.closest('[data-net-del]');
   if (!b) return;
