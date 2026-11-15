@@ -129,7 +129,7 @@ function issueSession(req, res, { remember = false } = {}) {
 
 // Public login assets. The main application and every sensitive asset remain protected.
 for (const filename of ['login.html', 'login.css', 'login.js', 'logodab.png', 'favicon.png']) {
-  app.get(`/${filename}`, (req, res) => res.sendFile(path.resolve(webDir, filename)));
+  app.get(`/${filename}`, (req, res) => res.sendFile(path.resolve(webDir, filename), { headers: { 'Cache-Control': 'no-cache' } }));
 }
 
 app.get('/api/auth/session', (req, res) => {
@@ -381,7 +381,9 @@ regenerateBandedLogos();
 const state = new AppState({ settings, dataDir, logger, processManager: pm });
 
 // static web
-app.use('/', express.static(webDir));
+// no-cache: the browser checks its copy at each load (ETag, 304 when unchanged) — after an update the
+// new app.js / style.css are used instead of the cached ones
+app.use('/', express.static(webDir, { setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache') }));
 // /data: only the pictures of the services (data/mot/…/*.jpg|png|webp). settings.json (password hash),
 // logs, presets and runtime files are not served (security review; the web UI uses /api/mot).
 app.use('/data', (req, res, next) => {
