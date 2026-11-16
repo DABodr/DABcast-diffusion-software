@@ -16,7 +16,7 @@ let activeLogTab = 'all';
 let STATE = null;
 let editingId = null;
 // Fields the server only accepts while the mux is stopped. Editing them ON AIR = Stop → save → Start.
-const MUX_RESTART_FIELDS = ['f_pi','f_ps8','f_ps16','f_bitrate','f_prot','f_sr','f_zbuf','f_zpre','f_codec','f_lang','f_pty','f_ch','f_padsize','f_direct_port'];
+const MUX_RESTART_FIELDS = ['f_pi','f_ps8','f_ps16','f_bitrate','f_prot','f_sr','f_zbuf','f_zpre','f_codec','f_lang','f_pty','f_ch','f_padsize','f_slideshow','f_direct_port'];
 let restartSnapshot = null;   // field values when the edit dialog opened ON AIR (null otherwise)
 const restartFieldValues = () => MUX_RESTART_FIELDS.map((id) => document.getElementById(id)?.value ?? '');
 const restartFieldsChanged = () => Boolean(restartSnapshot && STATE?.muxRunning
@@ -221,6 +221,11 @@ function updatePadHelp() {
     el.classList.remove('over');
     return;
   }
+  if ($('#f_slideshow')?.value === '0') {
+    el.textContent = 'Slideshow off: only DLS / DL+ text uses the PAD, unused PAD bytes go back to the audio';
+    el.classList.remove('over');
+    return;
+  }
   const bitrate = Number($('#f_bitrate')?.value) || 0;
   const bps = pad * padAuPerSec($('#f_codec')?.value || '', bitrate, Number($('#f_sr')?.value) || 48000);
   const padKbps = bps * 8 / 1000;
@@ -234,7 +239,7 @@ function updatePadHelp() {
   el.title = share > 0.2 ? 'The PAD takes a large share of the bitrate: a smaller PAD leaves more for the audio' : '';
 }
 $('#f_padsize')?.addEventListener('input', updatePadHelp);
-for (const id of ['f_bitrate', 'f_codec', 'f_sr']) $(`#${id}`)?.addEventListener('change', updatePadHelp);
+for (const id of ['f_bitrate', 'f_codec', 'f_sr', 'f_slideshow']) $(`#${id}`)?.addEventListener('change', updatePadHelp);
 // PS8 / PS16 character counters
 function updatePsCounts() {
   for (const [id, max] of [['ps8', 8], ['ps16', 16]]) {
@@ -915,6 +920,12 @@ function render() {
       td._svcKey = svcKey;
       td._trackKey = trackKey;
     }
+    // Slideshow disabled: thumbnail greyed (the logo stays in slide/ but is not sent)
+    const slsOff = svc.pad?.sls?.enabled === false;
+    const slsTd = tr.children[SLS_COL];
+    slsTd.title = slsOff ? 'Slideshow disabled (DLS only): no image is sent' : '';
+    const slsImg = slsTd.querySelector('img.sls-thumb');
+    if (slsImg) slsImg.style.opacity = slsOff ? '0.25' : '';
 
     // Refresh slide list when track changes
     _refreshSlideList(svc.id, svcKey, trackKey, false, airFiles);
@@ -1140,6 +1151,7 @@ function openDialogFor(service) {
   $('#f_codec').value = service?.audio?.codec || 'HE-AAC v1 (SBR)';
   // New service: 40 bytes (58 took ~13 % of an 88 kbps HE-AAC stream; 40 still sends a 15 kB cover in ~16 s)
   $('#f_padsize').value = service ? (service.dab?.padSize ?? 58) : 40;
+  $('#f_slideshow').value = service?.pad?.sls?.enabled === false ? '0' : '1';
 
   // PS (Parametric Stereo) requires stereo
   const chSel = $('#f_ch');
@@ -3904,6 +3916,7 @@ $('#svcForm').addEventListener('submit', async (e) => {
       eepMode: 'A',
       padSize: Number($('#f_padsize').value || 58)
     },
+    pad: { sls: { enabled: $('#f_slideshow').value !== '0' } },
     input: {
       mode: $('#f_src').value,
       uri: $('#f_uri').value.trim() || null,

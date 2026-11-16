@@ -207,3 +207,30 @@ describe('muxBuilder — labels', () => {
     assert.doesNotMatch(text, /^\s*outputs \{ x/m, 'no injected line');
   });
 });
+
+describe('buildMuxConfig — slideshow signalling (pad.sls.enabled)', () => {
+  const comps = (cfg) => buildMuxConfig(cfg).split('components {')[1].split('\noutputs {')[0];
+
+  it('slideshow on: figtype 0x2 + userapp "slideshow" (unchanged)', () => {
+    const c = comps(makeConfig());
+    assert.ok(c.includes('figtype 0x2'));
+    assert.ok(c.includes('userapp "slideshow"'));
+  });
+
+  it('no pad field (old preset): figtype 0x2 kept, as before', () => {
+    const cfg = makeConfig();
+    delete cfg.preset.services[0].pad;
+    const c = comps(cfg);
+    assert.ok(c.includes('figtype 0x2'));
+    assert.ok(!c.includes('userapp'));
+  });
+
+  it('slideshow disabled: neither figtype 0x2 nor userapp (no slideshow announced)', () => {
+    const cfg = makeConfig();
+    cfg.preset.services[0].pad = { sls: { enabled: false } };
+    const c = comps(cfg);
+    assert.ok(!c.includes('figtype'));
+    assert.ok(!c.includes('userapp'));
+    assert.ok(c.includes('subchannel sub_1'), 'component still defined');
+  });
+});

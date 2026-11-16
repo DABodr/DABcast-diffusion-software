@@ -110,7 +110,9 @@ export function buildMuxConfig({ settings, preset }) {
     lines.push(`    ${comp} {`);
     lines.push(`        service ${srv}`);
     lines.push(`        subchannel ${sub}`);
-    lines.push('        figtype 0x2');
+    // figtype 0x2 alone makes odr-dabmux announce a slideshow (FIG 0/13): left out when the
+    // service's slideshow is disabled, so receivers do not wait for images (missing field = on)
+    if (svc.pad?.sls?.enabled !== false) lines.push('        figtype 0x2');
     if (svc.pad?.sls?.enabled) {
       lines.push('        user-applications {');
       lines.push('            userapp "slideshow"');

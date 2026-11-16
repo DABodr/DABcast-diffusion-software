@@ -620,6 +620,10 @@ export class AppState {
         if (typeof patch.dab.eepMode === 'string') next.dab.eepMode = patch.dab.eepMode;
         if (Number.isInteger(patch.dab.padSize)) next.dab.padSize = patch.dab.padSize;
       }
+      // Slideshow on/off: also signalled in the .mux (userapp "slideshow"), so mux stopped only
+      if (typeof patch.pad?.sls?.enabled === 'boolean') {
+        next.pad = { ...next.pad, sls: { ...next.pad?.sls, enabled: patch.pad.sls.enabled } };
+      }
 
       if (patch.audio) {
         if (Number.isInteger(patch.audio.sampleRateHz)) next.audio.sampleRateHz = patch.audio.sampleRateHz;
@@ -788,7 +792,7 @@ export class AppState {
         dlsFile: `${id.toUpperCase()}.dls`,
         slideDir: 'slide',
         motDir: `./data/mot/${id.toUpperCase()}`,
-        sls: { enabled: true, logoPath: null }
+        sls: { enabled: svc.pad?.sls?.enabled !== false, logoPath: null }
       },
       network: {
         ediOutputTcp: {
@@ -1307,9 +1311,11 @@ export class AppState {
     const airDir = path.resolve(motDirAbs, 'air');
     try {
       ensureDir(airDir);
+      // Slideshow disabled (pad.sls.enabled === false): empty air dir, odr-padenc sends DLS / DL+ only
+      const slideshowOff = svc.pad?.sls?.enabled === false;
       const isImg = (f) => /\.(jpe?g|png|webp)$/i.test(f);
-      const src = fs.readdirSync(slideDir).filter((f) => isImg(f) && fs.statSync(path.join(slideDir, f)).isFile());
-      const want = this._airChoice(svc, slideDir, src);
+      const src = slideshowOff ? [] : fs.readdirSync(slideDir).filter((f) => isImg(f) && fs.statSync(path.join(slideDir, f)).isFile());
+      const want = slideshowOff ? [] : this._airChoice(svc, slideDir, src);
       for (const f of want) {
         const from = path.join(slideDir, f);
         const to = path.join(airDir, f);
