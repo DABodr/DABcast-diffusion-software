@@ -192,17 +192,49 @@ function updateCuImpact() {
   el.title = counted ? 'Capacity units used by the multiplex with this service' : 'This service is OFF: its CU are not counted in the multiplex';
   el.classList.toggle('over', total > max);
 }
-// PAD size → slide sending speed (X-PAD ≈ PAD bytes × ~24 AU/s)
+// The PAD is reserved in every AU: HE-AAC (v1/v2) = 25 AU/s at 48 kHz, 16.7 at 32 kHz; AAC-LC = twice that.
+// 'AAC-LC' passes no flag, so odr-audioenc chooses: HE-AAC v2 below 56 kbps, HE-AAC 56–80, AAC-LC from 88.
+function padAuPerSec(codec, bitrate, sampleRate) {
+  const lc = String(codec).includes('AAC-LC') && bitrate >= 88;
+  return (sampleRate === 32000 ? 50 / 3 : 25) * (lc ? 2 : 1);
+}
+// odr-padenc accepts 6 (short X-PAD) or 8–196 bytes and exits on any other size.
+// 0 turns the PAD off: odr-audioenc then sends no DLS and no slides.
+function padSizeValid(pad) {
+  return Number.isInteger(pad) && (pad === 0 || pad === 6 || (pad >= 8 && pad <= 196));
+}
+// PAD size → bitrate taken from the audio, and slide sending speed
 function updatePadHelp() {
   const el = $('#padHelp');
-  const pad = Number($('#f_padsize')?.value) || 0;
   if (!el) return;
-  if (pad < 4) { el.textContent = ''; return; }
-  const bps = pad * 24;
+  const raw = String($('#f_padsize')?.value ?? '').trim();
+  const pad = Number(raw);
+  el.title = '';
+  if (raw === '') { el.textContent = ''; el.classList.remove('over'); return; }
+  if (!padSizeValid(pad)) {
+    el.textContent = 'Invalid size: odr-padenc accepts 0 (PAD off), 6 or 8 to 196 bytes';
+    el.classList.add('over');
+    return;
+  }
+  if (pad === 0) {
+    el.textContent = 'PAD off: no DLS and no slides on receivers, the whole bitrate goes to the audio';
+    el.classList.remove('over');
+    return;
+  }
+  const bitrate = Number($('#f_bitrate')?.value) || 0;
+  const bps = pad * padAuPerSec($('#f_codec')?.value || '', bitrate, Number($('#f_sr')?.value) || 48000);
+  const padKbps = bps * 8 / 1000;
+  const share = bitrate ? padKbps / bitrate : 0;
   const t = (kb) => Math.max(1, Math.round(kb * 1024 / bps));
-  el.textContent = `≈ ${(bps / 1024).toFixed(1)} kB/s for slides: 5 kB logo ≈ ${t(5)} s, 15 kB cover ≈ ${t(15)} s`;
+  const rate = bitrate
+    ? `PAD ≈ ${padKbps.toFixed(1)} kbps (${Math.round(share * 100)} %) → ≈ ${Math.max(0, bitrate - padKbps).toFixed(0)} kbps left for audio · `
+    : '';
+  el.textContent = `${rate}≈ ${(bps / 1024).toFixed(1)} kB/s for slides: 5 kB logo ≈ ${t(5)} s, 15 kB cover ≈ ${t(15)} s`;
+  el.classList.toggle('over', share > 0.2);
+  el.title = share > 0.2 ? 'The PAD takes a large share of the bitrate: a smaller PAD leaves more for the audio' : '';
 }
 $('#f_padsize')?.addEventListener('input', updatePadHelp);
+for (const id of ['f_bitrate', 'f_codec', 'f_sr']) $(`#${id}`)?.addEventListener('change', updatePadHelp);
 // PS8 / PS16 character counters
 function updatePsCounts() {
   for (const [id, max] of [['ps8', 8], ['ps16', 16]]) {
@@ -537,6 +569,11 @@ function validateServiceForm() {
   const channels = Number($('#f_ch').value || 2);
   if (codec === 'HE-AAC v2 (PS)' && channels !== 2) {
     errors.push('HE-AAC v2 (PS) requires stereo mode (2 channels).');
+  }
+
+  const padRaw = String($('#f_padsize').value ?? '').trim();
+  if (padRaw !== '' && !padSizeValid(Number(padRaw))) {
+    errors.push('PAD size must be 0 (PAD off), 6 or 8 to 196 bytes.');
   }
 
   return { errors, normalizedPi };
@@ -1101,7 +1138,8 @@ function openDialogFor(service) {
   $('#f_encbuf').value = service?.input?.encoderBufferMs ?? 200;
   $('#f_gain').value = service?.audio?.gainDb ?? 0;
   $('#f_codec').value = service?.audio?.codec || 'HE-AAC v1 (SBR)';
-  $('#f_padsize').value = service?.dab?.padSize ?? 58;
+  // New service: 40 bytes (58 took ~13 % of an 88 kbps HE-AAC stream; 40 still sends a 15 kB cover in ~16 s)
+  $('#f_padsize').value = service ? (service.dab?.padSize ?? 58) : 40;
 
   // PS (Parametric Stereo) requires stereo
   const chSel = $('#f_ch');
