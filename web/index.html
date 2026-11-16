@@ -536,6 +536,13 @@
                 <span>PAD size (bytes, DLS + slides)</span>
                 <input id="f_padsize" type="number" min="0" max="196" step="1" />
               </label>
+              <label title="Disabled: no logo or cover is sent and receivers are not told to expect a slideshow; DLS and DL+ text still go out">
+                <span>Slideshow</span>
+                <select id="f_slideshow">
+                  <option value="1">Enabled</option>
+                  <option value="0">Disabled (DLS only)</option>
+                </select>
+              </label>
               <span class="field-note span2 beside-input" id="padHelp"></span>
             </div>
           </div>
