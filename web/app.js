@@ -21,8 +21,22 @@ let restartSnapshot = null;   // field values when the edit dialog opened ON AIR
 const restartFieldValues = () => MUX_RESTART_FIELDS.map((id) => document.getElementById(id)?.value ?? '');
 const restartFieldsChanged = () => Boolean(restartSnapshot && STATE?.muxRunning
   && restartFieldValues().some((v, i) => v !== restartSnapshot[i]));
+// Fields whose ON AIR change restarts only this service's encoder (setService: source / URI, gain, drift)
+const ENC_RESTART_FIELDS = ['f_src', 'f_uri', 'f_gain', 'f_drift'];
+let encRestartSnapshot = null;   // same lifetime as restartSnapshot
+const encRestartFieldValues = () => ENC_RESTART_FIELDS.map((id) => document.getElementById(id)?.value ?? '');
+const encRestartFieldsChanged = () => {
+  if (!encRestartSnapshot || !STATE?.muxRunning) return false;
+  const svc = STATE.preset?.services?.find((s) => s.id === editingId);
+  if (svc?.enabled === false) return false;   // OFF service: no encoder running
+  const isDirect = (v) => v === 'ZMQ' || v === 'EDI';
+  if (isDirect(encRestartSnapshot[0]) || isDirect($('#f_src')?.value)) return false;   // no encoder
+  return encRestartFieldValues().some((v, i) => v !== encRestartSnapshot[i]);
+};
 function updateRestartWarn() {
-  document.getElementById('dlgRestartWarn')?.classList.toggle('hidden', !restartFieldsChanged());
+  const mux = restartFieldsChanged();
+  document.getElementById('dlgRestartWarn')?.classList.toggle('hidden', !mux);
+  document.getElementById('dlgEncRestartWarn')?.classList.toggle('hidden', mux || !encRestartFieldsChanged());
 }
 let selectedServiceId = null;  // Track selected service for export
 let logoManagingServiceId = null;  // Track service for logo management
@@ -68,7 +82,7 @@ function bufTag(inp, always = false) {
   return `<span class="buf-tag ${cls}" title="${esc(tip)}">${label}${d ? ' ▲' : ''}</span>`;
 }
 // ON AIR edits saved but not yet applied (rt.pendingRestart from setService)
-const PENDING_LABELS = { gainDb: 'audio gain', encoderBufferMs: 'encoder buffer', channels: 'channels', pty: 'PTY', languageHex: 'language', enabled: 'enabled' };
+const PENDING_LABELS = { gainDb: 'audio gain', encoderBufferMs: 'encoder buffer', driftComp: 'drift compensation', channels: 'channels', pty: 'PTY', languageHex: 'language', enabled: 'enabled' };
 function pendingTag(rt) {
   const keys = rt?.pendingRestart;
   if (!keys?.length) return '';
@@ -320,6 +334,8 @@ function updateSourceVisibility() {
     const el = document.getElementById(id);
     if (el) el.style.display = isDirect ? 'none' : '';
   }
+  const driftRow = document.getElementById('f_drift_row');
+  if (driftRow) driftRow.style.display = mode === 'VLC' ? '' : 'none';
   const directRowIds = ['f_direct_port_row', 'f_direct_bitrate_row', 'f_direct_prot_row'];
   for (const id of directRowIds) {
     const el = document.getElementById(id);
@@ -1147,6 +1163,7 @@ function openDialogFor(service) {
   $('#f_zpre').value = service?.input?.zmqPrebuffering ?? 20;
 
   $('#f_encbuf').value = service?.input?.encoderBufferMs ?? 200;
+  if ($('#f_drift')) $('#f_drift').value = service?.input?.driftComp === true ? '1' : '0';
   $('#f_gain').value = service?.audio?.gainDb ?? 0;
   $('#f_codec').value = service?.audio?.codec || 'HE-AAC v1 (SBR)';
   // New service: 40 bytes (58 took ~13 % of an 88 kbps HE-AAC stream; 40 still sends a 15 kB cover in ~16 s)
@@ -1259,13 +1276,21 @@ function openDialogFor(service) {
     if (el) el.disabled = id === 'f_ch' && $('#f_codec').value === 'HE-AAC v2 (PS)';
   });
   restartSnapshot = locked && editingId ? restartFieldValues() : null;
+  encRestartSnapshot = locked && editingId ? encRestartFieldValues() : null;
   updateRestartWarn();
 
   // reset tabs
   setActiveTab('general');
 
   dlg.showModal();
-  // Same dialog height on the three tabs (the tallest one at opening); unfolding Metadata blocks still grows it
+  equalizeSvcTabs();
+  svcSnapshot = new Map();
+  snapshotSvcForm();
+}
+
+// Same dialog height on the three tabs (the tallest one); recomputed when a block is (un)folded,
+// so folding shrinks the dialog again and unfolding grows it
+function equalizeSvcTabs() {
   const panels = [...document.querySelectorAll('#dlgService .tabpanel')];
   panels.forEach((p) => { p.style.minHeight = ''; });
   const tallest = Math.max(...panels.map((p) => {
@@ -1276,8 +1301,6 @@ function openDialogFor(service) {
     return h;
   }));
   panels.forEach((p) => { p.style.minHeight = `${tallest}px`; });
-  svcSnapshot = new Map();
-  snapshotSvcForm();
 }
 
 function setActiveTab(tab) {
@@ -2199,6 +2222,7 @@ function toggleMetaFold(card) {
   st[card.dataset.fold] = !card.classList.contains('folded');
   try { localStorage.setItem('dabcast.metaFold', JSON.stringify(st)); } catch { /* ignore */ }
   applyMetaFold();
+  if (card.closest('#dlgService')) equalizeSvcTabs();
 }
 document.querySelectorAll('.meta-card[data-fold] > .meta-card-title').forEach((t) => {
   t.addEventListener('click', () => toggleMetaFold(t.parentElement));
@@ -3521,6 +3545,7 @@ $('#btnSwap').addEventListener('click', () => {
   const b = $('#f_backup').value;
   $('#f_uri').value = b;
   $('#f_backup').value = a;
+  updateRestartWarn();
 });
 
 // Logo management event listeners
@@ -3924,6 +3949,7 @@ $('#svcForm').addEventListener('submit', async (e) => {
       backupUri: $('#f_backup').value.trim() || null
       ,
       encoderBufferMs: Number($('#f_encbuf').value || 200),
+      driftComp: $('#f_drift')?.value === '1',
       zmqBuffer: Number($('#f_zbuf').value || 40),
       zmqPrebuffering: Number($('#f_zpre').value || 20)
     },

@@ -317,6 +317,7 @@
       </div>
       <div class="alert hidden" id="svcError"></div>
       <div class="alert alert-warn hidden" id="dlgRestartWarn">⚠ These changes require a multiplex restart: on save, ALL services go off air for a few seconds.</div>
+      <div class="alert alert-warn hidden" id="dlgEncRestartWarn">⚠ This change restarts this service's encoder: 2–3 s gap on this service only (the other services stay on air).</div>
 
       <div class="tabs" role="tablist" aria-label="Service tabs">
         <button type="button" class="tab active" data-tab="general">General</button>
@@ -547,24 +548,6 @@
               <span class="field-note span2 beside-input" id="padHelp"></span>
             </div>
           </div>
-          <div class="meta-card" data-fold="advanced">
-            <div class="meta-card-title" role="button" tabindex="0" aria-expanded="true">Advanced buffers <span class="meta-fold-sum" id="metaSumAdv"></span></div>
-            <p class="meta-help">Leave the defaults unless audio drops out: ZMQ buffers are in AAC frames (24 ms), the encoder buffer is the VLC input buffer.</p>
-            <div class="grid3">
-              <label>
-                <span>ZMQ buffer</span>
-                <input id="f_zbuf" type="number" min="0" max="4000" />
-              </label>
-              <label>
-                <span>ZMQ prebuffer</span>
-                <input id="f_zpre" type="number" min="0" max="4000" />
-              </label>
-              <label>
-                <span>Encoder buffer (ms)</span>
-                <input id="f_encbuf" type="number" min="0" max="2000" />
-              </label>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -577,6 +560,15 @@
               <option value="VLC">VLC</option>
               <option value="ZMQ">ZMQ direct (external encoder)</option>
               <option value="EDI">EDI direct (external encoder)</option>
+            </select>
+          </label>
+
+          <!-- VLC only: odr-audioenc -D on an HTTP stream whose clock drifts (periodic underruns) -->
+          <label id="f_drift_row" style="display:none;" title="Inserts or removes audio samples so the encoder follows the real-time clock. Use it when the stream's clock is slow or fast (regular short dropouts).">
+            <span>Drift compensation (-D)</span>
+            <select id="f_drift">
+              <option value="0">Off</option>
+              <option value="1">On</option>
             </select>
           </label>
 
@@ -644,6 +636,24 @@
               <label id="f_return_row">
                 <span>Back to main after (s)</span>
                 <input id="f_return" type="number" min="0" max="3600" />
+              </label>
+            </div>
+          </div>
+          <div class="meta-card span2" data-fold="advanced">
+            <div class="meta-card-title" role="button" tabindex="0" aria-expanded="true">Advanced buffers <span class="meta-fold-sum" id="metaSumAdv"></span></div>
+            <p class="meta-help">Leave the defaults unless audio drops out: ZMQ buffers are in AAC frames (24 ms), the encoder buffer is the VLC input buffer.</p>
+            <div class="grid3">
+              <label>
+                <span>ZMQ buffer</span>
+                <input id="f_zbuf" type="number" min="0" max="4000" />
+              </label>
+              <label>
+                <span>ZMQ prebuffer</span>
+                <input id="f_zpre" type="number" min="0" max="4000" />
+              </label>
+              <label>
+                <span>Encoder buffer (ms)</span>
+                <input id="f_encbuf" type="number" min="0" max="2000" />
               </label>
             </div>
           </div>

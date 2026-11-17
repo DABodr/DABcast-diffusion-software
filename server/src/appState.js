@@ -301,7 +301,8 @@ export class AppState {
         backupUri: svc.input?.backupUri || null,
         zmqBuffer: Number.isInteger(svc.input?.zmqBuffer) ? svc.input.zmqBuffer : DEFAULT_ZMQ_BUFFER,
         zmqPrebuffering: Number.isInteger(svc.input?.zmqPrebuffering) ? svc.input.zmqPrebuffering : DEFAULT_ZMQ_PREBUFFER,
-        encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200
+        encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200,
+        driftComp: svc.input?.driftComp === true
       },
       audio: {
         channels: Number.isInteger(svc.audio?.channels) ? svc.audio.channels : 2,
@@ -535,6 +536,7 @@ export class AppState {
       next.input.backupUri = patch.input.backupUri ?? next.input.backupUri;
       if (typeof patch.input.mode === 'string') next.input.mode = patch.input.mode;
       if (Number.isInteger(patch.input.encoderBufferMs)) next.input.encoderBufferMs = patch.input.encoderBufferMs;
+      if (typeof patch.input.driftComp === 'boolean') next.input.driftComp = patch.input.driftComp;
     }
     if (patch.audio) {
       if (typeof patch.audio.gainDb === 'number') next.audio.gainDb = patch.audio.gainDb;
@@ -696,7 +698,10 @@ export class AppState {
     // ON AIR gain change: restart only this service's encoder, on its active stream (same
     // in-place restart as the watchdog) — the mux and the other services keep running.
     const gainChanged = (existing.audio?.gainDb ?? 0) !== (normalized.audio?.gainDb ?? 0);
-    const gainRestart = locked && !needRestart && gainChanged && this.pm.isRunning(`svc:${id}:audioenc`);
+    // Same in-place restart for drift compensation (-D), when it changes the command (not GStreamer)
+    const driftChanged = (existing.input?.driftComp === true) !== (normalized.input?.driftComp === true)
+      && !String(normalized.input?.mode || '').toUpperCase().includes('GST');
+    const gainRestart = locked && !needRestart && (gainChanged || driftChanged) && this.pm.isRunning(`svc:${id}:audioenc`);
 
     this.logger.line(`svc:${id}`, `setService: locked=${locked} uriChanged=${uriChanged} (${existing.input.uri} => ${normalized.input.uri}) needRestart=${needRestart}`, 'DEBUG');
 
@@ -707,12 +712,12 @@ export class AppState {
       const rt = this.serviceRuntime.get(normalized.id);
       if (rt) {
         const pick = (s) => ({ enabled: s.enabled, gainDb: s.audio?.gainDb, channels: s.audio?.channels,
-          encoderBufferMs: s.input?.encoderBufferMs, pty: s.identity?.pty, languageHex: s.identity?.languageHex });
+          encoderBufferMs: s.input?.encoderBufferMs, driftComp: s.input?.driftComp === true, pty: s.identity?.pty, languageHex: s.identity?.languageHex });
         const cur = pick(normalized);
         if (!rt.appliedConfig) rt.appliedConfig = pick(existing);
         if ((needRestart || gainRestart) && this.pm.isRunning(`svc:${id}:audioenc`)) {
           // encoder restarts below with the new config → encoder-level fields get applied
-          Object.assign(rt.appliedConfig, { gainDb: cur.gainDb, channels: cur.channels, encoderBufferMs: cur.encoderBufferMs });
+          Object.assign(rt.appliedConfig, { gainDb: cur.gainDb, channels: cur.channels, encoderBufferMs: cur.encoderBufferMs, driftComp: cur.driftComp });
         }
         rt.pendingRestart = Object.keys(cur).filter((k) => cur[k] !== rt.appliedConfig[k]);
       }
@@ -727,7 +732,9 @@ export class AppState {
     }
     if (gainRestart) {
       const rt = this.serviceRuntime.get(normalized.id);
-      this.logger.line(`svc:${id}`, `audio gain changed while ON AIR (${existing.audio?.gainDb ?? 0} → ${normalized.audio?.gainDb ?? 0} dB) — restarting encoder only`);
+      const what = gainChanged ? `audio gain changed while ON AIR (${existing.audio?.gainDb ?? 0} → ${normalized.audio?.gainDb ?? 0} dB)`
+        : `drift compensation ${normalized.input?.driftComp === true ? 'enabled' : 'disabled'} while ON AIR`;
+      this.logger.line(`svc:${id}`, `${what} — restarting encoder only`);
       this._switchServiceUri(normalized, rt?.activeUri || normalized.input.uri).catch(() => { /* logged by _switchServiceUri */ });
     }
 
@@ -778,7 +785,8 @@ export class AppState {
         backupUri: svc.input?.backupUri || null,
         zmqBuffer: Number.isInteger(svc.input?.zmqBuffer) ? svc.input.zmqBuffer : DEFAULT_ZMQ_BUFFER,
         zmqPrebuffering: Number.isInteger(svc.input?.zmqPrebuffering) ? svc.input.zmqPrebuffering : DEFAULT_ZMQ_PREBUFFER,
-        encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200
+        encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200,
+        driftComp: svc.input?.driftComp === true
       },
       audio: {
         channels: Number.isInteger(svc.audio?.channels) ? svc.audio.channels : 2,
