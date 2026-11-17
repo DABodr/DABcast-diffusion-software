@@ -21,8 +21,22 @@ let restartSnapshot = null;   // field values when the edit dialog opened ON AIR
 const restartFieldValues = () => MUX_RESTART_FIELDS.map((id) => document.getElementById(id)?.value ?? '');
 const restartFieldsChanged = () => Boolean(restartSnapshot && STATE?.muxRunning
   && restartFieldValues().some((v, i) => v !== restartSnapshot[i]));
+// Fields whose ON AIR change restarts only this service's encoder (setService: source / URI, gain, drift)
+const ENC_RESTART_FIELDS = ['f_src', 'f_uri', 'f_gain', 'f_drift'];
+let encRestartSnapshot = null;   // same lifetime as restartSnapshot
+const encRestartFieldValues = () => ENC_RESTART_FIELDS.map((id) => document.getElementById(id)?.value ?? '');
+const encRestartFieldsChanged = () => {
+  if (!encRestartSnapshot || !STATE?.muxRunning) return false;
+  const svc = STATE.preset?.services?.find((s) => s.id === editingId);
+  if (svc?.enabled === false) return false;   // OFF service: no encoder running
+  const isDirect = (v) => v === 'ZMQ' || v === 'EDI';
+  if (isDirect(encRestartSnapshot[0]) || isDirect($('#f_src')?.value)) return false;   // no encoder
+  return encRestartFieldValues().some((v, i) => v !== encRestartSnapshot[i]);
+};
 function updateRestartWarn() {
-  document.getElementById('dlgRestartWarn')?.classList.toggle('hidden', !restartFieldsChanged());
+  const mux = restartFieldsChanged();
+  document.getElementById('dlgRestartWarn')?.classList.toggle('hidden', !mux);
+  document.getElementById('dlgEncRestartWarn')?.classList.toggle('hidden', mux || !encRestartFieldsChanged());
 }
 let selectedServiceId = null;  // Track selected service for export
 let logoManagingServiceId = null;  // Track service for logo management
@@ -1262,6 +1276,7 @@ function openDialogFor(service) {
     if (el) el.disabled = id === 'f_ch' && $('#f_codec').value === 'HE-AAC v2 (PS)';
   });
   restartSnapshot = locked && editingId ? restartFieldValues() : null;
+  encRestartSnapshot = locked && editingId ? encRestartFieldValues() : null;
   updateRestartWarn();
 
   // reset tabs
@@ -3524,6 +3539,7 @@ $('#btnSwap').addEventListener('click', () => {
   const b = $('#f_backup').value;
   $('#f_uri').value = b;
   $('#f_backup').value = a;
+  updateRestartWarn();
 });
 
 // Logo management event listeners
