@@ -2433,11 +2433,13 @@ function renderPlayer() {
   if (dlpEl._last !== dlp) { dlpEl.innerHTML = dlp; dlpEl._last = dlp; }
   $('#plDls').textContent = plDirect(svc) ? 'DLS, DL+ and slides are sent by the remote encoder (not shown here).' : (dls ? `DLS: ${dls}` : 'No DLS text');
   // Slide: the one shown in the services table (rotation + covers), else the logo
-  const thumb = svcTableBody.querySelector(`tr[data-service-id="${CSS.escape(svc.id)}"] img.sls-thumb`);
+  // Slideshow disabled (pad.sls.enabled === false): nothing goes on air, so no slide here either
+  const slideshowOff = svc.pad?.sls?.enabled === false;
+  const thumb = slideshowOff ? null : svcTableBody.querySelector(`tr[data-service-id="${CSS.escape(svc.id)}"] img.sls-thumb`);
   const src = thumb && thumb.style.display !== 'none' && thumb.src ? thumb.src : '';
   const art = $('#plArt');
   if (src) { if (art.getAttribute('src') !== src) art.src = src; art.style.display = ''; $('#plArtTxt').textContent = ''; }
-  else { art.style.display = 'none'; $('#plArtTxt').textContent = svc.identity?.ps8 || ''; }
+  else { art.style.display = 'none'; $('#plArtTxt').textContent = slideshowOff ? 'No slideshow' : (svc.identity?.ps8 || ''); }
   plSlideInfo(src);
   art.parentElement.classList.toggle('empty', !src);   // frame = slide size; fixed 4:3 placeholder without slide
   $('#plPlay').textContent = PL.playing ? '■ Stop' : '▶ Play';
