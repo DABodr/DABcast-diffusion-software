@@ -68,7 +68,7 @@ function bufTag(inp, always = false) {
   return `<span class="buf-tag ${cls}" title="${esc(tip)}">${label}${d ? ' ▲' : ''}</span>`;
 }
 // ON AIR edits saved but not yet applied (rt.pendingRestart from setService)
-const PENDING_LABELS = { gainDb: 'audio gain', encoderBufferMs: 'encoder buffer', channels: 'channels', pty: 'PTY', languageHex: 'language', enabled: 'enabled' };
+const PENDING_LABELS = { gainDb: 'audio gain', encoderBufferMs: 'encoder buffer', driftComp: 'drift compensation', channels: 'channels', pty: 'PTY', languageHex: 'language', enabled: 'enabled' };
 function pendingTag(rt) {
   const keys = rt?.pendingRestart;
   if (!keys?.length) return '';
@@ -320,6 +320,8 @@ function updateSourceVisibility() {
     const el = document.getElementById(id);
     if (el) el.style.display = isDirect ? 'none' : '';
   }
+  const driftRow = document.getElementById('f_drift_row');
+  if (driftRow) driftRow.style.display = mode === 'VLC' ? '' : 'none';
   const directRowIds = ['f_direct_port_row', 'f_direct_bitrate_row', 'f_direct_prot_row'];
   for (const id of directRowIds) {
     const el = document.getElementById(id);
@@ -1147,6 +1149,7 @@ function openDialogFor(service) {
   $('#f_zpre').value = service?.input?.zmqPrebuffering ?? 20;
 
   $('#f_encbuf').value = service?.input?.encoderBufferMs ?? 200;
+  if ($('#f_drift')) $('#f_drift').value = service?.input?.driftComp === true ? '1' : '0';
   $('#f_gain').value = service?.audio?.gainDb ?? 0;
   $('#f_codec').value = service?.audio?.codec || 'HE-AAC v1 (SBR)';
   // New service: 40 bytes (58 took ~13 % of an 88 kbps HE-AAC stream; 40 still sends a 15 kB cover in ~16 s)
@@ -3924,6 +3927,7 @@ $('#svcForm').addEventListener('submit', async (e) => {
       backupUri: $('#f_backup').value.trim() || null
       ,
       encoderBufferMs: Number($('#f_encbuf').value || 200),
+      driftComp: $('#f_drift')?.value === '1',
       zmqBuffer: Number($('#f_zbuf').value || 40),
       zmqPrebuffering: Number($('#f_zpre').value || 20)
     },

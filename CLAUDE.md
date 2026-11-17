@@ -210,7 +210,7 @@ Golden rule:
 - Any change here directly affects the DAB signal quality.
 - Do not add, remove, or reorder flags without testing on actual hardware.
 - Known constraints:
-  - `-D` (drift compensation) only for non-HTTP sources in VLC mode — **never add to GStreamer or HTTP streams**
+  - `-D` (drift compensation) only in VLC mode: always for non-HTTP sources, on HTTP streams only when the service opts in (`input.driftComp: true`, default off) — **never in GStreamer mode**
   - `-G` flag = GStreamer mode (`-v` = VLC mode) — these are mutually exclusive
   - `-s 180` silence timeout is intentional (3 minutes before audioenc self-terminates)
 
@@ -262,7 +262,7 @@ Generates exact CLI arguments for ODR tools. Any error here = silent audio failu
 **Rules:**
 - Do not reorder arguments — some ODR tools are position-sensitive.
 - Preserve the `-v`/`-G` mutual exclusion logic.
-- The `-D` flag (drift compensation) is explicitly excluded for HTTP sources — keep this guard.
+- The `-D` flag (drift compensation) is excluded for HTTP sources unless `svc.input.driftComp === true` (per-service opt-in, VLC only) — keep this guard.
 - Test with `node --test server/tests/commandBuilder.test.js` after any change.
 
 ### 🟠 HIGH RISK — `server/src/odr/muxBuilder.js`
@@ -543,7 +543,7 @@ These are non-obvious behaviors that have caused bugs in the past:
 | **autoStart checkbox** | `getState()` must include `settings.autoStart` or the checkbox unchecks after mux start. |
 | **PI normalization** | Strip `0x` prefix, uppercase, pad to 4 chars. `0xf9a3` → `0xF9A3`. |
 | **headOk + Icecast** | Many Icecast servers reject HEAD with 400/405/501. Always fall back to GET. 503 = stream full = alive. |
-| **Drift compensation** | `-D` flag is ALSA-only. Never add it for HTTP streams in VLC mode (causes desync). |
+| **Drift compensation** | `-D` works for ALSA and VLC inputs only (not GStreamer). Off by default for HTTP streams in VLC mode (has caused desync); `input.driftComp: true` ("Drift compensation (-D)", Audio tab, shown for VLC) turns it on per service for a source whose clock runs slow/fast — symptom: `inputZMQ sub_N input empty` every few minutes. ON AIR the change is saved as pending (applied at the next encoder restart / mux Start). |
 | **GStreamer mode** | `-G` flag. Incompatible with `-L`, `-C`, `-D` VLC flags. Never mix. |
 | **Process group kill** | Use `process.kill(-pid, signal)` (negative). `child.kill()` only kills the direct process. |
 | **encWasAlive** | Set to `true` in `_startService()` for encoder modes. For ZMQ/EDI direct modes, set to `false` (no encoder). |

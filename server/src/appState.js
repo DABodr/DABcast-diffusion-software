@@ -301,7 +301,8 @@ export class AppState {
         backupUri: svc.input?.backupUri || null,
         zmqBuffer: Number.isInteger(svc.input?.zmqBuffer) ? svc.input.zmqBuffer : DEFAULT_ZMQ_BUFFER,
         zmqPrebuffering: Number.isInteger(svc.input?.zmqPrebuffering) ? svc.input.zmqPrebuffering : DEFAULT_ZMQ_PREBUFFER,
-        encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200
+        encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200,
+        driftComp: svc.input?.driftComp === true
       },
       audio: {
         channels: Number.isInteger(svc.audio?.channels) ? svc.audio.channels : 2,
@@ -535,6 +536,7 @@ export class AppState {
       next.input.backupUri = patch.input.backupUri ?? next.input.backupUri;
       if (typeof patch.input.mode === 'string') next.input.mode = patch.input.mode;
       if (Number.isInteger(patch.input.encoderBufferMs)) next.input.encoderBufferMs = patch.input.encoderBufferMs;
+      if (typeof patch.input.driftComp === 'boolean') next.input.driftComp = patch.input.driftComp;
     }
     if (patch.audio) {
       if (typeof patch.audio.gainDb === 'number') next.audio.gainDb = patch.audio.gainDb;
@@ -707,12 +709,12 @@ export class AppState {
       const rt = this.serviceRuntime.get(normalized.id);
       if (rt) {
         const pick = (s) => ({ enabled: s.enabled, gainDb: s.audio?.gainDb, channels: s.audio?.channels,
-          encoderBufferMs: s.input?.encoderBufferMs, pty: s.identity?.pty, languageHex: s.identity?.languageHex });
+          encoderBufferMs: s.input?.encoderBufferMs, driftComp: s.input?.driftComp === true, pty: s.identity?.pty, languageHex: s.identity?.languageHex });
         const cur = pick(normalized);
         if (!rt.appliedConfig) rt.appliedConfig = pick(existing);
         if ((needRestart || gainRestart) && this.pm.isRunning(`svc:${id}:audioenc`)) {
           // encoder restarts below with the new config → encoder-level fields get applied
-          Object.assign(rt.appliedConfig, { gainDb: cur.gainDb, channels: cur.channels, encoderBufferMs: cur.encoderBufferMs });
+          Object.assign(rt.appliedConfig, { gainDb: cur.gainDb, channels: cur.channels, encoderBufferMs: cur.encoderBufferMs, driftComp: cur.driftComp });
         }
         rt.pendingRestart = Object.keys(cur).filter((k) => cur[k] !== rt.appliedConfig[k]);
       }
@@ -778,7 +780,8 @@ export class AppState {
         backupUri: svc.input?.backupUri || null,
         zmqBuffer: Number.isInteger(svc.input?.zmqBuffer) ? svc.input.zmqBuffer : DEFAULT_ZMQ_BUFFER,
         zmqPrebuffering: Number.isInteger(svc.input?.zmqPrebuffering) ? svc.input.zmqPrebuffering : DEFAULT_ZMQ_PREBUFFER,
-        encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200
+        encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200,
+        driftComp: svc.input?.driftComp === true
       },
       audio: {
         channels: Number.isInteger(svc.audio?.channels) ? svc.audio.channels : 2,

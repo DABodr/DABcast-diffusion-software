@@ -99,6 +99,20 @@ describe('buildAudioEncCommand', () => {
     assert.ok(cmd.args.includes('-D'));
   });
 
+  it('includes -D for an HTTP stream in VLC mode when driftComp is on', () => {
+    const svc = makeSvc({ input: { mode: 'VLC', uri: 'http://stream.example.com:8000/live', encoderBufferMs: 200, driftComp: true } });
+    const cmd = buildAudioEncCommand({ svc, activeUri: svc.input.uri, mtaPath: '/tmp/F408.mta' });
+    assert.ok(cmd.args.includes('-D'));
+    assert.equal(cmd.args.filter((a) => a === '-D').length, 1);
+  });
+
+  it('never includes -D in GStreamer mode, even with driftComp on', () => {
+    const svc = makeSvc({ input: { mode: 'GSTREAMER', uri: 'http://stream.example.com:8000/live', driftComp: true } });
+    const cmd = buildAudioEncCommand({ svc, activeUri: svc.input.uri, mtaPath: '/tmp/F408.mta' });
+    assert.ok(cmd.args.includes('-G'));
+    assert.ok(!cmd.args.includes('-D'));
+  });
+
   it('includes -l (level indicator)', () => {
     const cmd = buildAudioEncCommand({ svc: makeSvc(), activeUri: 'http://stream.example.com:8000/live', mtaPath: '/tmp/F408.mta' });
     assert.ok(cmd.args.includes('-l'));

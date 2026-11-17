@@ -580,6 +580,15 @@
             </select>
           </label>
 
+          <!-- VLC only: odr-audioenc -D on an HTTP stream whose clock drifts (periodic underruns) -->
+          <label id="f_drift_row" style="display:none;" title="Inserts or removes audio samples so the encoder follows the real-time clock. Use it when the stream's clock is slow or fast (regular short dropouts).">
+            <span>Drift compensation (-D)</span>
+            <select id="f_drift">
+              <option value="0">Off</option>
+              <option value="1">On</option>
+            </select>
+          </label>
+
           <!-- Direct input info (ZMQ / EDI): port + bitrate + protection -->
           <label id="f_direct_port_row" style="display:none;">
             <span>Input port (external encoder sends here)</span>

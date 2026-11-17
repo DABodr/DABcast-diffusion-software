@@ -41,8 +41,9 @@ export function buildAudioEncCommand({ svc, activeUri, mtaPath }) {
       '-L', '--speex-resampler-quality=10',
       '-C', String(svc.input.encoderBufferMs ?? 200)
     );
-    // Drift compensation only for non-network sources (ALSA/file)
-    if (!isHttpStream(activeUri)) {
+    // Drift compensation for non-network sources (ALSA/file), or on HTTP when the service
+    // opts in (input.driftComp: source whose clock runs slow/fast → periodic dabmux underruns)
+    if (!isHttpStream(activeUri) || svc.input?.driftComp === true) {
       args.push('-D');
     }
   }
