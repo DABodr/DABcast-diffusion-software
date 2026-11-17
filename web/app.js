@@ -1748,12 +1748,13 @@ function updateEnsHint() {
   const id = normalizeHex(raw, 4);
   const digits = (STATE?.preset?.services || []).map((s) => normalizePiValue(s.identity?.pi || s.id)?.replace(/^0x/i, '')[0]).filter(Boolean);
   const common = digits.sort((a, b) => digits.filter((d) => d === b).length - digits.filter((d) => d === a).length)[0];
-  const [msg, tip] = !raw ? ['', ''] : !id ? ['⚠ 4 hex', '4 hexadecimal digits (0-9, A-F), e.g. F401']
-    : id[0] === '0' ? ['⚠ 0xxx', 'The first digit is the country code (with the ECC): it cannot be 0']
-      : common && id[0] !== common ? [`⚠ ≠ PI ${common}…`, `First digit ${id[0]} = country code, but the services' PI codes start with ${common}: normally the same country digit (e.g. F for France)`] : ['', ''];
+  // full sentence on its own line under the row (the short badge beside the label was unreadable)
+  const msg = !raw ? '' : !id ? '⚠ Ensemble ID: 4 hexadecimal digits (0-9, A-F), e.g. F401'
+    : id[0] === '0' ? '⚠ Ensemble ID: the first digit is the country code (with the ECC), it cannot be 0'
+      : common && id[0] !== common ? `⚠ Ensemble ID starts with ${id[0]}, but the services' PI codes mostly start with ${common}: the first digit is the country code, normally the same (e.g. F for France)` : '';
   el.textContent = msg;
   el.classList.toggle('over', Boolean(msg));
-  el.title = tip;
+  el.style.display = msg ? '' : 'none';   // inline: .field-note's display:block would beat .hidden
 }
 $('#m_ens_id')?.addEventListener('input', updateEnsHint);
 // Multiplex Short label / Label: counters + live hint of the PS8 ⊂ PS16 rule (still enforced on save)
