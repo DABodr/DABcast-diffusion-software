@@ -1283,7 +1283,14 @@ function openDialogFor(service) {
   setActiveTab('general');
 
   dlg.showModal();
-  // Same dialog height on the three tabs (the tallest one at opening); unfolding Metadata blocks still grows it
+  equalizeSvcTabs();
+  svcSnapshot = new Map();
+  snapshotSvcForm();
+}
+
+// Same dialog height on the three tabs (the tallest one); recomputed when a block is (un)folded,
+// so folding shrinks the dialog again and unfolding grows it
+function equalizeSvcTabs() {
   const panels = [...document.querySelectorAll('#dlgService .tabpanel')];
   panels.forEach((p) => { p.style.minHeight = ''; });
   const tallest = Math.max(...panels.map((p) => {
@@ -1294,8 +1301,6 @@ function openDialogFor(service) {
     return h;
   }));
   panels.forEach((p) => { p.style.minHeight = `${tallest}px`; });
-  svcSnapshot = new Map();
-  snapshotSvcForm();
 }
 
 function setActiveTab(tab) {
@@ -2217,6 +2222,7 @@ function toggleMetaFold(card) {
   st[card.dataset.fold] = !card.classList.contains('folded');
   try { localStorage.setItem('dabcast.metaFold', JSON.stringify(st)); } catch { /* ignore */ }
   applyMetaFold();
+  if (card.closest('#dlgService')) equalizeSvcTabs();
 }
 document.querySelectorAll('.meta-card[data-fold] > .meta-card-title').forEach((t) => {
   t.addEventListener('click', () => toggleMetaFold(t.parentElement));
