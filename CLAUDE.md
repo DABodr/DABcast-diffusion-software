@@ -543,7 +543,7 @@ These are non-obvious behaviors that have caused bugs in the past:
 | **autoStart checkbox** | `getState()` must include `settings.autoStart` or the checkbox unchecks after mux start. |
 | **PI normalization** | Strip `0x` prefix, uppercase, pad to 4 chars. `0xf9a3` → `0xF9A3`. |
 | **headOk + Icecast** | Many Icecast servers reject HEAD with 400/405/501. Always fall back to GET. 503 = stream full = alive. |
-| **Drift compensation** | `-D` works for ALSA and VLC inputs only (not GStreamer). Off by default for HTTP streams in VLC mode (has caused desync); `input.driftComp: true` ("Drift compensation (-D)", Audio tab, shown for VLC) turns it on per service for a source whose clock runs slow/fast — symptom: `inputZMQ sub_N input empty` every few minutes. ON AIR the change is saved as pending (applied at the next encoder restart / mux Start). |
+| **Drift compensation** | `-D` works for ALSA and VLC inputs only (not GStreamer). Off by default for HTTP streams in VLC mode (has caused desync); `input.driftComp: true` ("Drift compensation (-D)", Audio tab, shown for VLC) turns it on per service for a source whose clock runs slow/fast — symptom: `inputZMQ sub_N input empty` every few minutes. ON AIR, changing it restarts only this service's encoder on its active stream (same in-place restart as a gain change; not in GStreamer mode, where `-D` is never passed). |
 | **GStreamer mode** | `-G` flag. Incompatible with `-L`, `-C`, `-D` VLC flags. Never mix. |
 | **Process group kill** | Use `process.kill(-pid, signal)` (negative). `child.kill()` only kills the direct process. |
 | **encWasAlive** | Set to `true` in `_startService()` for encoder modes. For ZMQ/EDI direct modes, set to `false` (no encoder). |

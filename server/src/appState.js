@@ -698,7 +698,10 @@ export class AppState {
     // ON AIR gain change: restart only this service's encoder, on its active stream (same
     // in-place restart as the watchdog) — the mux and the other services keep running.
     const gainChanged = (existing.audio?.gainDb ?? 0) !== (normalized.audio?.gainDb ?? 0);
-    const gainRestart = locked && !needRestart && gainChanged && this.pm.isRunning(`svc:${id}:audioenc`);
+    // Same in-place restart for drift compensation (-D), when it changes the command (not GStreamer)
+    const driftChanged = (existing.input?.driftComp === true) !== (normalized.input?.driftComp === true)
+      && !String(normalized.input?.mode || '').toUpperCase().includes('GST');
+    const gainRestart = locked && !needRestart && (gainChanged || driftChanged) && this.pm.isRunning(`svc:${id}:audioenc`);
 
     this.logger.line(`svc:${id}`, `setService: locked=${locked} uriChanged=${uriChanged} (${existing.input.uri} => ${normalized.input.uri}) needRestart=${needRestart}`, 'DEBUG');
 
@@ -729,7 +732,9 @@ export class AppState {
     }
     if (gainRestart) {
       const rt = this.serviceRuntime.get(normalized.id);
-      this.logger.line(`svc:${id}`, `audio gain changed while ON AIR (${existing.audio?.gainDb ?? 0} → ${normalized.audio?.gainDb ?? 0} dB) — restarting encoder only`);
+      const what = gainChanged ? `audio gain changed while ON AIR (${existing.audio?.gainDb ?? 0} → ${normalized.audio?.gainDb ?? 0} dB)`
+        : `drift compensation ${normalized.input?.driftComp === true ? 'enabled' : 'disabled'} while ON AIR`;
+      this.logger.line(`svc:${id}`, `${what} — restarting encoder only`);
       this._switchServiceUri(normalized, rt?.activeUri || normalized.input.uri).catch(() => { /* logged by _switchServiceUri */ });
     }
 

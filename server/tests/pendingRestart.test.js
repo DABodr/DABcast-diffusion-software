@@ -76,6 +76,32 @@ describe('setService — pendingRestart hint', () => {
     state._initRuntime();   // clear the pty hint for the next test
   });
 
+  it('drift compensation change ON AIR restarts only the encoder (VLC), not in GStreamer mode', () => {
+    const prev = state._switchServiceUri;
+    const calls = [];
+    state._switchServiceUri = async (svc, uri) => { calls.push(uri); };
+    state.muxRunning = false;
+    state.setService(svcId, { input: { mode: 'VLC', driftComp: false } });
+    state._initRuntime();
+    state.muxRunning = true;
+    running = true;
+    state.serviceRuntime.get(svcId).activeUri = 'http://example.invalid/active';
+    state.setService(svcId, { input: { driftComp: true } });
+    assert.deepEqual(calls, ['http://example.invalid/active']);
+    assert.equal(state.preset.services[0].input.driftComp, true);
+    assert.deepEqual(state.serviceRuntime.get(svcId).pendingRestart, []);
+    // GStreamer: -D is never passed, so toggling it must not restart the encoder
+    state.muxRunning = false;
+    state.setService(svcId, { input: { mode: 'GSTREAMER' } });
+    state._initRuntime();
+    state.muxRunning = true;
+    state.setService(svcId, { input: { driftComp: false } });
+    assert.equal(calls.length, 1);
+    state._switchServiceUri = prev;
+    running = false;
+    state._initRuntime();
+  });
+
   it('is cleared by _initRuntime (mux Start)', () => {
     state.muxRunning = true;
     state.setService(svcId, { input: { encoderBufferMs: 555 } });
