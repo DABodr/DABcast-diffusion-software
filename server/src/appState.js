@@ -13,7 +13,7 @@ import { DEFAULT_FILTERTAPS } from './odr/filtertaps.js';
 import { validateService } from './odr/validate.js';
 import { ALLOWED_BITRATES_KBPS, DEFAULT_BITRATE_KBPS, DEFAULT_ZMQ_BUFFER, DEFAULT_ZMQ_PREBUFFER, DEFAULT_DEMO_PRESET_ID, DAB_FREQ_TABLE } from './defaults.js';
 import { estimateCU, sumCU } from './cu.js';
-import { buildDlPlusFileContent, writeTextFileAtomicIfChanged, parseNowPlaying } from './utils/dlplus.js';
+import { buildDlPlusFileContent, writeTextFileAtomicIfChanged, parseNowPlaying, cleanDlsText } from './utils/dlplus.js';
 const APP_VERSION = typeof __APP_VERSION__ !== 'undefined'
   ? __APP_VERSION__
   : (() => { try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url))).version; } catch { return '0.0.0'; } })();
@@ -1502,6 +1502,8 @@ export class AppState {
 
     rt.metaStatus = { ...metaStatus, at: Date.now() };
 
+    // Text broken upstream (double UTF-8, lost character "�") repaired before it goes on air
+    dlsValue = cleanDlsText(dlsValue);
     // Write DLS file to runtime directory (with DL+ support if enabled)
     if (dlsValue !== rt.currentDls) {
       this._logMeta(svc, 'dls', `"${dlsValue}"`);
