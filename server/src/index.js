@@ -1753,8 +1753,10 @@ app.post('/api/services/:id/logo/download', async (req, res) => {
     const svc = state.preset.services.find((s) => s.id === svcId);
     if (!svc) return res.status(404).json({ error: 'Service not found' });
 
-    // Download using current slsUrl
-    const ok = await state.downloadSlideForService(svc);
+    // URL typed in the service dialog ('Test & apply', not saved yet), else the saved slsUrl
+    const url = String(req.body?.url || '').trim();
+    if (url && !/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'HTTP(S) URL required' });
+    const ok = await state.downloadSlideForService(url ? { ...svc, metadata: { ...svc.metadata, slsUrl: url } } : svc);
     if (ok) {
       res.json({ ok: true, message: 'Logo downloaded successfully' });
     } else {
