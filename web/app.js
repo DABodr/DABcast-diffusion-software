@@ -3559,7 +3559,7 @@ fileUploadLogo?.addEventListener('change', () => {
   uploadAdditionalLogo();
 });
 
-async function downloadLogo() {
+async function downloadLogo(url = '') {
   if (!editingId) return alert('Save the service before downloading a logo.');
   const statusEl = $('#slsTestStatus');
   if (statusEl) statusEl.textContent = 'Downloading...';
@@ -3567,7 +3567,7 @@ async function downloadLogo() {
   try {
     await api(`/api/services/${encodeURIComponent(editingId)}/logo/download`, {
       method: 'POST',
-      body: '{}'
+      body: JSON.stringify({ url })   // the URL of the field (empty = the saved one)
     });
 
     // refresh preview
@@ -3630,7 +3630,7 @@ async function clearLogo() {
   $('#slsImgWrap')?.classList.add('no-logo');
 }
 
-$('#btnDownloadSls').addEventListener('click', () => downloadLogo().catch((e) => alert(e.message || String(e))));
+
 $('#btnClearLogo').addEventListener('click', () => clearLogo().catch((e) => alert(e.message || String(e))));
 $('#btnManageLogos')?.addEventListener('click', () => {
   if (editingId) {
@@ -3659,6 +3659,7 @@ async function testSlsUrl() {
       body: JSON.stringify({ url })
     });
     if (statusEl) statusEl.textContent = res?.ok ? 'OK' : (res?.error || 'Failed');
+    if (!res?.ok) return false;
     if (res?.dataUrl) {
       const img = $('#slsImg');
       const hint = $('#slsHint');
@@ -3669,13 +3670,23 @@ async function testSlsUrl() {
       }
       if (hint) hint.textContent = 'SLS via URL';
     }
+    return true;
   } catch (err) {
     if (statusEl) statusEl.textContent = 'Error';
     alert(err.message || String(err));
+    return false;
   }
 }
 
-$('#btnTestSls').addEventListener('click', () => testSlsUrl().catch((e) => alert(e.message || String(e))));
+// 'Test & apply': shows the picture of the URL field, then makes it the service logo at once
+// (a new service has no logo folder yet: its logo is downloaded when the service is saved)
+async function testAndApplySls() {
+  if (!(await testSlsUrl())) return;
+  const statusEl = $('#slsTestStatus');
+  if (!editingId) { if (statusEl) statusEl.textContent = 'OK — set as the logo when the service is saved'; return; }
+  await downloadLogo($('#f_sls_url').value.trim());
+}
+$('#btnTestSls').addEventListener('click', () => testAndApplySls().catch((e) => alert(e.message || String(e))));
 
 // 'Label: value' of the JSON test results: label in the status colour, value (from the API) in white
 const jsonPart = (label, value) => `${label}: <span class="json-val">${esc(value)}</span>`;
