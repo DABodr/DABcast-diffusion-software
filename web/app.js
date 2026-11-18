@@ -3410,6 +3410,30 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   $('#svcSearch')?.focus();
 });
+// Selected row moved with the ↑ / ↓ keys (one place per press), same rules as drag & drop:
+// multiplex stopped, table in multiplex order, no search
+let reorderBusy = false;
+document.addEventListener('keydown', async (e) => {
+  if ((e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return;
+  if (!selectedServiceId || !STATE?.preset || STATE.muxRunning) return;   // ON AIR: arrows scroll the page
+  if (VIEW.sort !== 'order' || VIEW.q.trim() !== '') return;
+  if (document.querySelector('dialog[open]') || e.target.closest?.('input, select, textarea, [contenteditable]')) return;
+  const order = [...STATE.preset.services].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0)).map((s) => s.id);
+  const i = order.indexOf(selectedServiceId);
+  if (i < 0) return;
+  e.preventDefault();   // the selected row moves instead of the page scrolling
+  const j = e.key === 'ArrowUp' ? i - 1 : i + 1;
+  if (j < 0 || j >= order.length || reorderBusy) return;
+  [order[i], order[j]] = [order[j], order[i]];
+  reorderBusy = true;
+  try {
+    await api('/api/services/reorder', { method: 'POST', body: JSON.stringify({ order }) });
+  } catch { /* refresh restores the saved order */ }
+  reorderBusy = false;
+  await refresh();
+  svcTableBody.querySelector(`tr[data-service-id="${CSS.escape(selectedServiceId)}"]`)?.scrollIntoView({ block: 'nearest' });
+});
+
 svcTableBody.addEventListener('dblclick', (e) => {
   if (e.target.closest('button, .sls-thumb')) return;
   const row = e.target.closest('tr[data-service-id]');
