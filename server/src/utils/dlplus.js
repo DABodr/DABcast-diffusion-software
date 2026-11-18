@@ -202,6 +202,24 @@ export function writeTextFileAtomicIfChanged(filePath, content) {
  * @param {string} nowPlaying - "Artist - Title" string
  * @returns {{artist: string, title: string}}
  */
+/**
+ * Repairs DLS text broken upstream (e.g. radiofg.com/ws/metas sent "DerniÃ¯Â¿Â½re danse"):
+ * UTF-8 read as Latin-1, once or more ("DerniÃ¨re" → "Dernière"), then a character already lost at
+ * the source (U+FFFD "�") becomes "?". Correct text is returned unchanged: a repair is only tried when
+ * the text has a double-encoding pair (Ã¨, Â¿…), holds Latin-1 characters only, and decodes to valid UTF-8.
+ * @param {string} s
+ */
+export function cleanDlsText(s) {
+  let out = String(s ?? '');
+  for (let i = 0; i < 3 && /[\u00C2-\u00F4][\u0080-\u00BF]/.test(out) && /^[\u0000-\u00FF]*$/.test(out); i++) {
+    const bytes = Buffer.from(out, 'latin1');
+    const dec = bytes.toString('utf8');
+    if (!Buffer.from(dec, 'utf8').equals(bytes)) break;   // not valid UTF-8: leave as is
+    out = dec;
+  }
+  return out.includes('\uFFFD') ? out.replace(/\uFFFD/g, '?') : out;
+}
+
 export function parseNowPlaying(nowPlaying) {
   const str = (nowPlaying || '').trim();
   if (!str) return { artist: '', title: '' };
