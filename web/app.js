@@ -3410,6 +3410,14 @@ document.addEventListener('keydown', (e) => {
   e.preventDefault();
   $('#svcSearch')?.focus();
 });
+// Escape deselects the row (the arrows scroll the page again)
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape' || !selectedServiceId) return;
+  if (document.querySelector('dialog[open]') || e.target.closest?.('input, select, textarea, [contenteditable]')) return;
+  selectedServiceId = null;
+  render();
+});
+
 // Selected row moved with the ↑ / ↓ keys (one place per press), same rules as drag & drop:
 // multiplex stopped, table in multiplex order, no search
 let reorderBusy = false;
@@ -3895,9 +3903,9 @@ svcTableBody.addEventListener('click', async (e) => {
     return;
   }
 
-  // Handle row selection (if not clicking a button)
+  // Handle row selection (if not clicking a button); a click on the selected row deselects it
   if (row && row.dataset.serviceId) {
-    selectedServiceId = row.dataset.serviceId;
+    selectedServiceId = selectedServiceId === row.dataset.serviceId ? null : row.dataset.serviceId;
     render();  // Re-render to highlight selected row
   }
 });
