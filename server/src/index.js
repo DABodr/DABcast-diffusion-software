@@ -289,14 +289,20 @@ function writeSlideImage(slideDir, filename, buf) {
   const stamp = `${process.pid}_${Date.now()}`;
   const raw = path.join(motDir, `.import_${stamp}.tmp`);
   const conv = path.join(motDir, `.import_${stamp}.jpg`);
+  const debanded = path.join(motDir, `.import_${stamp}_nb.jpg`);
   try {
     fs.writeFileSync(raw, buf);
-    if (convertToSlideFile(raw, conv)) fs.renameSync(conv, path.join(slideDir, filename));
+    if (convertToSlideFile(raw, conv)) {
+      // a logo exported before 1.7 is already 320x240 with black side bands: bands in its colours instead
+      let nb = false;
+      try { nb = removeBlackBands(conv, debanded, motDir); } catch { /* keep the converted file */ }
+      fs.renameSync(nb ? debanded : conv, path.join(slideDir, filename));
+    }
     // as received only if it really is a JPEG / PNG / GIF / WebP (odr-padenc reads the slide dir too)
     else if (imageCoder(raw)) fs.renameSync(raw, path.join(slideDir, filename));
     else throw new Error('not a JPEG / PNG / GIF / WebP picture');
   } finally {
-    for (const f of [raw, conv]) { try { fs.unlinkSync(f); } catch { /* already moved */ } }
+    for (const f of [raw, conv, debanded]) { try { fs.unlinkSync(f); } catch { /* already moved */ } }
   }
 }
 // One-time repair at start-up (before autoStart): convert *.jpg slides that are not a real
@@ -339,7 +345,8 @@ repairSlides();
 // left as they are (see blackBandWidths). Covers are re-converted at every track anyway.
 function regenerateBandedLogos() {
   // v3: v2 (DABcast 1.7.1) cut only 2 px past the old bands, leaving a dull band on some logos
-  const marker = path.join(dataMot, '.slide-bands-v3');
+  // v4: once more for the logos imported after v3 (imports did not remove the bands before 1.10.17)
+  const marker = path.join(dataMot, '.slide-bands-v4');
   if (!fs.existsSync(dataMot) || fs.existsSync(marker)) return;
   let done = 0;
   for (const pi of fs.readdirSync(dataMot)) {
@@ -1092,7 +1099,7 @@ function diskUsage() {
       const f = execSync(`df -Pk "${dataDir}"`, { encoding: 'utf8', timeout: 3000 }).trim().split('\n')[1].split(/\s+/);
       totalB = Number(f[1]) * 1024; usedB = Number(f[2]) * 1024; availB = Number(f[3]) * 1024;
     }
-    const gb = (b) => Math.round(b / 1e8) / 10;
+    const gb = (b) => Math.round(b / 2 ** 30 * 10) / 10;   // binary GB (GiB), as desktops and the RAM figure
     v = { totalGb: gb(totalB), freeGb: gb(availB), usedPct: Math.ceil(usedB / (usedB + availB) * 100) };   // same % as df
   } catch { /* unavailable */ }
   _diskCache = { at: Date.now(), v };
