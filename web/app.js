@@ -3691,7 +3691,8 @@ async function testSlsUrl() {
       body: JSON.stringify({ url })
     });
     if (statusEl) statusEl.textContent = res?.ok ? 'OK' : (res?.error || 'Failed');
-    if (!res?.ok) return false;
+    // too large for the preview (500 KB) but the logo download takes up to 5 MB and reduces it: apply anyway
+    if (!res?.ok) return /too large/i.test(res?.error || '') ? 'noPreview' : false;
     if (res?.dataUrl) {
       const img = $('#slsImg');
       const hint = $('#slsHint');
@@ -3713,9 +3714,10 @@ async function testSlsUrl() {
 // 'Test & apply': shows the picture of the URL field, then makes it the service logo at once
 // (a new service has no logo folder yet: its logo is downloaded when the service is saved)
 async function testAndApplySls() {
-  if (!(await testSlsUrl())) return;
+  const tested = await testSlsUrl();
+  if (!tested) return;
   const statusEl = $('#slsTestStatus');
-  if (!editingId) { if (statusEl) statusEl.textContent = 'OK — set as the logo when the service is saved'; return; }
+  if (!editingId) { if (statusEl) statusEl.textContent = `${tested === 'noPreview' ? 'Large picture, no preview' : 'OK'} — set as the logo when the service is saved`; return; }
   await downloadLogo($('#f_sls_url').value.trim());
 }
 $('#btnTestSls').addEventListener('click', () => testAndApplySls().catch((e) => alert(e.message || String(e))));
