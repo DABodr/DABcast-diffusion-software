@@ -1099,7 +1099,7 @@ function diskUsage() {
       const f = execSync(`df -Pk "${dataDir}"`, { encoding: 'utf8', timeout: 3000 }).trim().split('\n')[1].split(/\s+/);
       totalB = Number(f[1]) * 1024; usedB = Number(f[2]) * 1024; availB = Number(f[3]) * 1024;
     }
-    const gb = (b) => Math.round(b / 1e8) / 10;
+    const gb = (b) => Math.round(b / 2 ** 30 * 10) / 10;   // binary GB (GiB), as desktops and the RAM figure
     v = { totalGb: gb(totalB), freeGb: gb(availB), usedPct: Math.ceil(usedB / (usedB + availB) * 100) };   // same % as df
   } catch { /* unavailable */ }
   _diskCache = { at: Date.now(), v };
