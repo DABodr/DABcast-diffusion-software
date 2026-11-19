@@ -354,3 +354,25 @@ describe('on-air slides: default logo interval', () => {
     fs.rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe('JSON: repaired DLS text (cleanDlsText) and cover downloads', () => {
+  it('a title repaired on air is not taken for a new track at every tick', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-dlsclean-'));
+    fs.mkdirSync(path.join(dir, 'presets'), { recursive: true });
+    fs.copyFileSync(demoPreset, path.join(dir, 'presets', 'demo.json'));
+    const lines = [];
+    const state = new AppState({ settings: structuredClone(DEFAULT_SETTINGS), dataDir: dir, logger: { line: (scope, msg) => lines.push(msg) }, processManager: { isRunning: () => false } });
+    state._initRuntime();
+    state.muxRunning = true;
+    state.preset.services.forEach((s, i) => { s.enabled = i === 0; });
+    const svc = state.preset.services[0];
+    Object.assign(svc.metadata, { mode: 'JSON', url: 'http://api.invalid/now', artistKey: 'artist', titleKey: 'title', slsKey: 'cover',
+      startKey: '', durationKey: '', trackMaxMin: 0, defaultDls: 'Station', defaultDlsAllowed: true, intervalSec: 10 });
+    state._fetchText = async () => JSON.stringify({ artist: 'INDILA', title: 'DerniÃ¨re danse', cover: 'http://img.invalid/1.jpg' });
+    state._downloadImage = async () => false;   // no network in tests
+    const rt = state.serviceRuntime.get(svc.id);
+    for (let i = 0; i < 3; i++) { rt.lastMetaUpdateMs = 0; await state._updateMetadata(); }
+    assert.equal(rt.currentDls, 'INDILA - Dernière danse', 'repaired on air');
+    assert.equal(lines.filter((l) => /\(new track\)/.test(l)).length, 1, 'one new track, not one per tick');
+  });
+});
