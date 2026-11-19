@@ -1443,7 +1443,8 @@ export class AppState {
             if (coverUrl) {
               slsUrl = coverUrl;
               // Re-download when URL changes OR when DLS changes (same URL, new song)
-              const dlsChanged = dlsValue && dlsValue !== rt.currentDls;
+              // compared as it goes on air (rt.currentDls holds the cleaned text): a repaired title is not a new track
+              const dlsChanged = dlsValue && cleanDlsText(dlsValue) !== rt.currentDls;
               if (coverUrl !== rt.currentSlsUrl || dlsChanged) {
                 this._logMeta(svc, 'sls', `download cover${dlsChanged ? ' (new track)' : ''}`, 'DEBUG');
                 const tmpPath = path.resolve(slideDir, 'cover_tmp');
