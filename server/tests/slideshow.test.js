@@ -16,7 +16,8 @@ const demoPreset = path.resolve(__dirname, 'fixtures/preset-7-services.json');
 
 describe('Slideshow disabled (pad.sls.enabled === false)', () => {
   let dir, state, svc, slideDir, airDir;
-  const air = () => fs.readdirSync(airDir).sort();
+  // on-air names carry a version (cover__v<mtime><size>.jpg): compared by their slide/ name
+  const air = () => fs.readdirSync(airDir).map((f) => f.replace(/__v[0-9a-z]+(?=\.[^.]+$)/, '')).sort();
 
   before(() => {
     dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-sls-'));

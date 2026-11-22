@@ -244,13 +244,21 @@ function updatePadHelp() {
   const bps = pad * padAuPerSec($('#f_codec')?.value || '', bitrate, Number($('#f_sr')?.value) || 48000);
   const padKbps = bps * 8 / 1000;
   const share = bitrate ? padKbps / bitrate : 0;
-  const t = (kb) => Math.max(1, Math.round(kb * 1024 / bps));
+  // slides only use the X-PAD part: 2 bytes per AU are F-PAD (short X-PAD 6 → 4 bytes)
+  const slideBps = (pad - 2) * (bps / pad);
+  const t = (kb) => Math.max(1, Math.round(kb * 1024 / slideBps));
   const rate = bitrate
     ? `PAD ≈ ${padKbps.toFixed(1)} kbps (${Math.round(share * 100)} %) → ≈ ${Math.max(0, bitrate - padKbps).toFixed(0)} kbps left for audio · `
     : '';
-  el.textContent = `${rate}≈ ${(bps / 1024).toFixed(1)} kB/s for slides: 5 kB logo ≈ ${t(5)} s, 15 kB cover ≈ ${t(15)} s`;
-  el.classList.toggle('over', share > 0.2);
-  el.title = share > 0.2 ? 'The PAD takes a large share of the bitrate: a smaller PAD leaves more for the audio' : '';
+  // a cover that takes longer than the logo / cover alternation (or a track) rarely arrives whole
+  const logoEvery = Number($('#f_json_logoevery')?.value ?? 40);
+  const limit = logoEvery > 0 ? Math.min(logoEvery, 60) : 60;
+  const tooSlow = t(12) > limit;
+  el.textContent = `${rate}≈ ${(slideBps / 1024).toFixed(1)} kB/s for slides: 5 kB logo ≈ ${t(5)} s, 15 kB cover ≈ ${t(15)} s`
+    + (tooSlow ? ` — ⚠ PAD too small for the slideshow: a 12 kB cover needs ≈ ${t(12)} s, longer than the ${limit} s it stays on air, so receivers rarely get a whole picture. Use a PAD of ${pad <= 8 ? '24' : 'a larger size'} or more, or Slideshow: Disabled (DLS only)` : '');
+  el.classList.toggle('over', share > 0.2 || tooSlow);
+  el.title = tooSlow ? 'The slideshow needs a larger PAD: with this size the pictures are sent too slowly to arrive whole'
+    : share > 0.2 ? 'The PAD takes a large share of the bitrate: a smaller PAD leaves more for the audio' : '';
 }
 $('#f_padsize')?.addEventListener('input', updatePadHelp);
 for (const id of ['f_bitrate', 'f_codec', 'f_sr', 'f_slideshow']) $(`#${id}`)?.addEventListener('change', updatePadHelp);

@@ -1324,19 +1324,28 @@ export class AppState {
       const isImg = (f) => /\.(jpe?g|png|webp)$/i.test(f);
       const src = slideshowOff ? [] : fs.readdirSync(slideDir).filter((f) => isImg(f) && fs.statSync(path.join(slideDir, f)).isFile());
       const want = slideshowOff ? [] : this._airChoice(svc, slideDir, src);
+      // One file name per version (cover__v<mtime><size>.jpg): odr-padenc fingerprints a file when it scans
+      // the dir (name, size, mtime → MOT TransportId) but reads it later. A cover.jpg replaced in between
+      // went out with the TransportId of the previous cover, and receivers mixed the segments of both
+      // images (garbled slides). Now a replaced version is a new file: the old one is deleted, so
+      // odr-padenc skips it (a missing file is skipped, never fatal) and sends the new one with its own id.
+      const airName = (f, st) => {
+        const ext = path.extname(f);
+        return `${path.basename(f, ext)}__v${Math.round(st.mtimeMs).toString(36)}${st.size.toString(36)}${ext}`;
+      };
+      const names = [];
       for (const f of want) {
         const from = path.join(slideDir, f);
-        const to = path.join(airDir, f);
-        const a = fs.statSync(from);
-        let b = null;
-        try { b = fs.statSync(to); } catch { /* not copied yet */ }
-        if (b && b.size === a.size && b.mtimeMs >= a.mtimeMs) continue;
+        const name = airName(f, fs.statSync(from));
+        names.push(name);
+        const to = path.join(airDir, name);
+        if (fs.existsSync(to)) continue;
         const tmp = path.join(motDirAbs, `.air_${f}`);
         fs.copyFileSync(from, tmp);
         fs.renameSync(tmp, to);
       }
       for (const f of fs.readdirSync(airDir)) {
-        if (!want.includes(f)) { try { fs.unlinkSync(path.join(airDir, f)); } catch { /* ignore */ } }
+        if (!names.includes(f)) { try { fs.unlinkSync(path.join(airDir, f)); } catch { /* ignore */ } }
       }
       const rt = this.serviceRuntime.get(svc.id);
       if (rt) rt.airSlides = want;   // what odr-padenc sends now (UI hint)
