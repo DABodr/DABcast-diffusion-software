@@ -22,6 +22,8 @@ import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import { convertToSlide as convertSlideImage, removeBlackBands, imageCoder } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
+import { SPI_SIZES, normalizeSpiSettings, spiLogosDir, spiSid, isSpiFileName, spiSourceLogo, makeSpiLogos, spiLogoInfo, deleteSpiLogos, buildSpiCarousel, spiGeneratorStatus } from './spi.js';
+import { estimateCU } from './cu.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
 import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy, sdrDeviceString } from './odr/outputs.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
@@ -905,6 +907,7 @@ app.post('/api/services/reorder', (req, res) => {
 
 app.post('/api/mux/start', async (req, res) => {
   try {
+    refreshSpiCarousel('start');   // SPI activated: labels / logos of the services ON as they are now
     await state.startMux();
     res.json({ ok: true });
   } catch (e) {
@@ -1816,6 +1819,123 @@ app.param('svcId', (req, res, next, value) => {
   next();
 });
 
+// ── SPI service logos (page "SPI"): files in data/spi/logos, nothing broadcast yet ──
+const spiState = () => {
+  const spi = normalizeSpiSettings(settings.spi);
+  return { ...spi, cu: estimateCU(spi.bitrate, spi.protection, 'A') };
+};
+// CU of the audio services ON (the SPI sub-channel needs room in the 864 CU of the ensemble)
+const audioCu = () => (state.preset?.services || []).filter((s) => s.enabled !== false)
+  .reduce((a, s) => a + estimateCU(s.dab?.bitrateKbps, s.dab?.protectionLevel ?? 3, s.dab?.eepMode || 'A'), 0);
+// Carousel (data/spi/spi.dat) rebuilt from the current logos / labels when SPI is activated: at Start,
+// at activation and after a logo change. settings.spi.file = last good carousel, read by muxBuilder.
+let spiLast = null;
+function refreshSpiCarousel(reason) {
+  if (!normalizeSpiSettings(settings.spi).enabled) return null;
+  const r = buildSpiCarousel({ dataDir, settings, services: [...(state.preset?.services || [])].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0)) });
+  if (r.ok) {
+    spiLast = { at: Date.now(), ...r.stats };
+    if (settings.spi.file !== r.file) { settings.spi = { ...settings.spi, file: r.file }; writeJson(settingsPath, settings); }
+    logger.line('spi', `SPI carousel built (${reason}): ${r.stats.services} service(s), ${r.stats.logos} logo(s), ${Math.round(r.stats.bytes / 1024)} kB, one cycle ≈ ${r.stats.cycleSec} s`);
+  } else {
+    spiLast = { at: Date.now(), error: r.error };
+    logger.line('spi', `SPI carousel not built (${reason}): ${r.error}`, 'WARN');
+  }
+  return r;
+}
+const spiDir = () => spiLogosDir(dataDir);
+const spiServices = () => [...(state.preset?.services || [])].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
+app.get('/api/spi', (req, res) => {
+  res.json({
+    settings: spiState(),
+    generator: spiGeneratorStatus(),
+    carousel: spiLast,
+    cuFree: 864 - audioCu(),
+    muxRunning: state.muxRunning,
+    sizes: SPI_SIZES.map(([w, h]) => `${w}x${h}`),
+    services: spiServices().map((svc) => {
+      const sid = spiSid(svc);
+      return { id: svc.id, sid, ps8: svc.identity?.ps8 || '', enabled: svc.enabled !== false,
+        hasSource: Boolean(spiSourceLogo(state._resolveMotDir(svc))), logos: spiLogoInfo(spiDir(), sid) };
+    }),
+  });
+});
+app.get('/api/spi/logo/:name', (req, res) => {
+  const name = String(req.params.name || '');
+  if (!isSpiFileName(name)) return res.status(404).end();
+  const file = path.join(spiDir(), name);
+  if (!fs.existsSync(file)) return res.status(404).end();
+  res.set('Cache-Control', 'no-cache').sendFile(file);
+});
+app.put('/api/spi/settings', (req, res) => {
+  const prev = settings.spi || {};
+  const next = normalizeSpiSettings({ ...normalizeSpiSettings(prev), ...(req.body || {}) });
+  if (next.enabled) {
+    const gen = spiGeneratorStatus();
+    if (!gen.ok) return res.status(400).json({ error: gen.reason });
+    const need = estimateCU(next.bitrate, next.protection, 'A');
+    const free = 864 - audioCu();
+    if (need > free) return res.status(400).json({ error: `Not enough capacity: the SPI service needs ${need} CU, ${Math.max(free, 0)} CU free (864 CU per ensemble)` });
+  }
+  settings.spi = { ...next, file: prev.file };
+  writeJson(settingsPath, settings);
+  if (next.enabled) {
+    const r = refreshSpiCarousel('settings');
+    if (!r.ok) {   // not activated without a carousel: the .mux would point to nothing
+      settings.spi = { ...settings.spi, enabled: false };
+      writeJson(settingsPath, settings);
+      return res.status(400).json({ error: `SPI carousel not built: ${r.error}` });
+    }
+  }
+  res.json(spiState());
+});
+// All services (or one: body.id) from their slideshow logo; keepExisting: services with their 4 sizes are skipped
+app.post('/api/spi/generate', (req, res) => {
+  const keep = req.body?.keepExisting === true;
+  const only = req.body?.id ? String(req.body.id) : null;
+  const done = [], skipped = [], failed = [];
+  for (const svc of spiServices()) {
+    if (only && svc.id !== only) continue;
+    const sid = spiSid(svc);
+    if (keep && Object.values(spiLogoInfo(spiDir(), sid)).every(Boolean)) { skipped.push(svc.id); continue; }
+    const src = spiSourceLogo(state._resolveMotDir(svc));
+    if (!src) { skipped.push(svc.id); continue; }
+    try { makeSpiLogos(src, spiDir(), sid); done.push(svc.id); } catch (e) {
+      failed.push(svc.id);
+      logger.line('spi', `${svc.id}: SPI logos failed: ${e.message}`, 'WARN');
+    }
+  }
+  if (done.length) { logger.line('spi', `SPI logos made from the slideshow logos: ${done.join(', ')}`); refreshSpiCarousel('logos'); }
+  res.json({ ok: failed.length === 0, done, skipped, failed });
+});
+// Picture sent for one service (data: URL) → its 4 sizes
+app.post('/api/spi/:id/upload', (req, res) => {
+  const svc = spiServices().find((s) => s.id === String(req.params.id));
+  if (!svc) return res.status(404).json({ error: 'Service not found' });
+  const m = /^data:image\/[\w+.-]+;base64,(.+)$/s.exec(String(req.body?.dataUrl || ''));
+  if (!m) return res.status(400).json({ error: 'Picture required (JPEG / PNG / WebP)' });
+  fs.mkdirSync(spiDir(), { recursive: true });
+  const tmp = path.join(spiDir(), `.upload_${process.pid}_${Date.now()}`);
+  try {
+    fs.writeFileSync(tmp, Buffer.from(m[1], 'base64'));
+    makeSpiLogos(tmp, spiDir(), spiSid(svc));
+    logger.line('spi', `${svc.id}: SPI logos made from an uploaded picture`);
+    refreshSpiCarousel('logo upload');
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  } finally {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+  }
+});
+app.delete('/api/spi/:id', (req, res) => {
+  const svc = spiServices().find((s) => s.id === String(req.params.id));
+  if (!svc) return res.status(404).json({ error: 'Service not found' });
+  deleteSpiLogos(spiDir(), spiSid(svc));
+  refreshSpiCarousel('logo deleted');
+  res.json({ ok: true });
+});
+
 app.get('/api/mot/:svcId/logo', (req, res) => {
   try {
     const svcId = String(req.params.svcId || '').toUpperCase();
@@ -2144,6 +2264,7 @@ const server = app.listen(listenPort, listenHost, () => {
     // Small delay to let the event loop settle before spawning ODR processes
     setTimeout(async () => {
       try {
+        refreshSpiCarousel('autostart');
         await state.startMux();
         logger.line('web', 'Auto-start: mux started');
       } catch (e) {

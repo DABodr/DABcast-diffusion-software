@@ -198,7 +198,8 @@ function updateCuImpact() {
   if (!el || !STATE?.preset) return;
   const cu = Number($('#f_cu')?.value) || 0;
   const max = STATE.preset.capacity?.maxCu ?? 864;
-  const others = STATE.preset.services.filter((s) => s.enabled !== false && s.id !== editingId).reduce((t, s) => t + (s.cu ?? 0), 0);
+  const others = STATE.preset.services.filter((s) => s.enabled !== false && s.id !== editingId).reduce((t, s) => t + (s.cu ?? 0), 0)
+    + (STATE.preset.capacity?.dataCu ?? 0);   // the SPI data service takes room too
   const svc = editingId ? STATE.preset.services.find((s) => s.id === editingId) : null;
   const counted = svc ? svc.enabled !== false : !STATE.muxRunning;   // a service added ON AIR arrives OFF
   const total = others + (counted ? cu : 0);
@@ -696,7 +697,7 @@ function renderStats(cap) {
   const html = [
     card('Ensemble', esc(ens.label || '—'), `${esc(ens.idHex || '')} · ${muxSub}`, 'stat-val-sm'),
     card('Capacity', `${cap.totalCu} / ${cap.maxCu} CU`,
-      `<div class="stat-bar"><div class="stat-bar-fill ${capCls}" style="width:${Math.min(ratio * 100, 100).toFixed(0)}%"></div></div>${Math.round(ratio * 100)} %`, capCls),
+      `<div class="stat-bar"><div class="stat-bar-fill ${capCls}" style="width:${Math.min(ratio * 100, 100).toFixed(0)}%"></div></div>${Math.round(ratio * 100)} %${cap.dataCu ? ` · audio ${cap.totalCu - cap.dataCu}, SPI ${cap.dataCu}` : ''}`, capCls),
     card('Services', `${enabled.length}`, `enabled / ${all.length}`, ''),
     card('Encoders', STATE.muxRunning ? `${running}` : '—', STATE.muxRunning ? `running / ${enabled.length}` : 'off air', STATE.muxRunning && running === enabled.length ? 'cap-ok' : ''),
     card('Mux inputs', bufInputs.length ? `${bufOk} / ${bufInputs.length}` : '—',
@@ -725,7 +726,7 @@ function render() {
     pwdBanner.classList.toggle('hidden', !locked_pwd);
   }
 
-  const lockableButtons = ['btnStop','btnAdd','btnMux','btnLevels','btnPlayer','btnLogs','btnTelegram',
+  const lockableButtons = ['btnStop','btnAdd','btnMux','btnSpi','btnLevels','btnPlayer','btnLogs','btnTelegram',
     'btnExportConfig','btnImportAll','btnExportService','btnImportService','btnExportAllServices','btnDablin'];
   for (const id of lockableButtons) {
     const el = document.getElementById(id);
@@ -2759,6 +2760,93 @@ $('#lvWindow')?.addEventListener('change', (e) => {
   renderLevels();
 });
 $('#btnLevels')?.addEventListener('click', openLevels);
+// ── SPI logos page: settings banner + logos of every service in the 4 SPI sizes ──
+const dlgSpi = $('#dlgSpi');
+let SPI = null;
+let spiUploadId = null;
+const spiKb = (b) => `${(b / 1024).toFixed(1)} kB`;
+async function loadSpi() {
+  SPI = await api('/api/spi');
+  const st = SPI.settings;
+  $('#spiBitrate').value = String(st.bitrate);
+  $('#spiProt').value = String(st.protection);
+  $('#spiEnabled').checked = st.enabled;
+  $('#spiCu').textContent = `${st.cu} CU`;
+  $('#spiCu').title = `${SPI.cuFree} CU free in the ensemble (864 CU)`;
+  // generator, carousel and capacity: one line under the banner
+  const c = SPI.carousel;
+  const info = [];
+  if (!SPI.generator?.ok) info.push(`<span class="sys-bad">SPI generator unavailable: ${esc(SPI.generator?.reason || '')}</span>`);
+  if (st.enabled && c && !c.error) info.push(`On air from the next Start · carousel ${spiKb(c.bytes)}, one cycle ≈ ${c.cycleSec >= 120 ? `${Math.round(c.cycleSec / 60)} min` : `${c.cycleSec} s`} at ${st.bitrate} kbps (${c.logos} logos, ${c.services} services)`);
+  if (st.enabled && c?.error) info.push(`<span class="sys-bad">Carousel not built: ${esc(c.error)}</span>`);
+  if (st.enabled && SPI.muxRunning) info.push('<span class="sys-warn">ON AIR: a change of the SPI service is applied at the next Stop / Start</span>');
+  if (!st.enabled) info.push(`<span class="muted">Not broadcast · ${SPI.cuFree} CU free in the ensemble</span>`);
+  $('#spiInfo').innerHTML = info.join(' · ');
+  const box = (svc, size) => {
+    const info = svc.logos[size];
+    if (!info) return `<td class="spi-cell"><div class="spi-empty spi-${size}">—</div></td>`;
+    const [w, h] = size.split('x').map(Number);
+    const scale = w >= 320 ? 1 / 3 : w >= 128 ? 0.5 : 1;   // 320x240 at 1/3, 128x128 at 1/2, small sizes as sent
+    return `<td class="spi-cell"><img src="/api/spi/logo/${svc.sid}-${size}.png?v=${info.mtime}" width="${Math.round(w * scale)}" height="${Math.round(h * scale)}" alt="${size}" title="${size} · ${spiKb(info.bytes)}"><div class="spi-kb">${spiKb(info.bytes)}</div></td>`;
+  };
+  $('#spiBody').innerHTML = SPI.services.map((svc) => `<tr class="${svc.enabled ? '' : 'svc-off'}">
+      <td class="spi-ps">${esc(svc.ps8)}</td><td class="spi-sid">${esc(svc.sid.toUpperCase())}</td>
+      ${SPI.sizes.map((sz) => box(svc, sz)).join('')}
+      <td class="spi-act">
+        <button type="button" class="btn btn-mini" data-spi="gen" data-id="${esc(svc.id)}" ${svc.hasSource ? '' : 'disabled title="No slideshow logo for this service"'}>From slideshow</button>
+        <button type="button" class="btn btn-mini" data-spi="up" data-id="${esc(svc.id)}">Upload…</button>
+        <button type="button" class="btn btn-mini" data-spi="del" data-id="${esc(svc.id)}" ${Object.values(svc.logos).some(Boolean) ? '' : 'disabled'}>Delete</button>
+      </td></tr>`).join('') || '<tr><td colspan="7" class="muted">No service.</td></tr>';
+}
+async function spiAction(fn, msg) {
+  const st = $('#spiStatus');
+  st.textContent = msg;
+  try { const r = await fn(); await loadSpi(); return r; } catch (e) {
+    await loadSpi().catch(() => {});   // the banner shows what the server really kept (e.g. not activated)
+    st.textContent = `Error: ${e.message || e}`;
+    return null;
+  }
+}
+$('#btnSpi')?.addEventListener('click', async () => {
+  $('#spiStatus').textContent = '';
+  try { await loadSpi(); } catch (e) { alert(e.message || String(e)); return; }
+  dlgSpi.showModal();
+});
+// settings banner: saved at once (nothing broadcast yet)
+for (const id of ['spiBitrate', 'spiProt', 'spiEnabled']) {
+  $(`#${id}`)?.addEventListener('change', () => spiAction(() => api('/api/spi/settings', { method: 'PUT',
+    body: JSON.stringify({ bitrate: Number($('#spiBitrate').value), protection: Number($('#spiProt').value), enabled: $('#spiEnabled').checked }) }), 'Saving…')
+    .then((r) => { if (r) $('#spiStatus').textContent = 'Settings saved'; }));
+}
+$('#spiGetAll')?.addEventListener('click', async () => {
+  const r = await spiAction(() => api('/api/spi/generate', { method: 'POST', body: JSON.stringify({ keepExisting: $('#spiKeep').checked }) }), 'Making the SPI logos…');
+  if (r) $('#spiStatus').textContent = `${r.done.length} service(s) updated, ${r.skipped.length} kept or without slideshow logo${r.failed.length ? `, ${r.failed.length} failed (see Logs)` : ''}`;
+});
+$('#spiBody')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-spi]');
+  if (!b) return;
+  const id = b.dataset.id;
+  if (b.dataset.spi === 'gen') {
+    const r = await spiAction(() => api('/api/spi/generate', { method: 'POST', body: JSON.stringify({ id }) }), 'Making the SPI logos…');
+    if (r) $('#spiStatus').textContent = r.done.length ? `${id}: SPI logos made from its slideshow logo` : `${id}: no slideshow logo`;
+  } else if (b.dataset.spi === 'up') {
+    spiUploadId = id;
+    $('#spiFile').value = '';
+    $('#spiFile').click();
+  } else if (b.dataset.spi === 'del' && confirm(`Delete the SPI logos of ${id}?`)) {
+    const r = await spiAction(() => api(`/api/spi/${encodeURIComponent(id)}`, { method: 'DELETE' }), 'Deleting…');
+    if (r) $('#spiStatus').textContent = `${id}: SPI logos deleted`;
+  }
+});
+$('#spiFile')?.addEventListener('change', () => {
+  const file = $('#spiFile').files?.[0];
+  if (!file || !spiUploadId) return;
+  const id = spiUploadId;
+  const rd = new FileReader();
+  rd.onload = () => spiAction(() => api(`/api/spi/${encodeURIComponent(id)}/upload`, { method: 'POST', body: JSON.stringify({ dataUrl: rd.result }) }), 'Making the SPI logos…')
+    .then((r) => { if (r) $('#spiStatus').textContent = `${id}: SPI logos made from ${file.name}`; });
+  rd.readAsDataURL(file);
+});
 $('#lvReset')?.addEventListener('click', () => { _levelSamples.clear(); renderLevels(); });
 const saveGain = (id, gainDb) => api(`/api/services/${id}`, { method: 'PATCH', body: JSON.stringify({ audio: { gainDb } }) });
 $('#lvTable')?.addEventListener('click', async (e) => {

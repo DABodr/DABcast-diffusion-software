@@ -25,6 +25,7 @@
     </div>
 
     <div class="actions">
+      <button id="btnSpi" class="btn" title="SPI service logos (32x32 to 320x240)">SPI</button>
       <button id="btnLevels" class="btn" title="Audio levels and gain suggestions">Levels</button>
       <button id="btnLogs" class="btn">Logs</button>
       <button id="btnDablin" class="btn">Dablin</button>
@@ -868,6 +869,43 @@
   </dialog>
 
 
+
+  <dialog id="dlgSpi" class="modal">
+    <form method="dialog" class="modal-body modal-spi">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">SPI logos</div>
+          <div class="modal-sub">Service logos sent to receivers by the SPI data service (ETSI TS 102 818): PNG in 4 sizes per service</div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close">✕</button>
+      </div>
+      <div class="spi-banner">
+        <div class="spi-setup">
+          <label>Bit rate
+            <select id="spiBitrate"><option value="8">8 kbps</option><option value="16">16 kbps</option><option value="24">24 kbps</option><option value="32">32 kbps</option></select>
+          </label>
+          <label>Protection EEP-A
+            <select id="spiProt"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select>
+          </label>
+          <div class="spi-cu"><span>CU required</span><b id="spiCu">—</b></div>
+          <label class="spi-check" title="Adds the SPI data service (packet mode) to the multiplex at the next Start"><input type="checkbox" id="spiEnabled" /> Service activated</label>
+        </div>
+        <div class="spi-actions">
+          <button type="button" class="btn btn-primary btn-sm" id="spiGetAll" title="Makes the 4 sizes from each service's slideshow logo (never the track covers)">Get all from slideshow logos</button>
+          <label class="spi-check"><input type="checkbox" id="spiKeep" checked /> Keep existing</label>
+        </div>
+      </div>
+      <div class="spi-info" id="spiInfo"></div>
+      <div class="spi-status muted" id="spiStatus"></div>
+      <div class="spi-wrap">
+        <table class="spi-table">
+          <thead><tr><th>PS8</th><th>SId</th><th>320×240 <span class="muted">(1/3)</span></th><th>128×128 <span class="muted">(1/2)</span></th><th>112×32</th><th>32×32</th><th></th></tr></thead>
+          <tbody id="spiBody"></tbody>
+        </table>
+      </div>
+      <input type="file" id="spiFile" accept="image/jpeg,image/png,image/webp" hidden />
+    </form>
+  </dialog>
 
   <dialog id="dlgLevels" class="modal">
     <form method="dialog" class="modal-body modal-levels">

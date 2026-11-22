@@ -234,3 +234,25 @@ describe('buildMuxConfig — slideshow signalling (pad.sls.enabled)', () => {
     assert.ok(c.includes('subchannel sub_1'), 'component still defined');
   });
 });
+
+describe('buildMuxConfig — SPI data service (settings.spi)', () => {
+  it('no SPI block unless activated AND the carousel was built: .mux unchanged', () => {
+    const base = buildMuxConfig(makeConfig());
+    for (const spi of [undefined, { enabled: false, file: '/d/spi.dat' }, { enabled: true }]) {
+      const cfg = makeConfig();
+      if (spi) cfg.settings.spi = spi;
+      assert.equal(buildMuxConfig(cfg), base, JSON.stringify(spi));
+    }
+  });
+
+  it('activated: packet sub-channel reading the carousel, MOT component with userapp "spi"', () => {
+    const cfg = makeConfig();
+    cfg.settings.spi = { enabled: true, bitrate: 16, protection: 3, file: '/var/lib/dabcast/spi/spi.dat' };
+    const mux = buildMuxConfig(cfg);
+    assert.match(mux, /srv_spi \{\n\s+label "TEST SPI"\n\s+shortlabel "SPI"\n\s+id 0xe1f408f1\n/);
+    assert.match(mux, /sub_spi \{\n\s+type packet\n\s+bitrate 16\n\s+id 63\n\s+protection-profile EEP_A\n\s+protection 3\n\s+inputfile "\/var\/lib\/dabcast\/spi\/spi\.dat"\n\s+load_entire_file true\n/);
+    assert.match(mux, /comp_spi \{\n\s+type 60\n\s+service srv_spi\n\s+subchannel sub_spi\n\s+user-applications \{\n\s+userapp "spi"\n\s+\}\n\s+address 1\n\s+datagroup true\n/);
+    // audio services keep sub_1… (the /api/mux/stats mapping)
+    assert.ok(mux.indexOf('sub_1 {') < mux.indexOf('sub_spi {'));
+  });
+});
