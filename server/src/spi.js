@@ -18,7 +18,9 @@ export const spiLogosDir = (dataDir) => path.join(dataDir, 'spi', 'logos');
 // Service ID of an audio service = its PI, lower case without 0x ("f9a3")
 export const spiSid = (svc) => String(svc?.identity?.pi || svc?.id || '').replace(/^0x/i, '').toLowerCase();
 export const spiFileName = (sid, w, h) => `${sid}-${w}x${h}.png`;
-export const isSpiFileName = (name) => /^[0-9a-f]{4,8}-\d{2,3}x\d{2,3}\.png$/.test(String(name));
+export const isSpiFileName = (name) => /^(?:[0-9a-f]{4,8}|ensemble)-\d{2,3}x\d{2,3}\.png$/.test(String(name));
+// The multiplex (ensemble) logos: same folder and sizes, under this name (ensemble-320x240.png…)
+export const SPI_ENSEMBLE = 'ensemble';
 
 // Settings saved in settings.json (spi), with safe defaults
 export function normalizeSpiSettings(s = {}) {
@@ -114,22 +116,23 @@ export function buildSpiCarousel({ dataDir, settings, services, nextTid }) {
   const e = settings.ensemble || {};
   const hex = (v) => parseInt(String(v).replace(/^0x/i, ''), 16);
   const dir = spiLogosDir(dataDir);
+  const read = (sid) => SPI_SIZES.filter(([w, h]) => fs.existsSync(path.join(dir, spiFileName(sid, w, h))))
+    .map(([w, h]) => ({ body: fs.readFileSync(path.join(dir, spiFileName(sid, w, h))), width: w, height: h }));
   try {
     const list = services.filter((s) => s.enabled !== false).map((svc) => {
       const sid = spiSid(svc);
-      const logos = SPI_SIZES.filter(([w, h]) => fs.existsSync(path.join(dir, spiFileName(sid, w, h))))
-        .map(([w, h]) => ({ body: fs.readFileSync(path.join(dir, spiFileName(sid, w, h))), width: w, height: h }));
-      return { sid: hex(sid), label: svc.identity?.ps16 || svc.identity?.ps8 || sid, shortlabel: svc.identity?.ps8 || sid, logos };
+      return { sid: hex(sid), label: svc.identity?.ps16 || svc.identity?.ps8 || sid, shortlabel: svc.identity?.ps8 || sid, logos: read(sid) };
     }).filter((s) => s.logos.length);
-    if (!list.length) return { ok: false, error: 'No SPI logo for the services ON' };
+    const ensLogos = read(SPI_ENSEMBLE);
+    if (!list.length && !ensLogos.length) return { ok: false, error: 'No SPI logo for the multiplex or the services ON' };
     const { data, siBytes } = encodeSpiCarousel({ ecc: hex(e.eccHex || '0xE1'), eid: hex(e.idHex || '0x0000'), label: e.label || '',
-      shortlabel: e.shortlabel || '', address: SPI_PACKET_ADDRESS, packetSize: SPI_PACKET_SIZE[spi.bitrate], services: list }, { nextTid });
+      shortlabel: e.shortlabel || '', address: SPI_PACKET_ADDRESS, packetSize: SPI_PACKET_SIZE[spi.bitrate], logos: ensLogos, services: list }, { nextTid });
     const output = spiCarouselFile(dataDir);
     fs.mkdirSync(path.dirname(output), { recursive: true });
     const tmp = `${output}.tmp${process.pid}`;
     fs.writeFileSync(tmp, data);
     fs.renameSync(tmp, output);   // odr-dabmux preloads the file (load_entire_file): replacing it is safe
-    const logos = list.reduce((a, s) => a + s.logos.length, 0);
+    const logos = list.reduce((a, s) => a + s.logos.length, ensLogos.length);
     // carousel period: whole file at the sub-channel bit rate
     return { ok: true, file: output, stats: { services: list.length, logos, siBytes, packets: data.length / SPI_PACKET_SIZE[spi.bitrate],
       bytes: data.length, cycleSec: Math.round(data.length * 8 / (spi.bitrate * 1000)) } };
