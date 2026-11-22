@@ -83,7 +83,8 @@ describe('metadata loop', () => {
 
 describe('on-air slides (cover has priority over the logos)', () => {
   let dir, state, svc, slideDir, airDir;
-  const air = () => fs.readdirSync(airDir).sort();
+  // on-air names carry a version (cover__v<mtime><size>.jpg): compared by their slide/ name
+  const air = () => fs.readdirSync(airDir).map((f) => f.replace(/__v[0-9a-z]+(?=\.[^.]+$)/, '')).sort();
   const put = (name, bytes) => fs.writeFileSync(path.join(slideDir, name), Buffer.alloc(bytes, 7));
 
   before(() => {
@@ -122,10 +123,24 @@ describe('on-air slides (cover has priority over the logos)', () => {
     assert.deepEqual(state.serviceRuntime.get(svc.id).airSlides, ['cover.jpg']);
   });
 
-  it('a new cover (next track) replaces the on-air copy', () => {
+  it('a new cover (next track) replaces the on-air copy, under a NEW file name', () => {
+    const before = fs.readdirSync(airDir);
     put('cover.jpg', 18000);
+    fs.utimesSync(path.join(slideDir, 'cover.jpg'), new Date(), new Date(Date.now() + 5000));   // a later version
     state._syncAirSlides(svc);
-    assert.equal(fs.statSync(path.join(airDir, 'cover.jpg')).size, 18000);
+    const after = fs.readdirSync(airDir);
+    assert.equal(after.length, 1);
+    assert.match(after[0], /^cover__v[0-9a-z]+\.jpg$/);
+    assert.equal(fs.statSync(path.join(airDir, after[0])).size, 18000);
+    // odr-padenc fingerprints files at scan time and reads them later: a new version must never reuse
+    // the name of the previous one, or it is sent with the previous MOT TransportId (garbled slides)
+    assert.ok(!before.includes(after[0]), 'old version removed, new one under another name');
+  });
+
+  it('an unchanged slide keeps its on-air file (no new TransportId for the same picture)', () => {
+    const before = fs.readdirSync(airDir);
+    state._syncAirSlides(svc);
+    assert.deepEqual(fs.readdirSync(airDir), before);
   });
 
   it('cover removed (no cover for this track) → logos back on air', () => {
@@ -240,7 +255,8 @@ describe('end of track (no cover / title stuck on air during ads)', () => {
 
 describe('on-air slides: station logo every N seconds during a cover', () => {
   let dir, state, svc, slideDir, airDir, rt;
-  const air = () => fs.readdirSync(airDir).sort();
+  // on-air names carry a version (cover__v<mtime><size>.jpg): compared by their slide/ name
+  const air = () => fs.readdirSync(airDir).map((f) => f.replace(/__v[0-9a-z]+(?=\.[^.]+$)/, '')).sort();
   const put = (name, bytes) => fs.writeFileSync(path.join(slideDir, name), Buffer.alloc(bytes, 7));
   const elapse = (ms) => {   // move the rotation clock back instead of waiting
     if (rt.airLogoPhaseStartMs) rt.airLogoPhaseStartMs -= ms;
@@ -342,7 +358,7 @@ describe('on-air slides: default logo interval', () => {
     fs.writeFileSync(path.join(slideDir, 'logo.jpg'), Buffer.alloc(5000, 1));
     fs.writeFileSync(path.join(slideDir, 'cover.jpg'), Buffer.alloc(15000, 2));
     const rt = state.serviceRuntime.get(svc.id);
-    const air = () => fs.readdirSync(path.resolve(mot, 'air'));
+    const air = () => fs.readdirSync(path.resolve(mot, 'air')).map((f) => f.replace(/__v[0-9a-z]+(?=\.[^.]+$)/, ''));
     state._syncAirSlides(svc);
     assert.deepEqual(air(), ['cover.jpg']);
     rt.airLogoPhaseStartMs -= 39000;
