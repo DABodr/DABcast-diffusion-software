@@ -302,6 +302,16 @@ One or several transmitters fed at once by the same multiplex (**Multiplex & mod
   drives the device itself through SoapySDR; *Check device* lists it (`SoapySDRUtil --find`)
 - ✅ Connection state of every output; a raw ETI copy (port 9901) is always kept for the Player / Dablin
 
+### SPI service logos
+
+- ✅ **SPI page** (button *SPI*): every service gets its logo in the 4 sizes of ETSI TS 102 818 for
+  broadcast delivery (PNG 32×32, 112×32, 128×128, 320×240), made from its slideshow logo (never a
+  track cover) or from an uploaded picture, centred on the colour of its own edges
+- ✅ **SPI data service**: when activated, DABcast encodes the service information and the logos of the
+  services ON (MOT directory mode, packet mode, built in, no external tool) and adds a packet sub-channel
+  with `userapp "spi"` to the multiplex at the next Start; bit rate 8–32 kbps (EEP-A), CU checked,
+  carousel size and cycle time shown
+
 ### Supervision and alerts
 
 - ✅ **SDR**: the watchdog reads the frames sent by odr-dabmod; unplugged or stalled device → one error,
