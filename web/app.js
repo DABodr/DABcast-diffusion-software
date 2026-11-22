@@ -2883,6 +2883,147 @@ $('#lvApplyAll')?.addEventListener('click', async (e) => {
   renderLevels();
 });
 
+// ── Loudness (LUFS) tab of the Audio levels dialog: measured on the server, one service at a time ──
+let LV_MODE = 'peaks';
+try { LV_MODE = localStorage.getItem('dabcast.levelMode') === 'lufs' ? 'lufs' : 'peaks'; } catch { /* ignore */ }
+let LOUD = null, LOUD_TIMER = 0;
+let LUFS_TARGET = 'avg', LUFS_DUR = 60;
+try { LUFS_TARGET = localStorage.getItem('dabcast.lufsTarget') || 'avg'; LUFS_DUR = Number(localStorage.getItem('dabcast.lufsDur')) || 60; } catch { /* ignore */ }
+let _lufsSuggestions = [];
+const LUFS_TP_CEILING = -1;   // dBTP: a boost never pushes the true peak above
+// same rule as suggestLoudnessGain() in server/src/loudness.js (m = measurement brought to the current gain):
+// a boost never pushes the true peak above the ceiling, a true peak already above forces a reduction
+function suggestLufsGain(cur, m, target) {
+  let delta = target - m.lufs, limited = false, peak = false;
+  const room = Number.isFinite(m.truePeak) ? LUFS_TP_CEILING - m.truePeak : Infinity;
+  if (delta > room) { delta = room; limited = true; peak = room < 0; }
+  if (Math.abs(delta) < 1) return { gain: null, limited, peak: false };
+  const gain = Math.max(-20, Math.min(20, Math.round((cur + delta) * 2) / 2));
+  return { gain: gain === cur ? null : gain, limited, peak };
+}
+function setLvMode(mode) {
+  LV_MODE = mode;
+  try { localStorage.setItem('dabcast.levelMode', mode); } catch { /* ignore */ }
+  document.querySelectorAll('.lv-tab').forEach((b) => b.classList.toggle('active', b.dataset.lvmode === mode));
+  $('#lvPeaks').hidden = mode !== 'peaks';
+  $('#lvLufs').hidden = mode !== 'lufs';
+  clearInterval(LOUD_TIMER); LOUD_TIMER = 0;
+  if (mode === 'lufs' && dlgLevels?.open) { loadLoudness(); LOUD_TIMER = setInterval(loadLoudness, 2000); }
+}
+async function loadLoudness() {
+  try { LOUD = await api('/api/levels/loudness'); } catch (e) { LOUD = { error: e.message || String(e) }; }
+  renderLoudness();
+}
+function renderLoudness() {
+  const box = $('#lufsTable');
+  if (!box || !STATE) return;
+  _lufsSuggestions = [];
+  $('#lufsTarget').value = LUFS_TARGET;
+  $('#lufsDur').value = String(LUFS_DUR);
+  const busy = Boolean(LOUD?.running || LOUD?.queue?.length);
+  $('#lufsStop').disabled = !busy;
+  const info = [];
+  if (LOUD?.error) info.push(`<span class="sys-bad">${esc(LOUD.error)}</span>`);
+  if (LOUD?.missing?.length) info.push(`<span class="sys-bad">Not installed on the server: ${esc(LOUD.missing.join(', '))}</span>`);
+  if (LOUD && LOUD.supported === false) info.push('<span class="sys-bad">Not available in this output mode</span>');
+  if (!STATE.muxRunning) {
+    box.innerHTML = '<div class="mux-stats-off">Off air — start the multiplex to measure the loudness.</div>';
+    $('#lufsAll').disabled = true; $('#lufsApplyAll').disabled = true;
+    $('#lufsInfo').innerHTML = info.join(' · ');
+    return;
+  }
+  $('#lufsAll').disabled = busy || Boolean(LOUD?.missing?.length) || LOUD?.supported === false;
+  const svcs = viewSort(STATE.preset.services.filter((s) => s.enabled !== false));
+  const res = LOUD?.results || {};
+  // measurement brought to the current gain (the gain may have changed since)
+  const now = (svc) => {
+    const r = res[svc.id];
+    if (!r?.ok) return null;
+    const d = (svc.audio?.gainDb ?? 0) - (r.gainDb ?? 0);
+    return { ...r, lufs: r.lufs + d, truePeak: Number.isFinite(r.truePeak) ? r.truePeak + d : r.truePeak, shifted: d };
+  };
+  const measured = svcs.map(now).filter(Boolean);
+  let target = Number(LUFS_TARGET);
+  if (LUFS_TARGET === 'avg') {
+    target = measured.length >= 2 ? Math.round(measured.reduce((a, m) => a + m.lufs, 0) / measured.length * 2) / 2 : NaN;
+    info.push(measured.length >= 2 ? `Multiplex average: <b>${target} LUFS</b>` : 'Measure at least 2 services to align them on the multiplex average');
+  }
+  if (LOUD?.running) {
+    const svc = svcs.find((s) => s.id === LOUD.running.id);
+    const el = Math.min(LOUD.running.seconds, Math.round((Date.now() - LOUD.running.startedAt) / 1000));
+    info.push(`Measuring ${esc(svc?.identity?.ps8 || LOUD.running.id)}… ${el}/${LOUD.running.seconds} s${LOUD.queue.length ? ` · ${LOUD.queue.length} queued` : ''}`);
+  }
+  $('#lufsInfo').innerHTML = info.join(' · ');
+  const rows = svcs.map((svc) => {
+    const name = esc(svc.identity?.ps8 || svc.id);
+    const gain = svc.audio?.gainDb ?? 0;
+    const direct = ['ZMQ', 'EDI'].includes(String(svc.input?.mode || '').toUpperCase());
+    const pending = svc.runtime?.pendingRestart?.includes('gainDb');
+    const r = res[svc.id], m = now(svc);
+    const isRun = LOUD?.running?.id === svc.id, queued = LOUD?.queue?.includes(svc.id);
+    let sug = '', act = '';
+    if (isRun) sug = '<span class="lv-note">measuring…</span>';
+    else if (queued) sug = '<span class="lv-note">queued</span>';
+    else if (r && !r.ok) sug = `<span class="lv-note">not measured: ${esc(r.error)}</span>`;
+    else if (!m) sug = '<span class="lv-note">not measured yet</span>';
+    else if (pending) sug = `<span class="buf-tag pend">PENDING</span> <span class="lv-note">${gain} dB applies at the next mux Start</span>`;
+    else if (Number.isFinite(target)) {
+      const g = suggestLufsGain(gain, m, target);
+      const lim = g.peak ? ` <span class="buf-tag err" title="True peak ${m.truePeak.toFixed(1)} dBTP: above ${LUFS_TP_CEILING} dBTP it crackles in receivers — lowered for the peaks, even below the target">TRUE PEAK</span>`
+        : g.limited ? ' <span class="buf-tag warn" title="The true peak leaves no room for more gain: the station is as loud as its processing allows">LIMITED</span>' : '';
+      if (g.gain === null) sug = `<span class="buf-tag ok">OK</span>${lim}`;
+      else if (direct) sug = `<span class="lv-note">remote encoder — adjust at the source: ${g.gain > gain ? '+' : '−'}${Math.abs(g.gain - gain)} dB</span>`;
+      else {
+        _lufsSuggestions.push({ id: svc.id, name: svc.identity?.ps8 || svc.id, from: gain, to: g.gain });
+        sug = `<b>${g.gain} dB</b> <span class="lv-note">(${g.gain > gain ? '+' : '−'}${Math.abs(g.gain - gain)})</span>${lim}`;
+        act = `<button type="button" class="btn btn-sm" data-act="lv-apply" data-id="${esc(svc.id)}" data-gain="${g.gain}">Apply</button>`;
+      }
+    }
+    const meas = `<button type="button" class="btn btn-sm" data-act="lufs-measure" data-id="${esc(svc.id)}" ${isRun || queued || LOUD?.missing?.length ? 'disabled' : ''}>Measure</button>`;
+    const tip = m ? `${m.seconds} s measured at ${m.gainDb} dB gain${m.shifted ? ` · shown at the current gain (${m.shifted > 0 ? '+' : ''}${m.shifted} dB)` : ''} · ${new Date(m.at).toLocaleTimeString()}` : '';
+    const hot = m && Number.isFinite(m.truePeak) && m.truePeak > -0.5;
+    const srcClip = hot && gain <= 0 ? ' <span class="buf-tag err" title="True peak at 0 dBTP without added gain: the source itself is probably clipped">SOURCE</span>' : '';
+    return `<tr><td>${name}</td><td class="num" title="${esc(tip)}">${m ? `<b>${m.lufs.toFixed(1)}</b>` : '—'}</td>`
+      + `<td class="num${hot ? ' lv-clip' : ''}">${m && Number.isFinite(m.truePeak) ? m.truePeak.toFixed(1) : '—'}${srcClip}</td>`
+      + `<td class="num">${m && Number.isFinite(m.lra) ? m.lra.toFixed(1) : '—'}</td>`
+      + `<td class="num">${direct ? '—' : `${gain} dB`}</td><td>${sug}</td><td class="lv-act">${meas} ${act}</td></tr>`;
+  }).join('');
+  box.innerHTML = `<table class="lv-table"><thead><tr><th>Service</th><th class="num">LUFS</th><th class="num">True peak</th><th class="num" title="Loudness range: how much the level varies (dynamics)">LRA</th><th class="num">Gain</th><th>Suggestion</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
+  $('#lufsApplyAll').disabled = !_lufsSuggestions.length;
+}
+document.querySelectorAll('.lv-tab').forEach((b) => b.addEventListener('click', () => setLvMode(b.dataset.lvmode)));
+dlgLevels?.addEventListener('close', () => { clearInterval(LOUD_TIMER); LOUD_TIMER = 0; });
+$('#btnLevels')?.addEventListener('click', () => setLvMode(LV_MODE));
+$('#statsRow')?.addEventListener('click', (e) => { if (e.target.closest('[data-act="levels"]')) setLvMode(LV_MODE); });
+$('#lufsTarget')?.addEventListener('change', (e) => { LUFS_TARGET = e.target.value; try { localStorage.setItem('dabcast.lufsTarget', LUFS_TARGET); } catch { /* ignore */ } renderLoudness(); });
+$('#lufsDur')?.addEventListener('change', (e) => { LUFS_DUR = Number(e.target.value) || 60; try { localStorage.setItem('dabcast.lufsDur', String(LUFS_DUR)); } catch { /* ignore */ } });
+const lufsMeasure = async (ids) => {
+  try { LOUD = await api('/api/levels/loudness', { method: 'POST', body: JSON.stringify({ ids, seconds: LUFS_DUR }) }); } catch (e) { showToast(e.message || String(e)); }
+  renderLoudness();
+};
+$('#lufsAll')?.addEventListener('click', () => lufsMeasure(viewSort(STATE.preset.services.filter((s) => s.enabled !== false)).map((s) => s.id)));
+$('#lufsStop')?.addEventListener('click', async () => { try { LOUD = await api('/api/levels/loudness', { method: 'DELETE' }); } catch { /* ignore */ } renderLoudness(); });
+$('#lufsTable')?.addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-act]');
+  if (!b) return;
+  if (b.dataset.act === 'lufs-measure') return lufsMeasure([b.dataset.id]);
+  if (b.dataset.act !== 'lv-apply') return;
+  b.disabled = true;
+  try { await saveGain(b.dataset.id, Number(b.dataset.gain)); await refresh(); } catch (err) { showToast(err.message || String(err)); }
+  renderLoudness();
+});
+$('#lufsApplyAll')?.addEventListener('click', async (e) => {
+  const list = [..._lufsSuggestions];
+  if (!list.length) return;
+  if (!confirm(`Apply ${list.length} suggested gain(s)?\n\n${list.map((x) => `${x.name}: ${x.from} → ${x.to} dB`).join('\n')}\n\nEach encoder restarts (2–3 s gap on that service only).`)) return;
+  e.target.disabled = true;
+  const failed = [];
+  for (const x of list) { try { await saveGain(x.id, x.to); } catch (err) { failed.push(`${x.name}: ${err.message || err}`); } }
+  if (failed.length) showToast(`Not saved — ${failed.join(' · ')}`);
+  await refresh();
+  renderLoudness();
+});
+
 // ── About dialog ──
 const dlgAbout = $('#dlgAbout');
 let aboutTimer = null;

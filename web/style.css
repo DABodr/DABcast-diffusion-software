@@ -412,6 +412,10 @@ label.spi-check { flex-direction: row; align-items: center; gap: 6px; color: var
 .lv-table td.lv-clip { color: var(--red); font-weight: 700; }
 .lv-table td.lv-act { text-align: right; width: 1%; }
 .lv-bar .spacer { flex: 1; }
+.lv-tabs { display: flex; gap: 6px; margin-top: 12px; border-bottom: 1px solid var(--border); }
+.lv-tab { background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: 6px 12px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.lv-tab.active { color: var(--text); border-bottom-color: var(--blue); }
+#lufsInfo { margin: 0 0 8px; }
 @media (max-width: 600px) { .lv-table th, .lv-table td { padding: 6px 4px; } }
 #lvTable { overflow-x: auto; }
 .stat-card[data-act="levels"] { cursor: pointer; }
