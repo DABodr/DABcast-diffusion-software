@@ -1,4 +1,5 @@
 import { buildOutputLines } from './outputs.js';
+import { normalizeSpiSettings, spiDataServiceId, SPI_PACKET_ADDRESS, SPI_SUBCHANNEL_ID } from '../spi.js';
 
 function escapeLabel(value) {
   // no quote and no line break / control character: a label must never add a line to the .mux
@@ -13,6 +14,9 @@ export function buildMuxConfig({ settings, preset }) {
   // Services explicitly disabled (enabled === false) are left out of the multiplex (off air, CU freed).
   // Keep in sync with the sub_N mapping of /api/mux/stats in index.js.
   const sortedServices = [...preset.services].filter((s) => s.enabled !== false).sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
+  // SPI data service (page "SPI"): only when activated AND its carousel file was built (settings.spi.file).
+  // Added after the audio services: sub_1…sub_N (and /api/mux/stats) are unchanged.
+  const spi = settings.spi?.enabled === true && settings.spi?.file ? normalizeSpiSettings(settings.spi) : null;
 
   const lines = [];
   lines.push('general {');
@@ -61,6 +65,13 @@ export function buildMuxConfig({ settings, preset }) {
     lines.push(`        language ${svc.identity.languageHex || '0x0F'}`);
     lines.push('    }');
   });
+  if (spi) {
+    lines.push('    srv_spi {');
+    lines.push(`        label "${escapeLabel(`${e.shortlabel || 'DAB'} SPI`.slice(0, 16))}"`);
+    lines.push('        shortlabel "SPI"');
+    lines.push(`        id ${spiDataServiceId(e)}`);
+    lines.push('    }');
+  }
   lines.push('}');
   lines.push('');
 
@@ -99,6 +110,18 @@ export function buildMuxConfig({ settings, preset }) {
     }
     lines.push('    }');
   });
+  if (spi) {
+    // packet mode, file read in loop; preloaded so DABcast can replace it while it is broadcast
+    lines.push('    sub_spi {');
+    lines.push('        type packet');
+    lines.push(`        bitrate ${spi.bitrate}`);
+    lines.push(`        id ${SPI_SUBCHANNEL_ID}`);
+    lines.push('        protection-profile EEP_A');
+    lines.push(`        protection ${spi.protection}`);
+    lines.push(`        inputfile "${escapeLabel(settings.spi.file)}"`);
+    lines.push('        load_entire_file true');
+    lines.push('    }');
+  }
   lines.push('}');
   lines.push('');
 
@@ -120,6 +143,18 @@ export function buildMuxConfig({ settings, preset }) {
     }
     lines.push('    }');
   });
+  if (spi) {
+    lines.push('    comp_spi {');
+    lines.push('        type 60');   // MOT
+    lines.push('        service srv_spi');
+    lines.push('        subchannel sub_spi');
+    lines.push('        user-applications {');
+    lines.push('            userapp "spi"');
+    lines.push('        }');
+    lines.push(`        address ${SPI_PACKET_ADDRESS}`);
+    lines.push('        datagroup true');
+    lines.push('    }');
+  }
   lines.push('}');
   lines.push('');
 
