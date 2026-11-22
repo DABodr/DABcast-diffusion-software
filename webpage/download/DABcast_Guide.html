@@ -395,7 +395,7 @@
   </tr>
   <tr>
     <td><strong>SPI service logos</strong></td>
-    <td>Gives every service its logo in the 4 sizes receivers display in their station list (ETSI TS 102 818: PNG 32×32, 112×32, 128×128, 320×240), made from its slideshow logo, and broadcasts them in an SPI data service of the multiplex.</td>
+    <td>Gives every service its logo in the 4 sizes receivers display in their station list (ETSI TS 102 818: PNG 32×32, 112×32, 128×128, 320×240), made from its slideshow logo, plus an optional logo for the multiplex, and broadcasts them in an SPI data service of the multiplex.</td>
   </tr>
   <tr>
     <td><strong>Mux input monitoring</strong></td>
@@ -739,12 +739,12 @@ txgain=40</pre>
 <ul>
   <li><strong>Get all from slideshow logos</strong> makes the 4 sizes (PNG 32×32, 112×32, 128×128, 320×240) of every service from its slideshow logo &mdash; never from a track cover. The logo is fitted in each size and centred on the colour of its own edges.</li>
   <li><strong>Keep existing</strong> (ticked): only the services without SPI logos get them, logos uploaded by hand are kept. Untick it to remake every service.</li>
-  <li>Per service: <strong>From slideshow</strong>, <strong>Upload…</strong> (another picture) or <strong>Delete</strong>.</li>
+  <li>Per service: <strong>From slideshow</strong>, <strong>Upload…</strong> (another picture) or <strong>Delete</strong>.</li>  <li><strong>Multiplex logo</strong>: the <strong>MUX</strong> row at the top of the table is the logo of the multiplex itself, shown by receivers that display an icon for the ensemble. The multiplex has no slideshow: use <strong>Upload…</strong> (the 4 sizes are made the same way) or <strong>Delete</strong>. Optional: without it, nothing changes.</li>
 </ul>
 <h2>Broadcasting the SPI</h2>
 <ul>
   <li>Choose the bit rate (8 to 32 kbps) and the EEP-A protection: the CU needed are shown. 16 kbps EEP-A 3 = 12 CU.</li>
-  <li>Tick <strong>Service activated</strong>, then Stop / Start the multiplex: DABcast adds the SPI data service (packet mode) with the logos of the services ON. It refuses when the ensemble has not enough free CU.</li>
+  <li>Tick <strong>Service activated</strong>, then Stop / Start the multiplex: DABcast adds the SPI data service (packet mode) with the multiplex logo and the logos of the services ON. It refuses when the ensemble has not enough free CU.</li>
   <li>The page shows the carousel size and the time of one cycle (the time a receiver may need to get every logo). The carousel is rebuilt at each Start and after a logo change, without interrupting the broadcast.</li>
   <li>The <em>Capacity</em> card counts the SPI CU. Off by default: nothing changes until it is activated.</li>
 </ul>
