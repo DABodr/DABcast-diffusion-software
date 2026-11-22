@@ -60,8 +60,18 @@ describe('SPI carousel encoder (Node)', () => {
     assert.ok(si.includes(Buffer.from([0x83, 1, 0x04])), 'colour square logo');
   });
 
-  it('identical to the Python ODR SPI libraries, byte for byte', { skip: python ? false : 'python SPI libraries not installed' }, () => {
+  it('multiplex logos: in the ensemble after its names, objects "1".. before the service logos; none = unchanged', () => {
+    const si = encodeServiceInformation({ ...cfg, logos: [{ url: '1', width: 32, height: 32 }], services: [] });
+    const ens = si.indexOf(0x26);
+    assert.ok(si.indexOf(Buffer.from([0x83, 1, 0x04])) > ens, 'logo inside the ensemble');
+    assert.ok(encodeSpiCarousel({ ...cfg, logos: [] }, { nextTid: fixedTid }).data.equals(encodeSpiCarousel(cfg, { nextTid: fixedTid }).data));
+    assert.equal(encodeSpiCarousel({ ...cfg, logos: [{ body: png(50), width: 32, height: 32 }] }, { nextTid: fixedTid }).objects, 7);
+  });
+
+  for (const withEns of [false, true]) it(`identical to the Python ODR SPI libraries, byte for byte${withEns ? ' (multiplex logos)' : ''}`, { skip: python ? false : 'python SPI libraries not installed' }, () => {
+    const cfg2 = withEns ? { ...cfg, logos: [{ body: png(700), width: 128, height: 128 }, { body: png(80), width: 32, height: 32 }] } : cfg;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-spiref-'));
+    const ensLogos = (cfg2.logos || []).map((lg, i) => { const f = path.join(dir, `ens-${i}.png`); fs.writeFileSync(f, lg.body); return { path: f, width: lg.width, height: lg.height }; });
     const services = cfg.services.map((s) => ({ ...s, logos: s.logos.map((lg, i) => {
       const f = path.join(dir, `${s.sid.toString(16)}-${i}.png`);
       fs.writeFileSync(f, lg.body);
@@ -79,28 +89,30 @@ from msc.datagroups import encode_directorymode
 from msc.packets import encode_packets
 cfg = json.load(sys.stdin)
 objects = []
+def media(lg):
+    name = '%x' % (len(objects) + 1)
+    objects.append(MotObject(name, open(lg['path'], 'rb').read(), ContentType.IMAGE_PNG))
+    w, h = lg['width'], lg['height']
+    t = Multimedia.LOGO_COLOUR_SQUARE if (w, h) == (32, 32) else Multimedia.LOGO_COLOUR_RECTANGLE if (w, h) == (112, 32) else Multimedia.LOGO_UNRESTRICTED
+    return Multimedia(url=name, type=t, width=w, height=h, content='image/png')
+ens = binary.Ensemble(cfg['ecc'], cfg['eid'], names=[MediumName(cfg['label']), ShortName(cfg['shortlabel'])])
+ens.media = [media(lg) for lg in cfg.get('logos', [])]
 info = ServiceInfo(created=None, originator='DABcast')
 for s in cfg['services']:
     svc = Service()
     svc.names = [MediumName(s['label']), ShortName(s['shortlabel'])]
     svc.bearers = [DabBearer(cfg['ecc'], cfg['eid'], s['sid'], 0)]
-    svc.media = []
-    for lg in s['logos']:
-        name = '%x' % (len(objects) + 1)
-        objects.append(MotObject(name, open(lg['path'], 'rb').read(), ContentType.IMAGE_PNG))
-        w, h = lg['width'], lg['height']
-        t = Multimedia.LOGO_COLOUR_SQUARE if (w, h) == (32, 32) else Multimedia.LOGO_COLOUR_RECTANGLE if (w, h) == (112, 32) else Multimedia.LOGO_UNRESTRICTED
-        svc.media.append(Multimedia(url=name, type=t, width=w, height=h, content='image/png'))
+    svc.media = [media(lg) for lg in s['logos']]
     info.services.append(svc)
-si = binary.marshall(info, ensemble=binary.Ensemble(cfg['ecc'], cfg['eid'], names=[MediumName(cfg['label']), ShortName(cfg['shortlabel'])])).tobytes()
+si = binary.marshall(info, ensemble=ens).tobytes()
 o = MotObject('0', si, EpgContentType.SERVICE_INFORMATION)
 o.add_parameter(ScopeId(cfg['ecc'], cfg['eid']))
 objects.insert(0, o)
 for p in encode_packets(encode_directorymode(objects, directory_parameters=[]), address=cfg['address'], size=cfg['packetSize']):
     sys.stdout.buffer.write(p.tobytes())
 `;
-    const expected = execFileSync('python3', ['-c', ref], { input: JSON.stringify({ ...cfg, services }), maxBuffer: 64 * 1024 * 1024 });
-    const { data } = encodeSpiCarousel(cfg, { nextTid: fixedTid });
+    const expected = execFileSync('python3', ['-c', ref], { input: JSON.stringify({ ...cfg2, logos: ensLogos, services }), maxBuffer: 64 * 1024 * 1024 });
+    const { data } = encodeSpiCarousel(cfg2, { nextTid: fixedTid });
     assert.equal(data.length, expected.length, 'same length');
     assert.ok(data.equals(expected), `first difference at byte ${data.findIndex((b, i) => b !== expected[i])}`);
   });

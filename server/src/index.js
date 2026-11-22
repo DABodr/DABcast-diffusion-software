@@ -22,7 +22,7 @@ import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import { convertToSlide as convertSlideImage, removeBlackBands, imageCoder } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
-import { SPI_SIZES, normalizeSpiSettings, spiLogosDir, spiSid, isSpiFileName, spiSourceLogo, makeSpiLogos, spiLogoInfo, deleteSpiLogos, buildSpiCarousel, spiGeneratorStatus } from './spi.js';
+import { SPI_SIZES, normalizeSpiSettings, spiLogosDir, spiSid, isSpiFileName, spiSourceLogo, makeSpiLogos, spiLogoInfo, deleteSpiLogos, buildSpiCarousel, spiGeneratorStatus, SPI_ENSEMBLE } from './spi.js';
 import { estimateCU } from './cu.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
 import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy, sdrDeviceString } from './odr/outputs.js';
@@ -1853,6 +1853,7 @@ app.get('/api/spi', (req, res) => {
     cuFree: 864 - audioCu(),
     muxRunning: state.muxRunning,
     sizes: SPI_SIZES.map(([w, h]) => `${w}x${h}`),
+    ensemble: { id: SPI_ENSEMBLE, sid: SPI_ENSEMBLE, ps8: settings.ensemble?.shortlabel || '', logos: spiLogoInfo(spiDir(), SPI_ENSEMBLE) },
     services: spiServices().map((svc) => {
       const sid = spiSid(svc);
       return { id: svc.id, sid, ps8: svc.identity?.ps8 || '', enabled: svc.enabled !== false,
@@ -1908,9 +1909,11 @@ app.post('/api/spi/generate', (req, res) => {
   if (done.length) { logger.line('spi', `SPI logos made from the slideshow logos: ${done.join(', ')}`); refreshSpiCarousel('logos'); }
   res.json({ ok: failed.length === 0, done, skipped, failed });
 });
-// Picture sent for one service (data: URL) → its 4 sizes
+// Picture sent for one service, or for the multiplex (id "ensemble"), as a data: URL → its 4 sizes
+const spiTarget = (id) => (id === SPI_ENSEMBLE ? { id: 'multiplex', sid: SPI_ENSEMBLE }
+  : (() => { const svc = spiServices().find((s) => s.id === id); return svc && { id: svc.id, sid: spiSid(svc) }; })());
 app.post('/api/spi/:id/upload', (req, res) => {
-  const svc = spiServices().find((s) => s.id === String(req.params.id));
+  const svc = spiTarget(String(req.params.id));
   if (!svc) return res.status(404).json({ error: 'Service not found' });
   const m = /^data:image\/[\w+.-]+;base64,(.+)$/s.exec(String(req.body?.dataUrl || ''));
   if (!m) return res.status(400).json({ error: 'Picture required (JPEG / PNG / WebP)' });
@@ -1918,7 +1921,7 @@ app.post('/api/spi/:id/upload', (req, res) => {
   const tmp = path.join(spiDir(), `.upload_${process.pid}_${Date.now()}`);
   try {
     fs.writeFileSync(tmp, Buffer.from(m[1], 'base64'));
-    makeSpiLogos(tmp, spiDir(), spiSid(svc));
+    makeSpiLogos(tmp, spiDir(), svc.sid);
     logger.line('spi', `${svc.id}: SPI logos made from an uploaded picture`);
     refreshSpiCarousel('logo upload');
     res.json({ ok: true });
@@ -1929,9 +1932,9 @@ app.post('/api/spi/:id/upload', (req, res) => {
   }
 });
 app.delete('/api/spi/:id', (req, res) => {
-  const svc = spiServices().find((s) => s.id === String(req.params.id));
+  const svc = spiTarget(String(req.params.id));
   if (!svc) return res.status(404).json({ error: 'Service not found' });
-  deleteSpiLogos(spiDir(), spiSid(svc));
+  deleteSpiLogos(spiDir(), svc.sid);
   refreshSpiCarousel('logo deleted');
   res.json({ ok: true });
 });

@@ -20,6 +20,7 @@ describe('SPI logos', () => {
     assert.equal(spiSid({ identity: { pi: '0xF9A3' } }), 'f9a3');
     assert.equal(spiFileName('f9a3', 112, 32), 'f9a3-112x32.png');
     assert.ok(isSpiFileName('f9a3-320x240.png'));
+    assert.ok(isSpiFileName('ensemble-32x32.png'), 'multiplex logo');
     for (const bad of ['../x-32x32.png', 'f9a3-32x32.jpg', 'F9A3-32x32.png', 'f9a3.png']) assert.ok(!isSpiFileName(bad), bad);
   });
 

@@ -47,10 +47,11 @@ function logoGroup({ url, width, height }) {
   return element(0x13, [element(0x2b, a)]);
 }
 
-// { ecc, eid, label, shortlabel, services: [{ sid, label, shortlabel, logos: [{ url, width, height }] }] }
-export function encodeServiceInformation({ ecc, eid, label, shortlabel, services, originator = 'DABcast' }) {
+// { ecc, eid, label, shortlabel, logos?, services: [{ sid, label, shortlabel, logos: [{ url, width, height }] }] }
+// logos = the multiplex (ensemble) logos, after its names (TS 102 818: ensemble mediaDescription)
+export function encodeServiceInformation({ ecc, eid, label, shortlabel, logos = [], services, originator = 'DABcast' }) {
   const ens = [attr(0x80, Buffer.from([ecc & 0xff, (eid >> 8) & 0xff, eid & 0xff])),
-    mediumName(String(label).slice(0, 16)), shortName(String(shortlabel).slice(0, 8))];
+    mediumName(String(label).slice(0, 16)), shortName(String(shortlabel).slice(0, 8)), ...logos.map(logoGroup)];
   for (const s of services) {
     ens.push(element(0x28, [
       element(0x29, [attr(0x80, dabBearer(ecc, eid, s.sid))]),
@@ -155,19 +156,19 @@ export function encodePackets(groups, { address = 1, size = 48 } = {}) {
   return Buffer.concat(out);
 }
 
-// Whole carousel: SI (object "0", scope = the ensemble) then the logos ("1", "2"… referred to by the SI)
-// cfg: { ecc, eid, label, shortlabel, address, packetSize, services: [{ sid, label, shortlabel, logos: [{ body, width, height }] }] }
+// Whole carousel: SI (object "0", scope = the ensemble) then the logos ("1", "2"… referred to by the SI):
+// the multiplex logos first (cfg.logos, optional), then those of the services
+// cfg: { ecc, eid, label, shortlabel, address, packetSize, logos?, services: [{ sid, label, shortlabel, logos: [{ body, width, height }] }] }
 export function encodeSpiCarousel(cfg, { nextTid } = {}) {
   const objects = [];
-  const services = cfg.services.map((s) => ({
-    ...s,
-    logos: s.logos.map((lg) => {
-      const name = (objects.length + 1).toString(16);
-      objects.push({ name, body: lg.body, type: CONTENT_PNG });
-      return { url: name, width: lg.width, height: lg.height };
-    }),
-  }));
-  const si = encodeServiceInformation({ ...cfg, services });
+  const ref = (lg) => {
+    const name = (objects.length + 1).toString(16);
+    objects.push({ name, body: lg.body, type: CONTENT_PNG });
+    return { url: name, width: lg.width, height: lg.height };
+  };
+  const logos = (cfg.logos || []).map(ref);
+  const services = cfg.services.map((s) => ({ ...s, logos: s.logos.map(ref) }));
+  const si = encodeServiceInformation({ ...cfg, logos, services });
   objects.unshift({ name: '0', body: si, type: CONTENT_SPI_SI, params: [scopeId(cfg.ecc, cfg.eid)] });
   const groups = encodeDirectoryMode(objects, nextTid);
   return { data: encodePackets(groups, { address: cfg.address, size: cfg.packetSize }), siBytes: si.length, objects: objects.length };

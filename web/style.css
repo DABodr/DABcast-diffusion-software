@@ -394,6 +394,7 @@ label.spi-check { flex-direction: row; align-items: center; gap: 6px; color: var
 .spi-table tr.svc-off td { opacity: .55; }
 .spi-ps { font-weight: 600; white-space: nowrap; }
 .spi-sid { font-family: var(--font-mono); color: var(--muted); }
+.spi-ens td { border-bottom: 2px solid var(--border); }
 .spi-cell img { display: block; border: 1px solid var(--border); border-radius: 3px; background: repeating-conic-gradient(#2a2f3a 0 25%, #20242d 0 50%) 0 0 / 10px 10px; }
 .spi-kb { font-size: 10.5px; color: var(--muted); margin-top: 3px; }
 .spi-empty { display: flex; align-items: center; justify-content: center; color: var(--muted); border: 1px dashed var(--border); border-radius: 3px; }

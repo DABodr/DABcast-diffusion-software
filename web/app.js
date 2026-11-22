@@ -2789,7 +2789,15 @@ async function loadSpi() {
     const scale = w >= 320 ? 1 / 3 : w >= 128 ? 0.5 : 1;   // 320x240 at 1/3, 128x128 at 1/2, small sizes as sent
     return `<td class="spi-cell"><img src="/api/spi/logo/${svc.sid}-${size}.png?v=${info.mtime}" width="${Math.round(w * scale)}" height="${Math.round(h * scale)}" alt="${size}" title="${size} · ${spiKb(info.bytes)}"><div class="spi-kb">${spiKb(info.bytes)}</div></td>`;
   };
-  $('#spiBody').innerHTML = SPI.services.map((svc) => `<tr class="${svc.enabled ? '' : 'svc-off'}">
+  const ens = SPI.ensemble;   // the multiplex logo (shown by receivers for the ensemble), upload only
+  const ensRow = ens ? `<tr class="spi-ens">
+      <td class="spi-ps">${esc(ens.ps8 || 'Multiplex')}</td><td class="spi-sid">MUX</td>
+      ${SPI.sizes.map((sz) => box(ens, sz)).join('')}
+      <td class="spi-act">
+        <button type="button" class="btn btn-mini" data-spi="up" data-id="${ens.id}" title="Logo of the multiplex (ensemble)">Upload…</button>
+        <button type="button" class="btn btn-mini" data-spi="del" data-id="${ens.id}" ${Object.values(ens.logos).some(Boolean) ? '' : 'disabled'}>Delete</button>
+      </td></tr>` : '';
+  $('#spiBody').innerHTML = ensRow + SPI.services.map((svc) => `<tr class="${svc.enabled ? '' : 'svc-off'}">
       <td class="spi-ps">${esc(svc.ps8)}</td><td class="spi-sid">${esc(svc.sid.toUpperCase())}</td>
       ${SPI.sizes.map((sz) => box(svc, sz)).join('')}
       <td class="spi-act">
