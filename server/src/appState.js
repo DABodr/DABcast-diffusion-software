@@ -411,9 +411,11 @@ export class AppState {
         id: this.preset.id,
         name: this.preset.name,
         services,
+        // dataCu: the SPI data service when activated (page "SPI"), part of totalCu like in the multiplex
         capacity: {
-          totalCu: services.reduce((a, s) => a + (s.enabled ? (s.cu ?? 0) : 0), 0),
-          maxCu: 864
+          totalCu: services.reduce((a, s) => a + (s.enabled ? (s.cu ?? 0) : 0), 0) + this._spiCu(),
+          maxCu: 864,
+          dataCu: this._spiCu()
         }
       },
       settings: {
@@ -955,6 +957,13 @@ export class AppState {
     const ports = this.preset.services.map((s) => s.network.ediOutputTcp.port);
     const max = ports.length ? Math.max(...ports) : 9000;
     return max + 1;
+  }
+
+  // CU of the SPI data service (packet mode, EEP-A) when activated with a built carousel — same rule as muxBuilder
+  _spiCu() {
+    const spi = this.settings?.spi;
+    if (spi?.enabled !== true || !spi.file) return 0;
+    return estimateCU([8, 16, 24, 32].includes(Number(spi.bitrate)) ? Number(spi.bitrate) : 16, [1, 2, 3, 4].includes(Number(spi.protection)) ? Number(spi.protection) : 3, 'A');
   }
 
   _resolveMotDir(svc) {
