@@ -27,7 +27,7 @@ import { SPI_SIZES, normalizeSpiSettings, spiLogosDir, spiSid, isSpiFileName, sp
 import { EPG_SOURCES, loadEpgConfig, saveEpgEntry, readEpgCache, refreshEpgCache, epgProgrammes, xmltvChannels } from './spiEpg.js';
 import { estimateCU } from './cu.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
-import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy, sdrDeviceString } from './odr/outputs.js';
+import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy, sdrDeviceString, clampImportedGains, validateBaseSettings } from './odr/outputs.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
 import { createLoudnessQueue, LOUDNESS_DURATIONS } from './loudness.js';
 import { normalizeAutoUpdate, isDue, dayKey, pickVersion, healthAfterUpdate, AUTO_UPDATE_CHECK_MS } from './autoUpdate.js';
@@ -455,6 +455,9 @@ function reservedForOutputs(dabmux) {
 app.patch('/api/settings', (req, res) => {
   try {
     const patch = req.body || {};
+    // ports, ensemble ID / ECC, HACKRF mode settings: checked BEFORE anything is changed (fields given only)
+    const baseErrors = validateBaseSettings({ ensemble: patch.ensemble, dabmux: patch.dabmux });
+    if (baseErrors.length) throw new Error(baseErrors.join(' · '));
     // Transmitter outputs (NETWORK mode): normalized and checked BEFORE anything is changed
     if (patch.dabmux) {
       const next = { ...settings.dabmux, ...patch.dabmux };
@@ -717,6 +720,8 @@ app.post('/api/import/full', (req, res) => {
       const imp = payload.settings.dabmux;
       if (imp.outputs !== undefined) imp.outputs = normalizeOutputs(imp.outputs);
       if (imp.ediOptions !== undefined) imp.ediOptions = normalizeEdiOptions(imp.ediOptions);
+      // gains out of range (export made before the 1.10.7 limits): brought back to the limit, not refused
+      for (const n of clampImportedGains(imp)) logger.line('export', `Import: ${n}`, 'WARN');
       const next = { ...settings.dabmux, ...imp };
       if (String(next.txMode || '').toUpperCase() === 'NETWORK') {
         const errors = validateOutputs(normalizeOutputs(next.outputs), {
@@ -725,6 +730,11 @@ app.post('/api/import/full', (req, res) => {
         });
         if (errors.length) throw new Error(`Transmitter outputs: ${errors.join(' · ')}`);
       }
+    }
+    // ports, ensemble ID / ECC, HACKRF mode settings: written as they are into the .mux / dabmod.ini
+    if (payload.settings) {
+      const errors = validateBaseSettings({ ensemble: payload.settings.ensemble, dabmux: payload.settings.dabmux });
+      if (errors.length) throw new Error(`Multiplex settings: ${errors.join(' · ')}`);
     }
     // logos: one per service PI code (4 hex digits) — never a path (no "../")
     const logoEntries = payload.logos && typeof payload.logos === 'object' ? Object.entries(payload.logos) : [];

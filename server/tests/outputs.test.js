@@ -1,7 +1,7 @@
 // Tests for the transmitter outputs of the NETWORK mode (odr/outputs.js)
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, outputsFromLegacy, validateOutputs, buildOutputLines, sdrDeviceString, localHackrfOutput } from '../src/odr/outputs.js';
+import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, outputsFromLegacy, validateOutputs, buildOutputLines, sdrDeviceString, localHackrfOutput, clampImportedGains, validateBaseSettings } from '../src/odr/outputs.js';
 
 describe('outputs — normalize', () => {
   it('fills the defaults of each type and coerces numbers', () => {
@@ -169,5 +169,59 @@ describe('outputs — SDR gain limits', () => {
     assert.equal(v({ digitalGain: 0.8 }), '');
     assert.match(v({ digitalGain: 1.5 }), /digital gain must be above 0 and at most 1/);
     assert.match(v({ digitalGain: 0 }), /digital gain/);
+  });
+});
+
+describe('outputs — imported file: gains brought back to the limits', () => {
+  it('clamps a HackRF sdr output saved before 1.10.7 (TX gain 63, digital gain 2), even when OFF', () => {
+    const dm = { outputs: normalizeOutputs([{ id: 'sdr1', name: 'HackRF', enabled: false, type: 'sdr', device: 'hackrf', txGain: 63, digitalGain: 2 }]) };
+    const notes = clampImportedGains(dm);
+    assert.equal(dm.outputs[0].txGain, 61);
+    assert.equal(dm.outputs[0].digitalGain, 1);
+    assert.equal(notes.length, 2);
+    assert.deepEqual(validateOutputs([...dm.outputs, normalizeOutput({ type: 'zmq', port: 18081 })]), []);
+  });
+  it('clamps the hackrf output and the HACKRF mode settings; leaves valid values and non-numbers alone', () => {
+    const dm = { outputs: normalizeOutputs([{ type: 'hackrf', txGain: 60, maxFramesQueued: 5000 }]), hackrf: { txGain: 99, digitalGain: 0.8 } };
+    clampImportedGains(dm);
+    assert.equal(dm.outputs[0].txGain, 47);
+    assert.equal(dm.outputs[0].maxFramesQueued, 2000);
+    assert.equal(dm.hackrf.txGain, 47);
+    assert.equal(dm.hackrf.digitalGain, 0.8);
+    const s = { hackrf: { txGain: 'abc' } };
+    assert.deepEqual(clampImportedGains(s), []);
+    assert.equal(s.hackrf.txGain, 'abc');
+  });
+});
+
+describe('outputs — multiplex settings written as they are into the .mux', () => {
+  const defaults = {
+    ensemble: { idHex: '0xFFFF', eccHex: '0xE1', label: 'DABcast Demo', shortlabel: 'DABcast', internationalTable: 1, localTimeOffset: 'auto' },
+    dabmux: { telnetPort: 12721, managementPort: 12720, zmqEndpoint: 'tcp://lo:12722', txMode: 'EASYDAB', easyDabOutput: { ip: '0.0.0.0', port: 18081, netPort: 9901 }, ediTcpListenPort: 13000, hackrf: { dabBlock: '7A', maxFramesQueued: 580, gainmode: 2, digitalGain: 1, rate: 4096000, txGain: 47 } },
+  };
+  it('accepts the defaults, an empty patch and what the Settings screen sends (empty port field = 0)', () => {
+    assert.deepEqual(validateBaseSettings(defaults), []);
+    assert.deepEqual(validateBaseSettings({}), []);
+    assert.deepEqual(validateBaseSettings({ dabmux: { managementPort: 0, telnetPort: 12721, ediTcpListenPort: 13000, easyDabOutput: { ip: '', port: 18081 }, hackrf: { txGain: 0, digitalGain: 0, rate: 2048000, gainmode: 0 } } }), []);
+    assert.deepEqual(validateBaseSettings({ ensemble: { localTimeOffset: 1.5 } }), []);
+  });
+  it('refuses the values of a hand-edited file (ports > 65535, bad endpoint, sample rate)', () => {
+    const errors = validateBaseSettings({ dabmux: { telnetPort: 1272771, managementPort: 1275520, zmqEndpoint: 'tcp://lo:12789722', hackrf: { rate: 40964857000 } } });
+    assert.equal(errors.length, 4);
+    assert.match(errors.join(' '), /telnetPort.*managementPort.*zmqEndpoint.*sample rate/);
+  });
+  it('refuses anything that would add a line to the .mux', () => {
+    assert.equal(validateBaseSettings({ dabmux: { telnetPort: '12721\n}\ninputs {' } }).length, 1);
+    assert.equal(validateBaseSettings({ dabmux: { zmqEndpoint: 'tcp://lo:12722\n}' } }).length, 1);
+    assert.equal(validateBaseSettings({ ensemble: { eccHex: '0xE1\n' } }).length, 1);
+    assert.equal(validateBaseSettings({ dabmux: { easyDabOutput: { ip: '0.0.0.0 x' } } }).length, 1);
+    assert.equal(validateBaseSettings({ dabmux: { hackrf: { txGain: '47\n-a 1' } } }).length, 1);
+  });
+  it('refuses a bad ensemble ID / ECC / mode / DAB block', () => {
+    assert.equal(validateBaseSettings({ ensemble: { idHex: 'F001' } }).length, 1);    // dabmux would read it as decimal
+    assert.equal(validateBaseSettings({ ensemble: { eccHex: '0x' } }).length, 1);
+    assert.equal(validateBaseSettings({ ensemble: { localTimeOffset: 'tomorrow' } }).length, 1);
+    assert.equal(validateBaseSettings({ dabmux: { txMode: 'FM' } }).length, 1);
+    assert.equal(validateBaseSettings({ dabmux: { hackrf: { dabBlock: '99Z' } } }).length, 1);
   });
 });
