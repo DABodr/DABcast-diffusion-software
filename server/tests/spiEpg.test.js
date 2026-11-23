@@ -112,4 +112,16 @@ describe('programme guide (EPG)', () => {
     assert.equal(r.stats.epgServices, 1);
     assert.equal(fs.statSync(r.file).size % (48 * 4), 0, 'packets × 4 for the loop');
   });
+
+  it('carousel built at the bit rate of the running mux (bitrate override), not the saved one', () => {
+    const dir = tmp();
+    saveEpgEntry(dir, 'F9A3', { source: 'grid', grid: [{ days: [1, 2, 3, 4, 5, 6, 7], start: '06:00', end: '09:00', title: 'Matin' }] });
+    const services = [{ id: 'F9A3', identity: { pi: '0xF9A3', ps8: 'F3 Gold' } }];
+    const settings = { spi: { enabled: true, bitrate: 32 }, ensemble: { eccHex: '0xE1', idHex: '0xFFFF' } };
+    const read = () => fs.readFileSync(path.join(dir, 'spi', 'spi.dat'));
+    buildSpiCarousel({ dataDir: dir, settings, services, now: NOW, bitrate: 8 });
+    assert.equal(((read()[0] >> 6) + 1) * 24, 24, 'packets of the 8 kbps sub-channel on air');
+    buildSpiCarousel({ dataDir: dir, settings, services, now: NOW });
+    assert.equal(((read()[0] >> 6) + 1) * 24, 96, 'saved bit rate otherwise');
+  });
 });

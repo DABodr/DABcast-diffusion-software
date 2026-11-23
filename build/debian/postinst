@@ -113,15 +113,21 @@ case "$1" in
     # overwriting it in place could make it run lines of the new file as root
     cat > /opt/dabcast/bin/dabcast-install-update.new << 'UPDATER'
 #!/bin/bash
-# dabcast-install-update X.Y.Z — run as root by the dabcast service (sudo rule below) for the
-# one-click update. It downloads the OFFICIAL release X.Y.Z itself (fixed GitHub address, HTTPS)
-# into a private root-only directory, checks the package name / version / architecture, then
-# installs it. It never installs a file supplied by the caller (former versions installed any
-# /tmp/dabcast-update_*.deb: a local user could get a package installed as root).
+# dabcast-install-update — run as root by the dabcast service (sudo rule below) for the one-click and the
+# automatic updates. It downloads the OFFICIAL release X.Y.Z itself (fixed GitHub address, HTTPS) into a
+# private root-only directory, checks the package name / version / architecture, then installs it. It never
+# installs a file supplied by the caller (former versions installed any /tmp/dabcast-update_*.deb: a local
+# user could get a package installed as root).
+#   dabcast-install-update --prefetch X.Y.Z   download and check only (the multiplex keeps broadcasting)
+#   dabcast-install-update X.Y.Z              install (the prefetched package when there is one), then watch
+#                                             the restarted service: when it does not stay up, the previous
+#                                             version is installed again (helper v2, packages from 1.12)
 set -euo pipefail
+PREFETCH=0
+if [[ "${1:-}" == "--prefetch" ]]; then PREFETCH=1; shift; fi
 VERSION="${1:-}"
 if [[ ! "$VERSION" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
-  echo "usage: dabcast-install-update X.Y.Z" >&2
+  echo "usage: dabcast-install-update [--prefetch] X.Y.Z" >&2
   exit 2
 fi
 ARCH=$(dpkg --print-architecture)
@@ -129,13 +135,18 @@ if [[ "$ARCH" != "amd64" && "$ARCH" != "arm64" ]]; then
   echo "dabcast-install-update: unsupported architecture $ARCH" >&2
   exit 2
 fi
-URL="https://github.com/DABodr/DABcast-diffusion-software/releases/download/v${VERSION}/dabcast_${VERSION}_${ARCH}.deb"
+CACHE=/var/cache/dabcast-update   # root only: prefetched packages
+install -d -m 700 -o root -g root "$CACHE"
 DIR=$(mktemp -d)   # 0700, owned by root
 trap 'rm -rf "$DIR"' EXIT
-PKG="$DIR/dabcast.deb"
-echo "dabcast-install-update: downloading $URL"
-# download with the Node.js embedded in the dabcast binary (no curl / wget needed); "PROGRESS n" lines
-PKG_EXECPATH=PKG_INVOKE_NODEJS DABCAST_UPDATE_URL="$URL" DABCAST_UPDATE_OUT="$PKG" /opt/dabcast/bin/dabcast -e '
+
+# download X.Y.Z into $2 and check it (exit 3 download, 4 unexpected package)
+fetch() {
+  local ver="$1" out="$2"
+  local url="https://github.com/DABodr/DABcast-diffusion-software/releases/download/v${ver}/dabcast_${ver}_${ARCH}.deb"
+  echo "dabcast-install-update: downloading $url"
+  # download with the Node.js embedded in the dabcast binary (no curl / wget needed); "PROGRESS n" lines
+  PKG_EXECPATH=PKG_INVOKE_NODEJS DABCAST_UPDATE_URL="$url" DABCAST_UPDATE_OUT="$out" /opt/dabcast/bin/dabcast -e '
 const fs = require("fs");
 (async () => {
   const r = await fetch(process.env.DABCAST_UPDATE_URL, { redirect: "follow", headers: { "User-Agent": "DABcast-updater" }, signal: AbortSignal.timeout(300000) });
@@ -152,12 +163,36 @@ const fs = require("fs");
   await new Promise((ok, ko) => { out.end(); out.on("finish", ok); out.on("error", ko); });
 })().catch((e) => { console.error("download failed: " + e.message); process.exit(3); });
 '
-for field in Package:dabcast "Version:$VERSION" "Architecture:$ARCH"; do
-  if [[ "$(dpkg-deb -f "$PKG" "${field%%:*}")" != "${field#*:}" ]]; then
-    echo "dabcast-install-update: unexpected package (${field%%:*} is not ${field#*:}), not installed" >&2
-    exit 4
-  fi
-done
+  check "$ver" "$out"
+}
+check() {
+  local ver="$1" pkg="$2" field
+  for field in Package:dabcast "Version:$ver" "Architecture:$ARCH"; do
+    if [[ "$(dpkg-deb -f "$pkg" "${field%%:*}" 2>/dev/null)" != "${field#*:}" ]]; then
+      echo "dabcast-install-update: unexpected package (${field%%:*} is not ${field#*:}), not installed" >&2
+      return 4
+    fi
+  done
+}
+CACHED="$CACHE/dabcast_${VERSION}_${ARCH}.deb"
+
+if [[ $PREFETCH -eq 1 ]]; then
+  find "$CACHE" -maxdepth 1 -name 'dabcast_*.deb' ! -name "$(basename "$CACHED")" -delete
+  fetch "$VERSION" "$DIR/dabcast.deb"
+  mv -f "$DIR/dabcast.deb" "$CACHED"
+  echo "PREFETCHED"
+  exit 0
+fi
+
+PKG="$DIR/dabcast.deb"
+if [[ -f "$CACHED" ]] && check "$VERSION" "$CACHED"; then
+  mv -f "$CACHED" "$PKG"
+  echo "dabcast-install-update: package downloaded in advance"
+else
+  rm -f "$CACHED"
+  fetch "$VERSION" "$PKG"
+fi
+PREV=$(dpkg-query -W -f='${Version}' dabcast 2>/dev/null || true)
 echo "INSTALLING"
 # From here the package's prerm stops the dabcast service, which reads this output through a pipe:
 # a write to that broken pipe killed dpkg with SIGPIPE in the middle of the installation (package
@@ -165,25 +200,54 @@ echo "INSTALLING"
 # ignored.
 trap '' HUP PIPE
 exec >>/var/log/dabcast-update.log 2>&1
-echo "$(date '+%F %T') installing DABcast $VERSION ($ARCH)"
-# dpkg busy (PackageKit / unattended-upgrades on a desktop): retry every 10 s, 3 minutes at most
-attempt=0
-while :; do
-  out=$(LC_ALL=C dpkg -i "$PKG" 2>&1) && rc=0 || rc=$?
-  printf '%s\n' "$out"
-  if [[ $rc -ne 0 && "$out" == *"lock"* && $attempt -lt 18 ]]; then
-    attempt=$((attempt + 1))
-    echo "$(date '+%F %T') dpkg is busy (lock), retry $attempt/18 in 10 s"
-    sleep 10
-    continue
+dpkg_install() {
+  echo "$(date '+%F %T') installing DABcast $1 ($ARCH)"
+  # dpkg busy (PackageKit / unattended-upgrades on a desktop): retry every 10 s, 3 minutes at most
+  local attempt=0 out rc
+  while :; do
+    out=$(LC_ALL=C dpkg -i "$2" 2>&1) && rc=0 || rc=$?
+    printf '%s\n' "$out"
+    if [[ $rc -ne 0 && "$out" == *"lock"* && $attempt -lt 18 ]]; then
+      attempt=$((attempt + 1))
+      echo "$(date '+%F %T') dpkg is busy (lock), retry $attempt/18 in 10 s"
+      sleep 10
+      continue
+    fi
+    break
+  done
+  [[ $rc -eq 0 ]] || echo "$(date '+%F %T') dpkg failed (code $rc)"
+  # the package starts the service; in any case it must not stay stopped / disabled
+  systemctl enable dabcast.service >/dev/null 2>&1 || true
+  systemctl start dabcast.service >/dev/null 2>&1 || true
+  return $rc
+}
+# the service must stay up 40 s in a row within 2 minutes (a version that cannot start — port taken,
+# crash at start-up — is restarted by systemd every 5 s and never does)
+stays_up() {
+  local up=0 t
+  for t in $(seq 1 120); do
+    if systemctl is-active --quiet dabcast.service; then up=$((up + 1)); else up=0; fi
+    [[ $up -ge 40 ]] && return 0
+    sleep 1
+  done
+  return 1
+}
+rc=0
+dpkg_install "$VERSION" "$PKG" || rc=$?
+if stays_up; then
+  echo "$(date '+%F %T') DABcast $VERSION running"
+  exit $rc
+fi
+echo "$(date '+%F %T') DABcast $VERSION does not stay up"
+if [[ "$PREV" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ && "$PREV" != "$VERSION" ]]; then
+  echo "$(date '+%F %T') rolling back to $PREV"
+  if fetch "$PREV" "$DIR/previous.deb" && dpkg_install "$PREV" "$DIR/previous.deb" && stays_up; then
+    echo "$(date '+%F %T') rolled back: DABcast $PREV running"
+    exit 5
   fi
-  break
-done
-[[ $rc -eq 0 ]] || echo "$(date '+%F %T') dpkg failed (code $rc)"
-# the package starts the service; in any case it must not stay stopped / disabled
-systemctl enable dabcast.service >/dev/null 2>&1 || true
-systemctl start dabcast.service >/dev/null 2>&1 || true
-exit $rc
+  echo "$(date '+%F %T') rollback to $PREV failed: check the server (journalctl -u dabcast)"
+fi
+exit 6
 UPDATER
     chmod 755 /opt/dabcast/bin/dabcast-install-update.new
     mv -f /opt/dabcast/bin/dabcast-install-update.new /opt/dabcast/bin/dabcast-install-update

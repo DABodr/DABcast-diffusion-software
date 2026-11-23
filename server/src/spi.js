@@ -276,8 +276,11 @@ export function spiGeneratorStatus() { return { ok: true }; }
 
 // Builds data/spi/spi.dat from the SPI logos of the services ON (in multiplex order).
 // Returns { ok, stats | error }. odr-dabmux preloads the file (load_entire_file): replacing it is safe.
-export function buildSpiCarousel({ dataDir, settings, services, nextTid, now = Date.now() }) {
-  const spi = normalizeSpiSettings(settings.spi);
+// bitrate: packet size to use instead of the saved one — the bit rate of the SPI sub-channel the running
+// odr-dabmux was started with (a carousel with another packet size would not match it until the next Start)
+export function buildSpiCarousel({ dataDir, settings, services, nextTid, now = Date.now(), bitrate = null }) {
+  const saved = normalizeSpiSettings(settings.spi);
+  const spi = { ...saved, bitrate: SPI_BITRATES.includes(bitrate) ? bitrate : saved.bitrate };
   const e = settings.ensemble || {};
   const hex = (v) => parseInt(String(v).replace(/^0x/i, ''), 16);
   const dir = spiLogosDir(dataDir);
