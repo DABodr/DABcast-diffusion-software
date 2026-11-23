@@ -14,7 +14,7 @@ processes to produce and multiplex DAB+ radio signals.
 **Stack:**
 - Backend: Node.js 24 (ESM `type: "module"`), Express 4, no TypeScript — the .deb embeds Node 24 LTS (pkg)
 - Frontend: Vanilla JS single-page app (`web/app.js`), no framework, no build step
-- Tests: Node.js built-in test runner (`node --test server/tests/*.test.js` — Node 24 no longer accepts a bare directory)  — **384 tests**; CI runs them on every PR (`.github/workflows/tests.yml`)
+- Tests: Node.js built-in test runner (`node --test server/tests/*.test.js` — Node 24 no longer accepts a bare directory)  — **385 tests**; CI runs them on every PR (`.github/workflows/tests.yml`)
 - Build: `esbuild` (bundle) → `@yao-pkg/pkg` (binary) → `dpkg-deb` (.deb package)
 - Targets: `./build.sh` → amd64 | `./build.sh arm64` → Raspberry Pi OS 64-bit
 - Service port: **9090** (default)

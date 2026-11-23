@@ -1116,6 +1116,13 @@ export class AppState {
       const res = await fetch(url, { signal: ctrl.signal });
       if (!res.ok) {
         this.logger.line('sls', `download failed ${url}: HTTP ${res.status}`, 'WARN');
+        // a '?' that belongs to the file name, given unencoded by the metadata API (croonerradio.fr:
+        // "o_que_sera?__tu_verras_.jpg" = 404, "%3F" = 200): one more try with it encoded. Only after a
+        // 404, so a real query string that works is never changed; no '?' left = no further retry.
+        if (res.status === 404 && url.includes('?') && /^https?:/i.test(url)) {
+          clearTimeout(t);
+          return await this._downloadImage(url.replace(/\?/g, '%3F'), destPath, timeoutMs);
+        }
         return false;
       }
       // size limit while reading (a cover / logo is a few hundred kB): a huge or endless answer from a
