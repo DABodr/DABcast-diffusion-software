@@ -1681,7 +1681,9 @@ export class AppState {
           }
         },
         onExit: (code) => {
-          if (this.muxRunning && code !== 0) {
+          // any exit while ON AIR is a failure, a clean one (code 0) too: a stopped dabmux left the
+          // dashboard ON AIR before. stopMux() clears muxRunning first, so a requested stop never lands here.
+          if (this.muxRunning) {
             this.logger.line('mux', `hackrf_transfer crashed (code=${code})`, this._modState?.failing ? 'WARN' : 'ERROR');
           }
         }
@@ -1821,18 +1823,24 @@ export class AppState {
     fs.writeFileSync(muxPath, muxText, 'utf8');
     this.logger.line('mux', 'generated mux: Ok');
 
-    // Atomic start with rollback on failure
+    // Atomic start with rollback on failure. A Stop pressed during the start (it only cleans up while
+    // muxRunning is false) bumps _muxGen: the start is then cancelled instead of declaring ON AIR.
+    const gen = this._muxGen = (this._muxGen || 0) + 1;
+    const stillWanted = () => { if (gen !== this._muxGen) throw new Error('start cancelled (Stop pressed)'); };
     const startedServices = [];
     try {
       for (const svc of this.preset.services.filter((s) => s.enabled)) {
         await this._startService(svc);
         startedServices.push(svc);
+        stillWanted();
       }
 
       const dabmuxCmd = buildDabMuxCommand(muxPath);
       this.pm.spawn('mux:odr-dabmux', dabmuxCmd.bin, dabmuxCmd.args, {
         onExit: (code) => {
-          if (this.muxRunning && code !== 0) {
+          // any exit while ON AIR is a failure, a clean one (code 0) too: a stopped dabmux left the
+          // dashboard ON AIR before. stopMux() clears muxRunning first, so a requested stop never lands here.
+          if (this.muxRunning) {
             this.logger.line('mux', `odr-dabmux crashed (code=${code}) — stopping all`, 'ERROR');
             this.stopMux().then(() => {
               this.muxStatus = 'fail';
@@ -1846,6 +1854,9 @@ export class AppState {
       // ---- HACKRF: start odr-dabmod + hackrf_transfer ----
       // Wait briefly for odr-dabmux to open its EDI TCP port before odr-dabmod connects
       await new Promise((resolve) => setTimeout(resolve, 500));
+      stillWanted();
+      // ON AIR is declared only with odr-dabmux alive: an exit during these 500 ms went unnoticed before
+      if (!this.pm.isRunning('mux:odr-dabmux')) throw new Error('odr-dabmux stopped at start-up (see the logs)');
 
       const localHk = this._localHackrf();   // HACKRF mode, or the HackRF output of the NETWORK mode
       if (localHk) {
@@ -1862,7 +1873,7 @@ export class AppState {
       try { await this.pm.stop('mux:odr-dabmod'); } catch { /* ignore */ }
       try { await this.pm.stop('mux:hackrf_transfer'); } catch { /* ignore */ }
       try { await this.pm.stop('mux:odr-dabmux'); } catch { /* ignore */ }
-      this.muxStatus = 'fail';
+      this.muxStatus = gen !== this._muxGen ? 'off' : 'fail';   // cancelled by Stop: off, not failed
       throw err;
     }
 
@@ -1876,6 +1887,7 @@ export class AppState {
 
   async stopMux() {
     this.logger.line('mux', '--- STOP SEQUENCE ---');
+    this._muxGen = (this._muxGen || 0) + 1;   // cancels a start still in progress
     this._stopWatchdog();
     this._stopMetadataLoop();
 
