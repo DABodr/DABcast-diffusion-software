@@ -730,14 +730,13 @@ export class AppState {
 
     if (needRestart && this.pm.isRunning(`svc:${id}:audioenc`)) {
       this.logger.line(`svc:${id}`, `input changed while ON AIR — restarting encoder`);
-      this._switchServiceUri(normalized, normalized.input.uri);
+      this._restartEncoderLatest(normalized.id, (svc) => svc.input.uri);
     }
     if (gainRestart) {
-      const rt = this.serviceRuntime.get(normalized.id);
       const what = gainChanged ? `audio gain changed while ON AIR (${existing.audio?.gainDb ?? 0} → ${normalized.audio?.gainDb ?? 0} dB)`
         : `drift compensation ${normalized.input?.driftComp === true ? 'enabled' : 'disabled'} while ON AIR`;
       this.logger.line(`svc:${id}`, `${what} — restarting encoder only`);
-      this._switchServiceUri(normalized, rt?.activeUri || normalized.input.uri).catch(() => { /* logged by _switchServiceUri */ });
+      this._restartEncoderLatest(normalized.id, (svc, rt) => rt?.activeUri || svc.input.uri);
     }
 
     // Download slide if slsUrl changed
@@ -750,6 +749,24 @@ export class AppState {
     }
 
     return normalized;
+  }
+
+  // In-place encoder restart with the service config as saved NOW. When a restart of this service is
+  // already running (per-service switch lock), the new one waits for it: two quick saves (gain +3 then
+  // +6 dB) left the encoder on the first value before, the second restart being skipped by the lock.
+  // uriOf(svc, rt): stream to restart on. Gives up after 10 s (field kept in rt.pendingRestart).
+  _restartEncoderLatest(id, uriOf, attempt = 0) {
+    if (this._switchLocks.has(`switch:${id}`)) {
+      if (attempt === 0) this.logger.line(`svc:${id}`, 'encoder restart queued after the one in progress');
+      if (attempt < 40) { setTimeout(() => this._restartEncoderLatest(id, uriOf, attempt + 1), 250); return; }
+      const rt = this.serviceRuntime.get(id);
+      if (rt) rt.pendingRestart = [...new Set([...(rt.pendingRestart || []), 'gainDb'])];
+      this.logger.line(`svc:${id}`, 'encoder restart not done (another one still running after 10 s): applied at the next restart', 'WARN');
+      return;
+    }
+    const svc = this.preset.services.find((s) => s.id === id);
+    if (!svc || !this.muxRunning || !this.pm.isRunning(`svc:${id}:audioenc`)) return;
+    this._switchServiceUri(svc, uriOf(svc, this.serviceRuntime.get(id))).catch(() => { /* logged by _switchServiceUri */ });
   }
 
   addService(svc) {
@@ -1681,7 +1698,9 @@ export class AppState {
           }
         },
         onExit: (code) => {
-          if (this.muxRunning && code !== 0) {
+          // any exit while ON AIR is a failure, a clean one (code 0) too: a stopped dabmux left the
+          // dashboard ON AIR before. stopMux() clears muxRunning first, so a requested stop never lands here.
+          if (this.muxRunning) {
             this.logger.line('mux', `hackrf_transfer crashed (code=${code})`, this._modState?.failing ? 'WARN' : 'ERROR');
           }
         }
@@ -1821,18 +1840,24 @@ export class AppState {
     fs.writeFileSync(muxPath, muxText, 'utf8');
     this.logger.line('mux', 'generated mux: Ok');
 
-    // Atomic start with rollback on failure
+    // Atomic start with rollback on failure. A Stop pressed during the start (it only cleans up while
+    // muxRunning is false) bumps _muxGen: the start is then cancelled instead of declaring ON AIR.
+    const gen = this._muxGen = (this._muxGen || 0) + 1;
+    const stillWanted = () => { if (gen !== this._muxGen) throw new Error('start cancelled (Stop pressed)'); };
     const startedServices = [];
     try {
       for (const svc of this.preset.services.filter((s) => s.enabled)) {
         await this._startService(svc);
         startedServices.push(svc);
+        stillWanted();
       }
 
       const dabmuxCmd = buildDabMuxCommand(muxPath);
       this.pm.spawn('mux:odr-dabmux', dabmuxCmd.bin, dabmuxCmd.args, {
         onExit: (code) => {
-          if (this.muxRunning && code !== 0) {
+          // any exit while ON AIR is a failure, a clean one (code 0) too: a stopped dabmux left the
+          // dashboard ON AIR before. stopMux() clears muxRunning first, so a requested stop never lands here.
+          if (this.muxRunning) {
             this.logger.line('mux', `odr-dabmux crashed (code=${code}) — stopping all`, 'ERROR');
             this.stopMux().then(() => {
               this.muxStatus = 'fail';
@@ -1846,6 +1871,9 @@ export class AppState {
       // ---- HACKRF: start odr-dabmod + hackrf_transfer ----
       // Wait briefly for odr-dabmux to open its EDI TCP port before odr-dabmod connects
       await new Promise((resolve) => setTimeout(resolve, 500));
+      stillWanted();
+      // ON AIR is declared only with odr-dabmux alive: an exit during these 500 ms went unnoticed before
+      if (!this.pm.isRunning('mux:odr-dabmux')) throw new Error('odr-dabmux stopped at start-up (see the logs)');
 
       const localHk = this._localHackrf();   // HACKRF mode, or the HackRF output of the NETWORK mode
       if (localHk) {
@@ -1862,7 +1890,7 @@ export class AppState {
       try { await this.pm.stop('mux:odr-dabmod'); } catch { /* ignore */ }
       try { await this.pm.stop('mux:hackrf_transfer'); } catch { /* ignore */ }
       try { await this.pm.stop('mux:odr-dabmux'); } catch { /* ignore */ }
-      this.muxStatus = 'fail';
+      this.muxStatus = gen !== this._muxGen ? 'off' : 'fail';   // cancelled by Stop: off, not failed
       throw err;
     }
 
@@ -1876,6 +1904,7 @@ export class AppState {
 
   async stopMux() {
     this.logger.line('mux', '--- STOP SEQUENCE ---');
+    this._muxGen = (this._muxGen || 0) + 1;   // cancels a start still in progress
     this._stopWatchdog();
     this._stopMetadataLoop();
 
@@ -1991,19 +2020,27 @@ export class AppState {
     if (rt) rt.status = 'STARTING';
 
     const activeUri = rt?.activeUri || svc.input.uri;
-    const codecArgs = this._getCodecArgs(svc.audio?.codec);
-    const audioCmd = buildAudioEncCommand({
-      svc: { ...svc, audio: { ...svc.audio, codecArgs } },
-      activeUri,
-      mtaPath
-    });
-    this.pm.spawn(`svc:${svc.id}:audioenc`, audioCmd.bin, audioCmd.args, {
-      cwd: motDirAbs,
-      onStderr: (text) => {
-        const lvl = parseAudioLevel(text);
-        if (lvl && rt) rt.audioLevels = lvl;
-      }
-    });
+    // audioenc failing to start after padenc: padenc is stopped too (the start rollback only stops the
+    // services started completely, it stayed running before)
+    try {
+      const codecArgs = this._getCodecArgs(svc.audio?.codec);
+      const audioCmd = buildAudioEncCommand({
+        svc: { ...svc, audio: { ...svc.audio, codecArgs } },
+        activeUri,
+        mtaPath
+      });
+      this.pm.spawn(`svc:${svc.id}:audioenc`, audioCmd.bin, audioCmd.args, {
+        cwd: motDirAbs,
+        onStderr: (text) => {
+          const lvl = parseAudioLevel(text);
+          if (lvl && rt) rt.audioLevels = lvl;
+        }
+      });
+    } catch (err) {
+      try { await this.pm.stop(`svc:${svc.id}:padenc`); } catch { /* not running */ }
+      if (rt) rt.status = 'STOPPED';
+      throw err;
+    }
 
     if (rt) {
       rt.lastStartMs = nowMs();
@@ -2089,7 +2126,10 @@ export class AppState {
 
             // Decide: switch to backup or restart on same URI?
             // When on backup, crashes restart on backup — probe handles return to main.
-            if (crashes >= FAILOVER_CRASH_THRESHOLD && hasDistinctBackup && activeIsMainUri) {
+            // "Switch to backup on failure: No" forbids any automatic switch, crash included (it only
+            // stopped the switch on silence before): the encoder then restarts on the stream it was on.
+            const mayFailover = svc.watchdog?.switchToBackupOnSilence !== false;
+            if (crashes >= FAILOVER_CRASH_THRESHOLD && hasDistinctBackup && activeIsMainUri && mayFailover) {
               // Threshold reached on main — switch to backup
               const targetUri = svc.input.backupUri;
               const targetOk = activeIsMainUri ? okBackup : okMain;
@@ -2103,9 +2143,9 @@ export class AppState {
                 this.logger.line(`svc:${svc.id}`, `switch failed: ${err.message}`, 'WARN');
                 rt.status = 'ERROR';
               });
-            } else if (crashes >= FAILOVER_CRASH_THRESHOLD && !hasDistinctBackup) {
-              // Threshold reached but no distinct backup — restart on same, log once
-              this.logger.line(`svc:${svc.id}`, `failover: ${crashes} crashes but no distinct backup — restarting on ${rt.activeUri}`);
+            } else if (crashes >= FAILOVER_CRASH_THRESHOLD && (!hasDistinctBackup || !mayFailover)) {
+              // Threshold reached but no distinct backup (or switching turned off) — restart on same, log once
+              this.logger.line(`svc:${svc.id}`, `failover: ${crashes} crashes but ${mayFailover ? 'no distinct backup' : 'switch to backup turned off'} — restarting on ${rt.activeUri}`);
               await Promise.race([
                 this._switchServiceUri(svc, rt.activeUri || svc.input.uri),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('switch timeout')), 5000))
@@ -2255,6 +2295,10 @@ export class AppState {
         if (!svc.enabled || !svc.watchdog?.enabled) return false;
         const rt = this.serviceRuntime.get(svc.id);
         if (!rt || !rt.activeUri) return false;
+        // "Back to main after (s)": no return before that delay since the switch, 0 = no automatic return
+        // (as the watchdog's own return path; the probe returned as soon as audio came back before)
+        const backSec = Number(svc.watchdog?.returnToMainAfterSec ?? 60);
+        if (!(backSec > 0) || nowMs() - (rt.lastSwitchMs || 0) < backSec * 1000) return false;
         return rt.activeUri !== svc.input.uri && svc.input.uri;
       });
       if (!candidates.length) return;

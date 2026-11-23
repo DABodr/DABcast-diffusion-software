@@ -14,7 +14,7 @@ processes to produce and multiplex DAB+ radio signals.
 **Stack:**
 - Backend: Node.js 24 (ESM `type: "module"`), Express 4, no TypeScript — the .deb embeds Node 24 LTS (pkg)
 - Frontend: Vanilla JS single-page app (`web/app.js`), no framework, no build step
-- Tests: Node.js built-in test runner (`node --test server/tests/*.test.js` — Node 24 no longer accepts a bare directory)  — **367 tests**; CI runs them on every PR (`.github/workflows/tests.yml`)
+- Tests: Node.js built-in test runner (`node --test server/tests/*.test.js` — Node 24 no longer accepts a bare directory)  — **378 tests**; CI runs them on every PR (`.github/workflows/tests.yml`)
 - Build: `esbuild` (bundle) → `@yao-pkg/pkg` (binary) → `dpkg-deb` (.deb package)
 - Targets: `./build.sh` → amd64 | `./build.sh arm64` → Raspberry Pi OS 64-bit
 - Service port: **9090** (default)
@@ -331,6 +331,10 @@ These are non-negotiable patterns. Breaking them causes runtime failures.
 | **effectiveActiveOk** | `activeOk \|\| encAlive` — if encoder is alive, stream is OK regardless of HTTP check result. Applies to both main and backup. |
 | **Audio probe encoder** | One `odr-audioenc -s 15 -o tcp://localhost:9099` per mux, no PAD/MTA. Checks main stream audio for return-to-main. Respects service input mode (VLC/GST). |
 | **Probe guard** | `_probeRunning` flag prevents concurrent probe iterations. Never remove. |
+| **Failover option** | `watchdog.switchToBackupOnSilence: false` ("Switch to backup on failure: No") forbids any automatic switch, crash failover included (`mayFailover`): the encoder restarts on the stream it was on. |
+| **Probe return delay** | The audio probe only takes a service on backup once `returnToMainAfterSec` has elapsed since `rt.lastSwitchMs`; `0` = no automatic return (same as the watchdog's own return path). |
+| **ON AIR declaration** | `startMux()` declares ON AIR only if `mux:odr-dabmux` is still running after the 500 ms wait. `stopMux()` bumps `_muxGen`: a start in progress is cancelled (status `off`) instead of ending ON AIR. dabmux `onExit` treats any exit while `muxRunning` as a failure (code 0 too). |
+| **Encoder restarts ON AIR** | Gain / drift / input changes go through `_restartEncoderLatest()`: when a switch of the service is running (`_switchLocks`), the restart waits for it (up to 10 s) and uses the config saved now — the lock used to skip the second restart. `_startService` stops padenc when audioenc fails to start. |
 
 ### Service identity
 | Invariant | Rule |
