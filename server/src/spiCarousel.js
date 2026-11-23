@@ -73,7 +73,7 @@ function headerParam(id, data) {
   if (n <= 127) return Buffer.concat([Buffer.from([0xc0 | id, n]), data]);
   return Buffer.concat([Buffer.from([0xc0 | id, 0x80 | (n >> 8), n & 0xff]), data]);
 }
-const contentName = (name) => headerParam(12, Buffer.concat([Buffer.from([0x40]), str(name)]));   // ISO Latin 1
+const contentName = (name) => headerParam(12, Buffer.concat([Buffer.from([0x00]), str(name)]));   // EBU Latin (charset 0, the DAB default; names are digits)
 const scopeId = (ecc, eid) => headerParam(0x27, Buffer.from([ecc & 0xff, (eid >> 8) & 0xff, eid & 0xff]));
 
 // MSB-first bit writer for the fields that are not byte aligned
@@ -134,32 +134,48 @@ export function encodeDirectoryMode(objects, nextTid = randomTransportIds()) {
   return groups;
 }
 
-// data groups → MSC packets (size 24/48/72/96, padding with zeros, CRC)
-export function encodePackets(groups, { address = 1, size = 48 } = {}) {
+// data groups → MSC packets (size 24/48/72/96, padding with zeros, CRC).
+// loop: the file is read in loop by odr-dabmux, so the continuity index (0..3) must go on from the last
+// packet to the first one: the packet count is brought to a multiple of 4 by sending the last data group
+// in 1–3 more packets (shorter useful data, allowed by EN 300 401 5.3.2). Without it, receivers see a
+// continuity jump right before the MOT directory at every turn of the carousel.
+export function encodePackets(groups, { address = 1, size = 48, loop = false } = {}) {
   if (![24, 48, 72, 96].includes(size)) throw new Error('packet size must be 24, 48, 72 or 96');
   const chunk = size - 5;
+  // useful data length of each packet, per data group
+  const plan = groups.map((g) => { const l = []; for (let i = 0; i < g.length; i += chunk) l.push(Math.min(chunk, g.length - i)); return l; });
+  const total = plan.reduce((a, l) => a + l.length, 0);
+  if (loop && plan.length) {
+    const last = plan[plan.length - 1];
+    for (let extra = (4 - (total % 4)) % 4; extra > 0; extra--) {
+      const i = last.indexOf(Math.max(...last));   // split the fullest packet of the last group (a group is ≥ 9 bytes)
+      last.splice(i, 1, last[i] - 1, 1);
+    }
+  }
   const out = [];
   let ci = 0;
-  for (const g of groups) {
-    for (let i = 0; i < g.length; i += chunk) {
-      const data = g.subarray(i, i + chunk);
+  groups.forEach((g, gi) => {
+    let off = 0;
+    plan[gi].forEach((len, k) => {
       const p = Buffer.alloc(size);
-      p[0] = ((size / 24 - 1) << 6) | (ci << 4) | (i === 0 ? 0x08 : 0) | (i + chunk >= g.length ? 0x04 : 0) | ((address >> 8) & 0x03);
+      p[0] = ((size / 24 - 1) << 6) | (ci << 4) | (k === 0 ? 0x08 : 0) | (k === plan[gi].length - 1 ? 0x04 : 0) | ((address >> 8) & 0x03);
       p[1] = address & 0xff;
-      p[2] = data.length & 0x7f;
-      data.copy(p, 3);
+      p[2] = len & 0x7f;
+      g.copy(p, 3, off, off + len);
+      off += len;
       p.writeUInt16BE(crc16(p.subarray(0, size - 2)), size - 2);
       out.push(p);
       ci = (ci + 1) % 4;
-    }
-  }
+    });
+  });
   return Buffer.concat(out);
 }
 
 // Whole carousel: SI (object "0", scope = the ensemble) then the logos ("1", "2"… referred to by the SI):
 // the multiplex logos first (cfg.logos, optional), then those of the services
 // cfg: { ecc, eid, label, shortlabel, address, packetSize, logos?, services: [{ sid, label, shortlabel, logos: [{ body, width, height }] }] }
-export function encodeSpiCarousel(cfg, { nextTid } = {}) {
+// loop (default true): packet count multiple of 4, for a file read in loop (see encodePackets)
+export function encodeSpiCarousel(cfg, { nextTid, loop = true } = {}) {
   const objects = [];
   const ref = (lg) => {
     const name = (objects.length + 1).toString(16);
@@ -171,5 +187,5 @@ export function encodeSpiCarousel(cfg, { nextTid } = {}) {
   const si = encodeServiceInformation({ ...cfg, logos, services });
   objects.unshift({ name: '0', body: si, type: CONTENT_SPI_SI, params: [scopeId(cfg.ecc, cfg.eid)] });
   const groups = encodeDirectoryMode(objects, nextTid);
-  return { data: encodePackets(groups, { address: cfg.address, size: cfg.packetSize }), siBytes: si.length, objects: objects.length };
+  return { data: encodePackets(groups, { address: cfg.address, size: cfg.packetSize, loop }), siBytes: si.length, objects: objects.length };
 }
