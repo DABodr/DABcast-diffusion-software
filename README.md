@@ -528,7 +528,8 @@ metadata, slide conversion, sessions, Telegram.
 - Sign-in with bcrypt-hashed password, signed `HttpOnly` / `SameSite=Strict` session cookie,
   rate-limited login, password change required at first sign-in.
 - One-click update: a root helper (sudo rule installed by the package) downloads the **official**
-  GitHub release itself and checks the package before installing it.
+  GitHub release itself and checks the package before installing it. ON AIR, the multiplex is stopped for
+  the installation and put back on air automatically after the restart (about a minute without broadcast).
 - Report a vulnerability privately: see [SECURITY.md](SECURITY.md).
 
 ## 📰 Release notes

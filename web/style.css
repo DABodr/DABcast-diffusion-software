@@ -818,6 +818,7 @@ body { background: var(--bg); font-family: Inter, ui-sans-serif, system-ui, -app
 .table tbody tr:nth-child(2n) { background: transparent; }
 .table tbody tr:hover { background: var(--surface2); }
 .col-pid, .col-bitrate, .col-cu, .col-prot, .col-codec, .col-ch, .col-sr, .col-port { font-family: var(--font-mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.table td.col-codec, .table td.col-bitrate { white-space: nowrap; }
 .vu-track { height: 7px; border-radius: 2px; background: var(--surface3); }
 .vu-fill { border-radius: 2px; }
 .modal-body { background: var(--card); border-radius: 10px; }
@@ -880,6 +881,7 @@ input, select { background: var(--surface2); border-radius: 6px; padding: 8px 10
 .card:has(.menu[open]) > .card-head { border-radius: 8px 8px 0 0; }
 .menu-sep { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
 .table td.row-actions { display: table-cell; text-align: right; white-space: nowrap; }
+.table th.col-actions { display: table-cell; }   /* its cells are always shown (rule above): the header too, else the header row is one column short on phones */
 .table td.col-pid, .table td.col-bitrate, .table td.col-cu, .table td.col-prot, .table td.col-sr, .table td.col-port { white-space: nowrap; }
 .table td.row-actions .btn { padding: 3px 7px; font-size: 11.5px; margin-left: 3px; }
 .table td.row-actions .svc-toggle { min-width: 38px; padding: 4px 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; }
@@ -940,6 +942,7 @@ input.just-filled { border-color: var(--green) !important; box-shadow: 0 0 0 3px
 .net-title { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .net-sub { font-size: 12px; }
 .net-head select { padding: 5px 8px; font-size: 12px; }
+.net-head select { min-width: 0; max-width: 100%; flex: 0 1 auto; }   /* phones: the long option labels made it wider than the screen */
 .net-row { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; background: var(--surface2); }
 .net-row.off { opacity: .55; }
 .net-row-head { display: flex; align-items: center; gap: 8px; }
@@ -1016,10 +1019,28 @@ dialog.mux-inline:focus { outline: none; }
 .stat-bar { height: 4px; margin: 2px 0 1px; }
 .stat-sub { margin-top: 1px; }
 
+/* ── Desktop header (> 820 px): never wider than the window. Labels stay on one line; when the buttons
+   do not fit beside the brand (≈ 820–1300 px) they wrap under it, aligned right, instead of pushing the
+   ON AIR pill and its timer out of the screen (the page scrolled sideways at 1024 px). ── */
+@media (min-width: 821px) {
+  .top { flex-wrap: wrap; row-gap: 8px; column-gap: 16px; }
+  .top .actions { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; row-gap: 6px; }
+  .top .actions .btn, .onair, .onair-duration { white-space: nowrap; }
+}
+@media (min-width: 821px) and (max-width: 1500px) {   /* a little more compact: one line down to ≈ 1280 px */
+  .top .actions { gap: 6px; }
+  .top .actions .btn:not(.btn-about) { padding: 6px 10px; }
+  .top .onair { padding: 7px 14px; }
+  .top .onair-group { gap: 8px; }
+}
+
 /* ── Mobile header: buttons in a grid (equal widths, aligned), readable, finger-sized ──
-   row 1: SPI · Levels · Logs · Player   row 2: Telegram · Sys. info · ⏻ · ?   row 3: Stop · Start · ON AIR */
+   row 1: SPI · Levels · Logs · Player   row 2: Telegram · Sys. info · ⚙ · ⏻ · ?   row 3: Stop · Start · ON AIR
+   (12 columns: text buttons span 3, icon buttons 2, the ON AIR pill 6) */
 @media (max-width: 820px) {
-  .top .actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; width: 100%; }
+  .top .actions { display: grid; grid-template-columns: repeat(12, 1fr); gap: 6px; width: 100%; }
+  .top .actions > * { grid-column: span 3; }
+  .top .actions > .btn-about { grid-column: span 2; }
   .top .actions::after { display: none; }
   .top .actions .btn { min-height: 40px; padding: 6px 4px; font-size: 13.5px; font-weight: 600; color: var(--text);
     background: var(--surface2); border: 1px solid rgba(148, 163, 184, .28); border-radius: 8px; white-space: nowrap; }
@@ -1028,6 +1049,6 @@ dialog.mux-inline:focus { outline: none; }
   .top .actions .btn-danger { background: rgba(220, 38, 38, .9); border-color: transparent; color: #fff; }
   .top .actions .btn-success { background: rgba(22, 163, 74, .9); border-color: transparent; color: #fff; }
   .top .actions .btn:disabled { opacity: .35; }
-  .onair-group { grid-column: span 2; justify-content: center; gap: 8px; min-height: 40px; }
+  .top .actions > .onair-group { grid-column: span 6; justify-content: center; gap: 8px; min-height: 40px; }
   .onair-group .onair { flex: 1; text-align: center; padding: 9px 8px; font-size: 13px; }
 }

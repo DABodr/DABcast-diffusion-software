@@ -2382,24 +2382,58 @@ app.post('/api/update/apply', async (req, res) => {
   if (!_releaseCache?.assets?.length) {
     return res.status(400).json({ error: 'No release info — call /api/update/check first' });
   }
-  if (state.getState().muxRunning) {
-    return res.status(409).json({ error: 'Cannot update while ON AIR. Stop the broadcast first.' });
-  }
-
   const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
   const asset = _releaseCache.assets.find(a => a.name.endsWith('.deb') && a.name.includes(arch));
   if (!asset) {
     return res.status(400).json({ error: `No package found for architecture: ${arch}` });
   }
 
-  _updateState = { status: 'downloading', progress: 0, error: null, version: _releaseCache.latestVersion };
-  res.json({ ok: true, arch, asset: asset.name });
+  // ON AIR: the mux is stopped cleanly for the installation and put back on air by the restarted service
+  // (resume marker read at start-up, whatever autoStart says) — no manual Stop / Start
+  const wasOnAir = state.muxRunning;
+  _updateState = { status: wasOnAir ? 'stopping' : 'downloading', progress: 0, error: null, version: _releaseCache.latestVersion, onAir: wasOnAir };
+  res.json({ ok: true, arch, asset: asset.name, onAir: wasOnAir });
 
-  _doUpdate(asset, _releaseCache.latestVersion).catch(err => {
+  (async () => {
+    if (wasOnAir) {
+      writeResumeMarker(_releaseCache.latestVersion);
+      logger.line('update', 'ON AIR: stopping the multiplex for the update (it is put back on air after the restart)');
+      await state.stopMux();
+      _updateState = { ..._updateState, status: 'downloading' };
+    }
+    await _doUpdate(asset, _releaseCache.latestVersion);
+    // the package restarts the service; if this process is still alive a minute later, nothing restarted it
+    if (wasOnAir) setTimeout(() => resumeAfterUpdate('service not restarted after the update'), 60000).unref?.();
+  })().catch(err => {
     logger.line('update', `Update failed: ${err.message || err}`, 'ERROR');
     _updateState = { status: 'error', progress: 0, error: String(err.message || err), version: null };
+    if (wasOnAir) resumeAfterUpdate('update failed');   // back on air at once, on the current version
   });
 });
+
+// Resume marker (data/runtime/resume-after-update.json): written before an update stops the mux ON AIR,
+// read and deleted at start-up (or when the update fails) to put the multiplex back on air.
+const resumeMarkerPath = () => path.join(dataDir, 'runtime', 'resume-after-update.json');
+function writeResumeMarker(version) {
+  try { writeJson(resumeMarkerPath(), { at: new Date().toISOString(), version }); } catch (e) { logger.line('update', `resume marker not written: ${e.message}`, 'WARN'); }
+}
+function takeResumeMarker() {
+  try {
+    const m = JSON.parse(fs.readFileSync(resumeMarkerPath(), 'utf8'));
+    fs.unlinkSync(resumeMarkerPath());
+    return Date.now() - Date.parse(m.at) < 30 * 60000 ? m : null;   // an old marker (crash, power cut…) is ignored
+  } catch { return null; }
+}
+async function resumeAfterUpdate(reason) {
+  if (!takeResumeMarker() || state.muxRunning) return;
+  try {
+    refreshSpiCarousel('resume');
+    await state.startMux();
+    logger.line('update', `Multiplex back on air (${reason})`);
+  } catch (e) {
+    logger.line('update', `Multiplex not restarted (${reason}): ${String(e.message || e)}`, 'ERROR');
+  }
+}
 
 // The root helper (dabcast-install-update, sudo rule of the package) downloads the official release
 // itself and checks it: the service only gives the version number, never a file (security).
@@ -2442,13 +2476,16 @@ const server = app.listen(listenPort, listenHost, () => {
   console.log(`DABcast listening on http://${listenHost}:${listenPort}`);
   logger.line('web', `WebUI on http://${listenHost}:${listenPort}`);
 
-  if (settings.autoStart) {
+  // An update stopped the mux ON AIR: back on air after the restart, even without autoStart
+  const resume = takeResumeMarker();
+  if (resume) logger.line('update', `Restarted after the update to v${resume.version}: the multiplex goes back on air`);
+  if (settings.autoStart || resume) {
     // Small delay to let the event loop settle before spawning ODR processes
     setTimeout(async () => {
       try {
         refreshSpiCarousel('autostart');
         await state.startMux();
-        logger.line('web', 'Auto-start: mux started');
+        logger.line('web', resume && !settings.autoStart ? 'Resume after update: mux started' : 'Auto-start: mux started');
       } catch (e) {
         logger.line('web', `Auto-start: ${String(e.message || e)}`, 'ERROR');
       }
