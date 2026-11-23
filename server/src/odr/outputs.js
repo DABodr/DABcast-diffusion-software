@@ -166,6 +166,80 @@ export function validateOutputs(list, { reserved = new Map(), ediOptions = norma
   return errors;
 }
 
+// Imported file (Import config): gains of a local SDR / HackRF out of range are brought back to the limit
+// instead of refusing the whole file (an export made before 1.10.7 can hold a HackRF TX gain of 63 or a
+// digital gain of 2). Same limits as validateOutputs and the Settings screen; the modulator start already
+// does the same for the sdr output. dabmux.outputs must be normalized. Changes dabmux in place and
+// returns what was changed (logged by the import route).
+export function clampImportedGains(dabmux) {
+  const notes = [];
+  const clamp = (o, k, lo, hi, what, name) => {
+    const v = o?.[k];
+    if (typeof v !== 'number' || !Number.isFinite(v)) return;   // not a number: refused by the checks
+    const c = Math.min(hi, Math.max(lo, v));
+    if (c !== v) { notes.push(`"${name}": ${what} ${v} brought back to ${c}`); o[k] = c; }
+  };
+  for (const o of Array.isArray(dabmux?.outputs) ? dabmux.outputs : []) {
+    if (o.type === 'hackrf') clamp(o, 'txGain', 0, 47, 'TX gain', o.name);
+    if (o.type === 'sdr') {
+      const gmax = SDR_DEVICES[o.device]?.maxTxGain;
+      clamp(o, 'txGain', gmax !== undefined ? 0 : -50, gmax ?? 100, 'TX gain', o.name);
+      if (o.digitalGain > 1) clamp(o, 'digitalGain', 0, 1, 'digital gain', o.name);
+    }
+    if (o.type === 'hackrf' || o.type === 'sdr') clamp(o, 'maxFramesQueued', 1, 2000, 'max frames queued', o.name);
+  }
+  if (dabmux?.hackrf && typeof dabmux.hackrf === 'object') {   // HACKRF mode (hackrf_transfer -x 0-47)
+    clamp(dabmux.hackrf, 'txGain', 0, 47, 'TX gain', 'HackRF (HACKRF mode)');
+    clamp(dabmux.hackrf, 'digitalGain', 0, 10, 'digital gain', 'HackRF (HACKRF mode)');
+  }
+  return notes;
+}
+
+// Multiplex settings written as they are into the .mux, dabmod.ini and the hackrf_transfer arguments,
+// from the Settings screen (PATCH /api/settings) or an imported file. Only the fields given are checked
+// (a patch, a file); every value the Settings screen sends is accepted (an empty port field = 0).
+// Nothing may add a line to the .mux. Errors (array of strings, empty = valid).
+export function validateBaseSettings({ ensemble, dabmux } = {}) {
+  const errors = [];
+  const given = (o, k) => o && typeof o === 'object' && o[k] !== undefined && o[k] !== null;
+  const isPortOr0 = (v) => /^\d{1,5}$/.test(String(v)) && Number(v) <= 65535;
+  const isNum = (v, lo, hi) => (typeof v === 'number' || /^-?\d+(\.\d+)?$/.test(String(v))) && Number(v) >= lo && Number(v) <= hi;
+  if (ensemble !== undefined) {
+    if (given(ensemble, 'idHex') && !/^0x[0-9A-F]{4}$/i.test(String(ensemble.idHex))) errors.push('Ensemble ID must be 0x + 4 hexadecimal characters (ex: 0xF401)');
+    if (given(ensemble, 'eccHex') && !/^0x[0-9A-F]{2}$/i.test(String(ensemble.eccHex))) errors.push('ECC must be 0x + 2 hexadecimal characters (ex: 0xE1)');
+    if (given(ensemble, 'internationalTable') && !/^\d{1,3}$/.test(String(ensemble.internationalTable))) errors.push('International table must be a number (1 = default)');
+    if (given(ensemble, 'localTimeOffset') && ensemble.localTimeOffset !== 'auto' && !isNum(ensemble.localTimeOffset, -24, 24)) errors.push('Local time offset must be "auto" or a number of hours (-24 to 24)');
+  }
+  if (dabmux !== undefined) {
+    for (const k of ['telnetPort', 'managementPort', 'ediTcpListenPort', 'zmqPort']) {
+      if (given(dabmux, k) && !isPortOr0(dabmux[k])) errors.push(`${k} must be a port number 1-65535`);
+    }
+    if (given(dabmux, 'zmqEndpoint') && dabmux.zmqEndpoint !== '' && !/^(tcp:\/\/[A-Za-z0-9.*_-]+:\d{1,5}|ipc:\/\/[A-Za-z0-9._\/-]+)$/.test(String(dabmux.zmqEndpoint))) {
+      errors.push('zmqEndpoint must look like tcp://lo:12722');
+    } else if (/^tcp:/.test(String(dabmux.zmqEndpoint || '')) && Number(/:(\d+)$/.exec(dabmux.zmqEndpoint)[1]) > 65535) {
+      errors.push('zmqEndpoint: port must be 1-65535');
+    }
+    if (given(dabmux, 'txMode') && !['EASYDAB', 'EDI', 'HACKRF', 'USRP1', 'NETWORK'].includes(String(dabmux.txMode).toUpperCase())) errors.push(`Unknown transmission mode "${String(dabmux.txMode).slice(0, 20)}"`);
+    const ed = dabmux.easyDabOutput;
+    if (given(dabmux, 'easyDabOutput')) {
+      if (given(ed, 'ip') && !/^[A-Za-z0-9.:_-]*$/.test(String(ed.ip))) errors.push('EasyDAB output: listen address must be an IP address (0.0.0.0 = all interfaces)');
+      for (const k of ['port', 'netPort']) if (given(ed, k) && !isPortOr0(ed[k])) errors.push(`EasyDAB output: ${k} must be a port number 1-65535`);
+    }
+    const hk = dabmux.hackrf;
+    if (given(dabmux, 'hackrf')) {
+      const p = 'HackRF (HACKRF mode)';
+      if (given(hk, 'dabBlock') && !DAB_FREQ_TABLE[hk.dabBlock]) errors.push(`${p}: unknown DAB block ${String(hk.dabBlock).slice(0, 8)}`);
+      if (given(hk, 'txGain') && !isNum(hk.txGain, 0, 47)) errors.push(`${p}: TX gain must be 0-47`);
+      if (given(hk, 'digitalGain') && !isNum(hk.digitalGain, 0, 10)) errors.push(`${p}: digital gain must be 0-10`);
+      if (given(hk, 'maxFramesQueued') && !(/^\d+$/.test(String(hk.maxFramesQueued)) && isNum(hk.maxFramesQueued, 1, 2000))) errors.push(`${p}: max frames queued must be 1-2000`);
+      if (given(hk, 'gainmode') && !['0', '1', '2'].includes(String(hk.gainmode))) errors.push(`${p}: gain mode must be 0, 1 or 2`);
+      // odr-dabmod: a multiple of the DAB rate 2.048 MS/s (the Settings screen offers 2048000 / 4096000)
+      if (given(hk, 'rate') && !(/^\d+$/.test(String(hk.rate)) && Number(hk.rate) > 0 && Number(hk.rate) <= 20480000 && Number(hk.rate) % 2048000 === 0)) errors.push(`${p}: sample rate must be 2048000 or 4096000`);
+    }
+  }
+  return errors;
+}
+
 // Lines of the .mux "outputs { }" block for the NETWORK mode. The raw ETI monitoring output
 // (Player / Dablin, easyDabOutput.netPort) is always added, as in the legacy modes, and
 // "throttle simul://" is the single output that paces dabmux in real time (none of the network
