@@ -740,7 +740,7 @@ txgain=40</pre>
   <li><strong>Get all from slideshow logos</strong> makes the 4 sizes (PNG 32×32, 112×32, 128×128, 320×240) of every service from its slideshow logo &mdash; never from a track cover. The logo is fitted in each size and centred on the colour of its own edges.</li>
   <li><strong>Keep existing</strong> (ticked): only the services without SPI logos get them, logos uploaded by hand are kept. Untick it to remake every service.</li>
   <li>Per service: <strong>From slideshow</strong>, <strong>Upload…</strong> (another picture), <strong>From web…</strong> or <strong>Delete</strong>.</li>
-  <li><strong>From web…</strong> takes an address: the picture of the logo on the station's website (the 4 sizes are made from it), or the <strong>SI.xml</strong> of the station (RadioDNS). With an SI.xml, DABcast finds the service by its PI and takes the station's own logos in the DAB sizes, as they are; a missing size is made from its biggest logo. When the PI is not in the file, a list of its stations is shown: choose one, then <em>Import</em>.</li>
+  <li><strong>From web…</strong> takes an address: the picture of the logo on the station's website (the 4 sizes are made from it), or the <strong>SI.xml</strong> of the station (RadioDNS). With an SI.xml, DABcast finds the service by its PI and takes the station's own logos in the DAB sizes, as they are; a missing size is made from its biggest logo. When the PI is not in the file, a list of its stations is shown in the dialog: choose one. <strong>Test</strong> shows what the address is (picture format and size, or the station found and the sizes it provides) with a preview, without changing anything; <strong>OK</strong> imports. The address is remembered for the next time.</li>
   <li><strong>Multiplex logo</strong>: the <strong>MUX</strong> row at the top of the table is the logo of the multiplex itself, shown by receivers that display an icon for the ensemble. The multiplex has no slideshow: use <strong>Upload…</strong> (the 4 sizes are made the same way) or <strong>Delete</strong>. Optional: without it, nothing changes.</li>
 </ul>
 <h2>Programme guide (EPG)</h2>
@@ -836,6 +836,10 @@ txgain=40</pre>
   <strong>Import / Export</strong> menu: <em>Export config</em> / <em>Import config</em> (JSON),
   <em>Export selected service</em> / <em>Import service</em> (<code>.dct</code> with its logo), and
   <em>Export all services (.zip)</em>, named <code>all-services-&lt;multiplex name&gt;.zip</code>.
+  The configuration file also keeps the SPI / EPG part: SPI settings, the SPI logos (multiplex logo included),
+  the programme guide source of each service and the <em>From web…</em> addresses; a service file keeps those
+  of its service. Guides fetched from the web are not copied: they are fetched again after the import.
+  Older files (without this part) are imported as before and leave the SPI / EPG data in place.
   The active configuration is stored as <code>/var/lib/dabcast/presets/demo.json</code>.
 </p>
 

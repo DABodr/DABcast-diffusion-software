@@ -963,6 +963,29 @@
     </form>
   </dialog>
 
+  <dialog id="dlgSpiWeb" class="modal">
+    <form method="dialog" class="modal-body modal-spiweb">
+      <div class="modal-head">
+        <div>
+          <div class="modal-title">Logos from the web</div>
+          <div class="modal-sub" id="spiWebName"></div>
+        </div>
+        <button class="icon" value="cancel" aria-label="Close">✕</button>
+      </div>
+      <label class="spiweb-url">Address
+        <input type="url" id="spiWebUrl" placeholder="https://… (picture or SI.xml)" spellcheck="false" autocomplete="off" />
+      </label>
+      <p class="hint">A picture of the logo (JPEG, PNG, WebP): the 4 DAB sizes are made from it. Or the <b>SI.xml</b> of the station (RadioDNS): its own logos in the DAB sizes, found by its PI.</p>
+      <div id="spiWebResult" class="spiweb-result" hidden></div>
+      <div class="modal-actions">
+        <button type="button" class="btn" id="spiWebTest">Test</button>
+        <div class="spacer"></div>
+        <button value="cancel" class="btn">Cancel</button>
+        <button type="button" class="btn btn-primary" id="spiWebOk">OK</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="dlgLevels" class="modal">
     <form method="dialog" class="modal-body modal-levels">
       <div class="modal-head">
@@ -1138,7 +1161,7 @@
     <form method="dialog" class="modal-body">
       <div class="modal-head">
         <div class="modal-title">Manage Logos - <span id="logoManageServiceName"></span></div>
-        <button type="submit" class="btn-close" aria-label="Close">×</button>
+        <button type="submit" class="icon" value="cancel" aria-label="Close">✕</button>
       </div>
       <div class="modal-content">
         <p class="hint">Upload additional logos (logo_1.jpg, logo_2.jpg...). Images will be automatically resized to 320×240 JPEG.</p>

@@ -9,7 +9,8 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { imageCoder, parsePpm } from './slideImage.js';
 import { encodeSpiCarousel } from './spiCarousel.js';
-import { loadEpgConfig, epgProgrammes, epgSchedules, parseXml, fetchBuffer } from './spiEpg.js';
+import { writeJson } from './fsutil.js';
+import { loadEpgConfig, epgProgrammes, epgSchedules, parseXml, fetchBuffer, saveEpgEntry } from './spiEpg.js';
 
 export const SPI_SIZES = [[320, 240], [128, 128], [112, 32], [32, 32]];
 export const SPI_BITRATES = [8, 16, 24, 32];
@@ -109,7 +110,11 @@ export function siServiceHasPi(svc, sid) {
 
 // Logos of one service from a URL (a picture, or an SI.xml). pick = index of the SI.xml service when its PI is not
 // in the file. Returns { ok, from: 'picture' | 'si', sizes, exact } or { choices: [{ index, name, bearers }] }.
-export async function importSpiLogos(url, outDir, sid, { pick = null, fetchImpl, exec = execFileSync } = {}) {
+// dryRun: nothing written — what the address is (picture: format, size; SI.xml: station found, sizes it
+// provides) with a small preview (data: URL), for the Test button of the page.
+const PREVIEW_MAX = 300 * 1024;
+const preview = (buf, coder) => (buf.length <= PREVIEW_MAX ? `data:image/${String(coder).toLowerCase()};base64,${buf.toString('base64')}` : null);
+export async function importSpiLogos(url, outDir, sid, { pick = null, fetchImpl, exec = execFileSync, dryRun = false } = {}) {
   fs.mkdirSync(outDir, { recursive: true });
   const tmpFile = (tag) => path.join(outDir, `.web_${process.pid}_${Date.now()}_${tag}`);
   const download = async (u, tag) => {
@@ -123,6 +128,12 @@ export async function importSpiLogos(url, outDir, sid, { pick = null, fetchImpl,
     const f = tmpFile('pic');
     try {
       fs.writeFileSync(f, first);
+      if (dryRun) {
+        const coder = imageCoder(f);
+        if (!coder) throw new Error('not a JPEG / PNG / GIF / WebP picture, nor an SI.xml');
+        const [width, height] = String(exec('identify', ['-format', '%w %h', `${coder}:${f}[0]`], { encoding: 'utf8', timeout: 10000 })).trim().split(/\s+/).map(Number);
+        return { ok: true, dryRun: true, from: 'picture', format: coder, width, height, bytes: first.length, preview: preview(first, coder) };
+      }
       return { ok: true, from: 'picture', sizes: makeSpiLogos(f, outDir, sid, { exec }), exact: [] };
     } finally { try { fs.unlinkSync(f); } catch { /* ignore */ } }
   }
@@ -132,6 +143,14 @@ export async function importSpiLogos(url, outDir, sid, { pick = null, fetchImpl,
   if (!svc && pick !== null && services[pick]) svc = services[pick];
   if (!svc) return { choices: services.map((x, index) => ({ index, name: x.name, bearers: x.bearers.filter((b) => /^(dab|fm):/.test(b)) })) };
   if (!svc.logos.length) throw new Error(`no logo for ${svc.name} in this SI.xml`);
+  if (dryRun) {
+    const exact = SPI_SIZES.filter(([w, h]) => svc.logos.some((l) => l.width === w && l.height === h)).map(([w, h]) => `${w}x${h}`);
+    const big = [...svc.logos].sort((a, b) => b.width * b.height - a.width * a.height)[0];
+    const show = svc.logos.find((l) => l.width === 128 && l.height === 128) || big;
+    let pv = null;
+    try { const b = await fetchBuffer(show.url, { fetchImpl, maxBytes: PREVIEW_MAX }); const f = tmpFile('pv'); fs.writeFileSync(f, b); const c = imageCoder(f); fs.unlinkSync(f); pv = c ? preview(b, c) : null; } catch { /* no preview */ }
+    return { ok: true, dryRun: true, from: 'si', service: svc.name, matched: siServiceHasPi(svc, sid), exact, biggest: `${big.width}x${big.height}`, preview: pv };
+  }
   const files = [];
   try {
     // the station's own picture for each DAB size, converted as is (no resize); the others from its biggest logo
@@ -173,6 +192,70 @@ export function spiLogoInfo(outDir, sid) {
 
 export function deleteSpiLogos(outDir, sid) {
   for (const [w, h] of SPI_SIZES) { try { fs.unlinkSync(path.join(outDir, spiFileName(sid, w, h))); } catch { /* none */ } }
+}
+
+// Last address used for the logos from the web, per service id ('ensemble' = the multiplex): shown again in
+// the From web… dialog, kept in the configuration and service files
+export const spiWebFile = (dataDir) => path.join(dataDir, 'spi', 'web-sources.json');
+export function loadSpiWebUrls(dataDir) {
+  try { return JSON.parse(fs.readFileSync(spiWebFile(dataDir), 'utf8')) || {}; } catch { return {}; }
+}
+const validWebUrl = (u) => typeof u === 'string' && u.length <= 1000 && /^https?:\/\//i.test(u);
+export function saveSpiWebUrl(dataDir, id, url) {
+  if (!validWebUrl(url)) return;
+  writeJson(spiWebFile(dataDir), { ...loadSpiWebUrls(dataDir), [id]: url });
+}
+
+// ── Export / import of the SPI logos and the programme guide sources (configuration and service files) ──
+// services: [{ id, sid }] ; ensemble: also the multiplex logos. Fetched web guides are not exported (fetched again).
+// → { logos: { '<sid>-<w>x<h>.png': 'data:image/png;base64,…' }, epg: { '<service id>': entry }, webUrls: { '<id>': url } } (empty parts left out)
+export function exportSpiBundle(dataDir, services, { ensemble = false } = {}) {
+  const dir = spiLogosDir(dataDir);
+  const logos = {};
+  for (const sid of [...services.map((s) => s.sid), ...(ensemble ? [SPI_ENSEMBLE] : [])]) {
+    for (const [w, h] of SPI_SIZES) {
+      try { logos[spiFileName(sid, w, h)] = `data:image/png;base64,${fs.readFileSync(path.join(dir, spiFileName(sid, w, h))).toString('base64')}`; } catch { /* no logo of this size */ }
+    }
+  }
+  const all = loadEpgConfig(dataDir);
+  const epg = {};
+  for (const s of services) if (all[s.id] && all[s.id].source !== 'none') epg[s.id] = all[s.id];
+  const urls = loadSpiWebUrls(dataDir);
+  const webUrls = {};
+  for (const id of [...services.map((s) => s.id), ...(ensemble ? [SPI_ENSEMBLE] : [])]) if (validWebUrl(urls[id])) webUrls[id] = urls[id];
+  return { ...(Object.keys(logos).length ? { logos } : {}), ...(Object.keys(epg).length ? { epg } : {}), ...(Object.keys(webUrls).length ? { webUrls } : {}) };
+}
+
+// Restores a bundle. map: [{ from: { id, sid } of the file, to: { id, sid } here }] — only these services
+// (and the multiplex logos when ensemble is true) are written; anything else in the file is ignored.
+// Logos: SPI file names only, PNG only, at most 1 MB each. Returns { logos, epg } counts.
+const MAX_IMPORTED_LOGO = 1024 * 1024;
+export function importSpiBundle(dataDir, bundle, map, { ensemble = false } = {}) {
+  const dir = spiLogosDir(dataDir);
+  let logos = 0, epg = 0;
+  const sidTo = new Map(map.map((m) => [m.from.sid, m.to.sid]));
+  if (ensemble) sidTo.set(SPI_ENSEMBLE, SPI_ENSEMBLE);
+  for (const [name, dataUrl] of Object.entries(bundle?.logos || {})) {
+    const m = /^(.+)-(\d{2,3})x(\d{2,3})\.png$/.exec(name);
+    if (!isSpiFileName(name) || !m || !sidTo.has(m[1]) || !SPI_SIZES.some(([w, h]) => w === +m[2] && h === +m[3])) continue;
+    const buf = Buffer.from(String(dataUrl).replace(/^data:image\/png;base64,/, ''), 'base64');
+    if (buf.length < 8 || buf.length > MAX_IMPORTED_LOGO || buf.readUInt32BE(0) !== 0x89504e47) continue;   // PNG signature
+    fs.mkdirSync(dir, { recursive: true });
+    const dest = path.join(dir, spiFileName(sidTo.get(m[1]), +m[2], +m[3]));
+    const tmp = `${dest}.tmp${process.pid}`;
+    fs.writeFileSync(tmp, buf);
+    fs.renameSync(tmp, dest);
+    logos++;
+  }
+  for (const { from, to } of map) {
+    const entry = bundle?.epg?.[from.id];
+    if (entry && typeof entry === 'object') { saveEpgEntry(dataDir, to.id, entry); epg++; }
+  }
+  // addresses of the logos from the web (shown again in the From web… dialog)
+  const urls = bundle?.webUrls && typeof bundle.webUrls === 'object' ? bundle.webUrls : {};
+  const pairs = [...map.map((m) => [m.from.id, m.to.id]), ...(ensemble ? [[SPI_ENSEMBLE, SPI_ENSEMBLE]] : [])].filter(([f]) => validWebUrl(urls[f]));
+  if (pairs.length) writeJson(spiWebFile(dataDir), { ...loadSpiWebUrls(dataDir), ...Object.fromEntries(pairs.map(([f, t]) => [t, urls[f]])) });
+  return { logos, epg, webUrls: pairs.length };
 }
 
 // ── Step 2: the SPI data service (packet mode) ──

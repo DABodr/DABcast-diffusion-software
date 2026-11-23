@@ -284,7 +284,8 @@ The `dabcast.service` file at the root contains commented `Environment=` lines f
 
 ### Import/Export
 
-- ✅ **Full backup**: export of multiplex configuration as JSON
+- ✅ **Full backup**: export of multiplex configuration as JSON, SPI / EPG included (settings, SPI logos,
+  multiplex logo, programme guide sources, *From web…* addresses); service files keep those of their service
 - ✅ **Preset loading**: full configuration import
 - ✅ **Individual import/export**: copy/paste a service between presets
 

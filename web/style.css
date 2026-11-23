@@ -402,6 +402,15 @@ label.spi-check { flex-direction: row; align-items: center; gap: 6px; color: var
 .spi-act { white-space: nowrap; text-align: right; }
 .spi-act .btn { margin-left: 4px; }
 .spi-tabs { margin: 4px 0 10px; }
+.modal-spiweb { width: min(560px, calc(100vw - 20px)); }
+.spiweb-url { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; color: var(--muted); font-size: 13px; }
+.spiweb-url input { width: 100%; }
+.spiweb-result { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; margin: 4px 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text); font-size: 13px; }
+.spiweb-result[hidden] { display: none; }
+.spiweb-result.bad { border-color: var(--red); }
+.spiweb-result img { width: 72px; height: 72px; object-fit: contain; flex: none; border-radius: 4px; background: repeating-conic-gradient(#2a2f3a 0 25%, #20242d 0 50%) 0 0 / 10px 10px; }
+.spiweb-result select { width: 100%; margin-top: 6px; }
+.spiweb-result .buf-tag { display: inline-block; }   /* shown on phones too */
 .spi-pick { color: var(--text); background: rgba(241,196,15,.10); border: 1px solid var(--yellow); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
 .spi-pick-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
 .spi-pick-row select { max-width: 100%; flex: 1 1 260px; }
@@ -438,7 +447,7 @@ label.spi-check { flex-direction: row; align-items: center; gap: 6px; color: var
   .epg-gridwrap { max-height: none; overflow: visible; }
 }
 .lv-bar { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin: 14px 0 10px; font-size: 13px; }
-.lv-bar label { display: flex; flex-direction: column; gap: 4px; }
+.lv-bar label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); }
 .lv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .lv-table td { color: var(--text); }
 .lv-table th, .lv-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
@@ -453,6 +462,18 @@ label.spi-check { flex-direction: row; align-items: center; gap: 6px; color: var
 .lv-tab.active { color: var(--text); border-bottom-color: var(--blue); }
 #lufsInfo { margin: 0 0 8px; }
 @media (max-width: 600px) { .lv-table th, .lv-table td { padding: 6px 4px; } }
+/* phone: one card per service (name + buttons, labelled values, suggestion on the whole width) */
+@media (max-width: 640px) {
+  .lv-table thead { display: none; }
+  .lv-table tr { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px 8px; padding: 8px 2px; border-bottom: 1px solid var(--border); }
+  .lv-table td { border: 0; padding: 0; white-space: normal; text-align: left !important; }
+  .lv-table td[data-l]::before { content: attr(data-l); display: block; font-size: 10.5px; color: var(--muted); font-weight: 600; }
+  .lv-table td.lv-name { grid-column: 1 / 3; font-weight: 700; align-self: center; }
+  .lv-table td.lv-act { grid-column: 3 / -1; grid-row: 1; width: auto; text-align: right !important; white-space: nowrap; }
+  .lv-table td.lv-sug { grid-column: 1 / -1; }
+  .lv-table td.lv-sug:empty { display: none; }
+  .lv-table .buf-tag { display: inline-block; }   /* hidden on phones for the mux stats cards, needed here (TRUE PEAK, SOURCE, CLIP…) */
+}
 #lvTable { overflow-x: auto; }
 .stat-card[data-act="levels"] { cursor: pointer; }
 .stat-card[data-act="levels"]:hover { border-color: var(--blue); }
