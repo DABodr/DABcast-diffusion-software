@@ -2734,8 +2734,8 @@ function renderLevels() {
     const meas = st.n ? `${fmtDb(st.median)}` : '—';
     const tip = st.n ? `${st.n} samples over ${st.minutes.toFixed(1)} min · 95% of peaks below ${fmtDb(st.p95)} dBFS · highest peak ${fmtDb(st.max)} dBFS` : 'no audio measured yet';
     const clip = st.clips ? ` <span class="buf-tag err" title="odr-audioenc reported clipping ${st.clips}× in the window: crackles likely">CLIP ×${st.clips}</span>` : '';
-    return `<tr><td>${name}</td><td class="num" title="${esc(tip)}">${meas}</td><td class="num${st.n && (st.max > LEVEL_MAX_PEAK_DB || st.clips) ? ' lv-clip' : ''}">${st.n ? fmtDb(st.max) : '—'}${clip}</td>`
-      + `<td class="num">${direct ? '—' : `${gain} dB`}</td><td>${sug}</td><td class="lv-act">${act}</td></tr>`;
+    return `<tr><td class="lv-name">${name}</td><td class="num" data-l="Typical peak" title="${esc(tip)}">${meas}</td><td class="num${st.n && (st.max > LEVEL_MAX_PEAK_DB || st.clips) ? ' lv-clip' : ''}" data-l="Max">${st.n ? fmtDb(st.max) : '—'}${clip}</td>`
+      + `<td class="num" data-l="Gain">${direct ? '—' : `${gain} dB`}</td><td class="lv-sug">${sug}</td><td class="lv-act">${act}</td></tr>`;
   }).join('');
   box.innerHTML = `<table class="lv-table"><thead><tr><th>Service</th><th class="num">Typical peak</th><th class="num">Max</th><th class="num">Gain</th><th>Suggestion</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   $('#lvApplyAll').disabled = !_levelSuggestions.length;
@@ -2983,8 +2983,7 @@ $('#spiBody')?.addEventListener('click', async (e) => {
     const r = await spiAction(() => api('/api/spi/generate', { method: 'POST', body: JSON.stringify({ id }) }), 'Making the SPI logos…');
     if (r) $('#spiStatus').textContent = r.done.length ? `${id}: SPI logos made from its slideshow logo` : `${id}: no slideshow logo`;
   } else if (b.dataset.spi === 'web') {
-    const url = prompt('Address of the logo (picture) or of the SI.xml of the station (RadioDNS):', SPI_WEB_LAST);
-    if (url && url.trim()) { SPI_WEB_LAST = url.trim(); spiImport(id, SPI_WEB_LAST); }
+    openSpiWeb(id);
   } else if (b.dataset.spi === 'up') {
     spiUploadId = id;
     $('#spiFile').value = '';
@@ -2994,26 +2993,67 @@ $('#spiBody')?.addEventListener('click', async (e) => {
     if (r) $('#spiStatus').textContent = `${id}: SPI logos deleted`;
   }
 });
-// Logos from the web (picture or SI.xml). When the PI of the service is not in the SI.xml, the station is chosen in a list.
-let SPI_WEB_LAST = '';
-async function spiImport(id, url, pick = null) {
-  const name = id === 'ensemble' ? 'multiplex' : id;
-  const r = await spiAction(() => api(`/api/spi/${encodeURIComponent(id)}/import`, { method: 'POST', body: JSON.stringify({ url, ...(pick !== null ? { pick } : {}) }) }), 'Downloading the logos…');
-  if (!r) return;
+// Logos from the web (picture or SI.xml), in a DABcast dialog: the address used last time for this service is
+// shown again; Test = what the address is (nothing written); OK = import. When the PI of the service is not in
+// the SI.xml, the station is chosen in a list inside the dialog.
+const dlgSpiWeb = $('#dlgSpiWeb');
+const SPIWEB = { id: null, pick: null };
+function openSpiWeb(id) {
+  const row = id === 'ensemble' ? SPI.ensemble : SPI.services.find((x) => x.id === id);
+  SPIWEB.id = id; SPIWEB.pick = null;
+  $('#spiWebName').textContent = id === 'ensemble' ? `Multiplex (${row?.ps8 || 'ensemble'})` : `${row?.ps8 || id} · SId ${String(row?.sid || '').toUpperCase()}`;
+  $('#spiWebUrl').value = row?.webUrl || '';
+  spiWebShow('');
+  dlgSpiWeb.showModal();
+  $('#spiWebUrl').focus();
+}
+function spiWebShow(html, bad = false) {
+  const box = $('#spiWebResult');
+  box.hidden = !html;
+  box.classList.toggle('bad', bad);
+  box.innerHTML = html;
+}
+function spiWebRender(r) {
   if (r.choices) {
-    $('#spiStatus').innerHTML = `<div class="spi-pick"><b>${esc(name)}: its PI is not in this SI.xml</b> (${r.choices.length} stations in the file). Choose the station whose logos you want, or Cancel:
-      <div class="spi-pick-row"><select id="spiPick">${r.choices.map((c) => `<option value="${c.index}">${esc(c.name)}${c.bearers.length ? ` (${esc(c.bearers.join(', '))})` : ''}</option>`).join('')}</select>
-      <button type="button" class="btn btn-primary btn-sm" id="spiPickGo">Import</button> <button type="button" class="btn btn-sm" id="spiPickNo">Cancel</button></div></div>`;
-    $('#spiPickGo').addEventListener('click', () => spiImport(id, url, Number($('#spiPick').value)));
-    $('#spiPickNo').addEventListener('click', () => { $('#spiStatus').textContent = 'Nothing imported'; });
-    $('#spiStatus').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    $('#spiPick').focus();
+    spiWebShow(`<div style="flex:1"><b>Its PI is not in this SI.xml</b> (${r.choices.length} stations). Choose the station whose logos you want:
+      <select id="spiWebPick">${r.choices.map((c) => `<option value="${c.index}" ${c.index === SPIWEB.pick ? 'selected' : ''}>${esc(c.name)}${c.bearers.length ? ` (${esc(c.bearers.join(', '))})` : ''}</option>`).join('')}</select></div>`);
+    SPIWEB.pick = Number($('#spiWebPick').value);
+    $('#spiWebPick').addEventListener('change', (e) => { SPIWEB.pick = Number(e.target.value); spiWebTest(); });
     return;
   }
+  const img = r.preview ? `<img src="${r.preview}" alt="">` : '';
+  if (r.from === 'picture') {
+    spiWebShow(`${img}<div><b>Picture ${esc(r.format)} ${r.width}×${r.height}</b> · ${(r.bytes / 1024).toFixed(1)} kB<br><span class="muted">The 4 DAB sizes will be made from it.</span></div>`);
+  } else {
+    const missing = 4 - r.exact.length;
+    spiWebShow(`${img}<div><b>${esc(r.service)}</b> ${r.matched ? '<span class="buf-tag ok">FOUND BY PI</span>' : '<span class="buf-tag warn">CHOSEN</span>'}<br>`
+      + `${r.exact.length ? `Station's own sizes: ${r.exact.join(', ')}` : 'No logo in the DAB sizes'}${missing ? `<br><span class="muted">${r.exact.length ? 'Others' : 'All'} made from its biggest logo (${r.biggest}).</span>` : ''}</div>`);
+  }
+}
+async function spiWebCall(dryRun) {
+  const url = $('#spiWebUrl').value.trim();
+  if (!/^https?:\/\//i.test(url)) { spiWebShow('Enter an address starting with http:// or https://', true); return null; }
+  spiWebShow(dryRun ? 'Testing…' : 'Downloading the logos…');
+  try {
+    return await api(`/api/spi/${encodeURIComponent(SPIWEB.id)}/import`, { method: 'POST',
+      body: JSON.stringify({ url, dryRun, ...(SPIWEB.pick !== null ? { pick: SPIWEB.pick } : {}) }) });
+  } catch (e) { spiWebShow(esc(e.message || String(e)), true); return null; }
+}
+async function spiWebTest() { const r = await spiWebCall(true); if (r) spiWebRender(r); }
+$('#spiWebTest')?.addEventListener('click', spiWebTest);
+$('#spiWebUrl')?.addEventListener('input', () => { SPIWEB.pick = null; spiWebShow(''); });
+$('#spiWebUrl')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); spiWebTest(); } });
+$('#spiWebOk')?.addEventListener('click', async () => {
+  const r = await spiWebCall(false);
+  if (!r) return;
+  if (r.choices) { spiWebRender(r); return; }   // a station to choose first
+  dlgSpiWeb.close();
+  const name = SPIWEB.id === 'ensemble' ? 'multiplex' : SPIWEB.id;
+  await loadSpi().catch(() => {});
   $('#spiStatus').textContent = r.from === 'si'
     ? `${name}: logos of ${r.service}${r.exact.length ? ` — station's own ${r.exact.join(', ')}` : ''}${r.exact.length < 4 ? `${r.exact.length ? ', others' : ''} made from its biggest logo` : ''}`
     : `${name}: SPI logos made from the picture`;
-}
+});
 $('#spiFile')?.addEventListener('change', () => {
   const file = $('#spiFile').files?.[0];
   if (!file || !spiUploadId) return;
@@ -3151,10 +3191,10 @@ function renderLoudness() {
     const tip = m ? `${m.seconds} s measured at ${m.gainDb} dB gain${m.shifted ? ` · shown at the current gain (${m.shifted > 0 ? '+' : ''}${m.shifted} dB)` : ''} · ${new Date(m.at).toLocaleTimeString()}` : '';
     const hot = m && Number.isFinite(m.truePeak) && m.truePeak > -0.5;
     const srcClip = hot && gain <= 0 ? ' <span class="buf-tag err" title="True peak at 0 dBTP without added gain: the source itself is probably clipped">SOURCE</span>' : '';
-    return `<tr><td>${name}</td><td class="num" title="${esc(tip)}">${m ? `<b>${m.lufs.toFixed(1)}</b>` : '—'}</td>`
-      + `<td class="num${hot ? ' lv-clip' : ''}">${m && Number.isFinite(m.truePeak) ? m.truePeak.toFixed(1) : '—'}${srcClip}</td>`
-      + `<td class="num">${m && Number.isFinite(m.lra) ? m.lra.toFixed(1) : '—'}</td>`
-      + `<td class="num">${direct ? '—' : `${gain} dB`}</td><td>${sug}</td><td class="lv-act">${meas} ${act}</td></tr>`;
+    return `<tr><td class="lv-name">${name}</td><td class="num" data-l="LUFS" title="${esc(tip)}">${m ? `<b>${m.lufs.toFixed(1)}</b>` : '—'}</td>`
+      + `<td class="num${hot ? ' lv-clip' : ''}" data-l="True peak">${m && Number.isFinite(m.truePeak) ? m.truePeak.toFixed(1) : '—'}${srcClip}</td>`
+      + `<td class="num" data-l="LRA">${m && Number.isFinite(m.lra) ? m.lra.toFixed(1) : '—'}</td>`
+      + `<td class="num" data-l="Gain">${direct ? '—' : `${gain} dB`}</td><td class="lv-sug">${sug}</td><td class="lv-act">${meas} ${act}</td></tr>`;
   }).join('');
   box.innerHTML = `<table class="lv-table"><thead><tr><th>Service</th><th class="num">LUFS</th><th class="num">True peak</th><th class="num" title="Loudness range: how much the level varies (dynamics)">LRA</th><th class="num">Gain</th><th>Suggestion</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   $('#lufsApplyAll').disabled = !_lufsSuggestions.length;

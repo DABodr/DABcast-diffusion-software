@@ -22,7 +22,7 @@ import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import { convertToSlide as convertSlideImage, removeBlackBands, imageCoder } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
-import { SPI_SIZES, normalizeSpiSettings, spiLogosDir, spiSid, isSpiFileName, spiSourceLogo, makeSpiLogos, spiLogoInfo, deleteSpiLogos, buildSpiCarousel, spiGeneratorStatus, SPI_ENSEMBLE, importSpiLogos } from './spi.js';
+import { SPI_SIZES, normalizeSpiSettings, spiLogosDir, spiSid, isSpiFileName, spiSourceLogo, makeSpiLogos, spiLogoInfo, deleteSpiLogos, buildSpiCarousel, spiGeneratorStatus, SPI_ENSEMBLE, importSpiLogos, exportSpiBundle, importSpiBundle, loadSpiWebUrls, saveSpiWebUrl } from './spi.js';
 import { EPG_SOURCES, loadEpgConfig, saveEpgEntry, readEpgCache, refreshEpgCache, epgProgrammes, xmltvChannels } from './spiEpg.js';
 import { estimateCU } from './cu.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
@@ -43,7 +43,10 @@ import {
 } from './auth/sessionAuth.js';
 
 const app = express();
-app.use(express.json({ limit: '2mb' }));
+// 2 MB per request; configuration / service imports carry the logos (slideshow + SPI) in base64: 20 MB
+const jsonSmall = express.json({ limit: '2mb' });
+const jsonImport = express.json({ limit: '20mb' });
+app.use((req, res, next) => (req.path === '/api/import/full' || req.path === '/api/import/service' ? jsonImport : jsonSmall)(req, res, next));
 app.use(morgan('dev'));
 
 // When running as a self-contained pkg binary, derive paths from the executable
@@ -671,10 +674,38 @@ app.get('/api/export/full', (req, res) => {
   if (Object.keys(logos).length > 0) {
     result.logos = logos;
   }
+  // SPI / EPG: settings, logos (multiplex included) and programme guide sources (web guides are fetched again)
+  result.spi = { settings: normalizeSpiSettings(settings.spi),
+    ...exportSpiBundle(dataDir, state.preset.services.map((s) => ({ id: s.id, sid: spiSid(s) })), { ensemble: true }) };
 
   res.json(result);
 });
 
+// SPI part of a configuration file: logos, guide sources, then the settings (activation refused when the
+// CU are missing or the carousel cannot be built, as on the SPI page). Never fails the whole import.
+function importSpiPart(spi) {
+  try {
+    const svcs = (state.preset?.services || []).map((s) => ({ id: s.id, sid: spiSid(s) }));
+    const r = importSpiBundle(dataDir, spi, svcs.map((s) => ({ from: s, to: s })), { ensemble: true });
+    if (spi.settings) {
+      const next = normalizeSpiSettings(spi.settings);
+      if (next.enabled && estimateCU(next.bitrate, next.protection, 'A') > 864 - audioCu()) {
+        next.enabled = false;
+        logger.line('export', 'Import: SPI service not activated (not enough free CU)', 'WARN');
+      }
+      settings.spi = { ...next, file: settings.spi?.file };
+      writeJson(settingsPath, settings);
+    }
+    logger.line('export', `Import: SPI ${r.logos} logo(s), ${r.epg} programme guide source(s), ${r.webUrls} web address(es)${settings.spi?.enabled ? ', service activated' : ''}`);
+    if (normalizeSpiSettings(settings.spi).enabled) {
+      const c = refreshSpiCarousel('import');
+      if (c && !c.ok) { settings.spi = { ...settings.spi, enabled: false }; writeJson(settingsPath, settings); }
+    }
+    refreshEpgSources('import').catch(() => {});
+  } catch (e) {
+    logger.line('export', `Import: SPI part not restored: ${e.message}`, 'WARN');
+  }
+}
 app.post('/api/import/full', (req, res) => {
   try {
     const payload = req.body || {};
@@ -740,6 +771,7 @@ app.post('/api/import/full', (req, res) => {
         }
       }
     }
+    if (payload.spi && typeof payload.spi === 'object') importSpiPart(payload.spi);
 
     res.json({ ok: true });
   } catch (e) {
@@ -765,6 +797,8 @@ app.get('/api/export/service/:id', (req, res) => {
     // Logo not found or error reading - skip it, not critical
     logger.line('export', `Failed to read logo for service ${svc.id}: ${err.message}`, 'WARN');
   }
+  const spi = exportSpiBundle(dataDir, [{ id: svc.id, sid: spiSid(svc) }]);   // SPI logos + guide source
+  if (Object.keys(spi).length) result.spi = spi;
 
   res.json(result);
 });
@@ -823,6 +857,9 @@ app.get('/api/export/all-services', (req, res) => {
       logger.line('export', `Failed to read logo for service ${svc.id}: ${err.message}`, 'WARN');
     }
 
+    const spi = exportSpiBundle(dataDir, [{ id: svc.id, sid: spiSid(svc) }]);
+    if (Object.keys(spi).length) exportData.spi = spi;
+
     // Add file to archive
     const jsonContent = JSON.stringify(exportData, null, 2);
     archive.append(jsonContent, { name: filename });
@@ -858,6 +895,19 @@ app.post('/api/import/service', (req, res) => {
       } catch (err) {
         logger.line('export', `Failed to write logo for service ${svc.id}: ${err.message}`, 'WARN');
         // Don't fail the whole import if logo write fails
+      }
+    }
+    // SPI logos and guide source of the service (written for its id / PI here)
+    if (payload.spi && typeof payload.spi === 'object') {
+      try {
+        const r = importSpiBundle(dataDir, payload.spi, [{ from: { id: String(payload.service.id || svc.id), sid: spiSid(payload.service) }, to: { id: svc.id, sid: spiSid(svc) } }]);
+        if (r.logos || r.epg) {
+          logger.line('export', `${svc.id}: SPI ${r.logos} logo(s), ${r.epg ? 'programme guide source' : 'no guide'} imported`);
+          refreshSpiCarousel('service import');
+          if (r.epg) refreshEpgSources('import', svc.id).then(() => refreshSpiCarousel('programme guide')).catch(() => {});
+        }
+      } catch (err) {
+        logger.line('export', `${svc.id}: SPI part not imported: ${err.message}`, 'WARN');
       }
     }
 
@@ -1880,6 +1930,7 @@ const spiDir = () => spiLogosDir(dataDir);
 const spiServices = () => [...(state.preset?.services || [])].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
 app.get('/api/spi', (req, res) => {
   const epgCfg = loadEpgConfig(dataDir);
+  const webUrls = loadSpiWebUrls(dataDir);
   res.json({
     settings: spiState(),
     generator: spiGeneratorStatus(),
@@ -1887,11 +1938,11 @@ app.get('/api/spi', (req, res) => {
     cuFree: 864 - audioCu(),
     muxRunning: state.muxRunning,
     sizes: SPI_SIZES.map(([w, h]) => `${w}x${h}`),
-    ensemble: { id: SPI_ENSEMBLE, sid: SPI_ENSEMBLE, ps8: settings.ensemble?.shortlabel || '', logos: spiLogoInfo(spiDir(), SPI_ENSEMBLE) },
+    ensemble: { id: SPI_ENSEMBLE, sid: SPI_ENSEMBLE, ps8: settings.ensemble?.shortlabel || '', logos: spiLogoInfo(spiDir(), SPI_ENSEMBLE), webUrl: webUrls[SPI_ENSEMBLE] || '' },
     services: spiServices().map((svc) => {
       const sid = spiSid(svc);
       return { id: svc.id, sid, ps8: svc.identity?.ps8 || '', enabled: svc.enabled !== false,
-        hasSource: Boolean(spiSourceLogo(state._resolveMotDir(svc))), logos: spiLogoInfo(spiDir(), sid), epg: epgSummary(svc, epgCfg[svc.id]) };
+        hasSource: Boolean(spiSourceLogo(state._resolveMotDir(svc))), logos: spiLogoInfo(spiDir(), sid), epg: epgSummary(svc, epgCfg[svc.id]), webUrl: webUrls[svc.id] || '' };
     }),
   });
 });
@@ -1973,9 +2024,11 @@ app.post('/api/spi/:id/import', async (req, res) => {
   const url = String(req.body?.url || '').trim();
   if (!url) return res.status(400).json({ error: 'URL required' });
   const pick = Number.isInteger(req.body?.pick) ? req.body.pick : null;
+  const dryRun = req.body?.dryRun === true;   // Test button: nothing written
   try {
-    const r = await importSpiLogos(url, spiDir(), svc.sid, { pick });
-    if (r.choices) return res.json(r);
+    const r = await importSpiLogos(url, spiDir(), svc.sid, { pick, dryRun });
+    if (r.choices || dryRun) return res.json(r);
+    try { saveSpiWebUrl(dataDir, String(req.params.id), url); } catch (e) { logger.line('spi', `web address not saved: ${e.message}`, 'WARN'); }
     logger.line('spi', `${svc.id}: SPI logos from ${r.from === 'si' ? `the SI.xml (${r.service}${r.exact.length ? `, station sizes ${r.exact.join(' ')}` : ''})` : 'a picture'}: ${url}`);
     refreshSpiCarousel('logos from the web');
     res.json(r);
