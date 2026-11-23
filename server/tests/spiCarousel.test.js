@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { crc16, encodeSpiCarousel, encodeServiceInformation } from '../src/spiCarousel.js';
+import { crc16, encodeSpiCarousel, encodeServiceInformation, encodePackets } from '../src/spiCarousel.js';
 
 const fixedTid = (name) => (name === null ? 999 : parseInt(name, 16) + 100);
 const png = (n) => Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47]), Buffer.alloc(n, n & 0xff)]);   // fake bodies
@@ -52,6 +52,35 @@ describe('SPI carousel encoder (Node)', () => {
     assert.equal(groups.length, 1 + 1 + 4 + 2);
   });
 
+  it('read in loop: packet count multiple of 4, continuity unbroken at the wrap, same data groups', () => {
+    // packets → data groups (reassembled from the useful data, first / last flags)
+    const decode = (data, size) => {
+      const groups = []; let cur = null;
+      for (let off = 0; off < data.length; off += size) {
+        const p = data.subarray(off, off + size);
+        assert.equal(p.readUInt16BE(size - 2), crc16(p.subarray(0, size - 2)));
+        if (p[0] & 0x08) cur = [];
+        cur.push(p.subarray(3, 3 + (p[2] & 0x7f)));
+        if (p[0] & 0x04) { groups.push(Buffer.concat(cur)); cur = null; }
+      }
+      return groups;
+    };
+    for (const size of [24, 48, 72, 96]) {
+      for (let n = 1; n <= 8; n++) {   // every remainder modulo 4
+        const groups = Array.from({ length: n }, (_, i) => Buffer.alloc(9 + i * 37, i + 1));
+        const plain = encodePackets(groups, { size });
+        const looped = encodePackets(groups, { size, loop: true });
+        const count = looped.length / size;
+        assert.equal(count % 4, 0, `size ${size}, ${n} groups: ${count} packets`);
+        assert.ok(count - plain.length / size < 4);
+        for (let k = 0; k < count; k++) assert.equal((looped[k * size] >> 4) & 3, k % 4, 'continuity, the last packet ends at 3');
+        assert.deepEqual(decode(looped, size), decode(plain, size));
+      }
+    }
+    const { data } = encodeSpiCarousel(cfg, { nextTid: fixedTid });
+    assert.equal((data.length / 48) % 4, 0, 'the carousel file');
+  });
+
   it('SI document: root 0x03, ensemble 0x26 with ECC/EId, services 0x28 with DAB bearer and logos', () => {
     const si = encodeServiceInformation({ ...cfg, services: [{ sid: 0xf9a3, label: 'F3', shortlabel: 'F3', logos: [{ url: '1', width: 32, height: 32 }] }] });
     assert.equal(si[0], 0x03);
@@ -80,10 +109,10 @@ describe('SPI carousel encoder (Node)', () => {
     const ref = String.raw`
 import json, sys
 import mot, msc.datagroups
-mot.generate_transport_id = lambda name=None: int(name, 16) + 100
+mot.generate_transport_id = lambda name=None: int(getattr(name, 'name', name), 16) + 100
 msc.datagroups.generate_transport_id = lambda name=None: 999
 from spi import Service, DabBearer, ServiceInfo, Multimedia, ShortName, MediumName, binary
-from mot import MotObject, ContentType
+from mot import MotObject, ContentType, ContentName
 from mot.epg import EpgContentType, ScopeId
 from msc.datagroups import encode_directorymode
 from msc.packets import encode_packets
@@ -91,7 +120,7 @@ cfg = json.load(sys.stdin)
 objects = []
 def media(lg):
     name = '%x' % (len(objects) + 1)
-    objects.append(MotObject(name, open(lg['path'], 'rb').read(), ContentType.IMAGE_PNG))
+    objects.append(MotObject(ContentName(name, ContentName.EBU_LATIN), open(lg['path'], 'rb').read(), ContentType.IMAGE_PNG))
     w, h = lg['width'], lg['height']
     t = Multimedia.LOGO_COLOUR_SQUARE if (w, h) == (32, 32) else Multimedia.LOGO_COLOUR_RECTANGLE if (w, h) == (112, 32) else Multimedia.LOGO_UNRESTRICTED
     return Multimedia(url=name, type=t, width=w, height=h, content='image/png')
@@ -105,14 +134,14 @@ for s in cfg['services']:
     svc.media = [media(lg) for lg in s['logos']]
     info.services.append(svc)
 si = binary.marshall(info, ensemble=ens).tobytes()
-o = MotObject('0', si, EpgContentType.SERVICE_INFORMATION)
+o = MotObject(ContentName('0', ContentName.EBU_LATIN), si, EpgContentType.SERVICE_INFORMATION)
 o.add_parameter(ScopeId(cfg['ecc'], cfg['eid']))
 objects.insert(0, o)
 for p in encode_packets(encode_directorymode(objects, directory_parameters=[]), address=cfg['address'], size=cfg['packetSize']):
     sys.stdout.buffer.write(p.tobytes())
 `;
     const expected = execFileSync('python3', ['-c', ref], { input: JSON.stringify({ ...cfg2, logos: ensLogos, services }), maxBuffer: 64 * 1024 * 1024 });
-    const { data } = encodeSpiCarousel(cfg2, { nextTid: fixedTid });
+    const { data } = encodeSpiCarousel(cfg2, { nextTid: fixedTid, loop: false });   // the Python encoder does not align the loop
     assert.equal(data.length, expected.length, 'same length');
     assert.ok(data.equals(expected), `first difference at byte ${data.findIndex((b, i) => b !== expected[i])}`);
   });
