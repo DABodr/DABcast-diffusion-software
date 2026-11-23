@@ -10,7 +10,7 @@ import { DEFAULT_SETTINGS } from '../src/defaults.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // fake ODR processes: dabmuxExit = { afterMs, code } makes odr-dabmux exit by itself
-function fakePm({ dabmuxExit = null } = {}) {
+function fakePm({ dabmuxExit = null, stopDelayMs = 0 } = {}) {
   const procs = new Map();
   const exit = (key, code) => { const p = procs.get(key); if (!p) return; procs.delete(key); p.opts?.onExit?.(code); };
   return {
@@ -21,16 +21,16 @@ function fakePm({ dabmuxExit = null } = {}) {
       procs.set(key, { bin, args, opts });
       if (key === 'mux:odr-dabmux' && dabmuxExit) setTimeout(() => exit(key, dabmuxExit.code), dabmuxExit.afterMs);
     },
-    async stop(key) { if (!procs.has(key)) throw new Error('not running'); exit(key, null); },
+    async stop(key) { if (!procs.has(key)) throw new Error('not running'); if (stopDelayMs) await sleep(stopDelayMs); exit(key, null); },
     async stopAll(prefix) { for (const k of [...procs.keys()]) if (k.startsWith(prefix)) exit(k, null); },
     exit,
   };
 }
-function makeState(pm) {
+function makeState(pm, { encoders = 0 } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-mux-'));
   fs.mkdirSync(path.join(dir, 'presets'), { recursive: true });
   const preset = JSON.parse(fs.readFileSync(new URL('./fixtures/preset-7-services.json', import.meta.url)));
-  preset.services.forEach((s) => { s.enabled = false; });   // no encoder: only odr-dabmux is started
+  preset.services.forEach((s, i) => { s.enabled = i < encoders; });   // encoders = 0: only odr-dabmux is started
   fs.writeFileSync(path.join(dir, 'presets', 'demo.json'), JSON.stringify(preset));
   const settings = structuredClone(DEFAULT_SETTINGS);
   settings.dabmux.txMode = 'EASYDAB';
@@ -67,6 +67,21 @@ describe('multiplex start / stop', () => {
     await sleep(50);
     assert.equal(st.muxRunning, false);
     assert.equal(st.muxStatus, 'fail');
+    await st.stopMux();
+  });
+
+  it('two quick gain changes ON AIR: the encoder ends with the last one (second restart queued, not skipped)', async () => {
+    const pm = fakePm({ stopDelayMs: 300 });
+    const st = makeState(pm, { encoders: 1 });
+    await st.startMux();
+    const id = st.preset.services[0].id;
+    const gainOf = () => { const a = pm.procs.get(`svc:${id}:audioenc`)?.args || []; return a[a.indexOf('-g') + 1]; };
+    st.setService(id, { audio: { gainDb: 3 } });
+    await sleep(50);
+    st.setService(id, { audio: { gainDb: 6 } });   // while the first restart is still stopping the encoder
+    await sleep(1500);
+    assert.equal(st.preset.services[0].audio.gainDb, 6);
+    assert.equal(gainOf(), '6', 'encoder restarted with the last gain');
     await st.stopMux();
   });
 

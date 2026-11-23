@@ -730,14 +730,13 @@ export class AppState {
 
     if (needRestart && this.pm.isRunning(`svc:${id}:audioenc`)) {
       this.logger.line(`svc:${id}`, `input changed while ON AIR — restarting encoder`);
-      this._switchServiceUri(normalized, normalized.input.uri);
+      this._restartEncoderLatest(normalized.id, (svc) => svc.input.uri);
     }
     if (gainRestart) {
-      const rt = this.serviceRuntime.get(normalized.id);
       const what = gainChanged ? `audio gain changed while ON AIR (${existing.audio?.gainDb ?? 0} → ${normalized.audio?.gainDb ?? 0} dB)`
         : `drift compensation ${normalized.input?.driftComp === true ? 'enabled' : 'disabled'} while ON AIR`;
       this.logger.line(`svc:${id}`, `${what} — restarting encoder only`);
-      this._switchServiceUri(normalized, rt?.activeUri || normalized.input.uri).catch(() => { /* logged by _switchServiceUri */ });
+      this._restartEncoderLatest(normalized.id, (svc, rt) => rt?.activeUri || svc.input.uri);
     }
 
     // Download slide if slsUrl changed
@@ -750,6 +749,24 @@ export class AppState {
     }
 
     return normalized;
+  }
+
+  // In-place encoder restart with the service config as saved NOW. When a restart of this service is
+  // already running (per-service switch lock), the new one waits for it: two quick saves (gain +3 then
+  // +6 dB) left the encoder on the first value before, the second restart being skipped by the lock.
+  // uriOf(svc, rt): stream to restart on. Gives up after 10 s (field kept in rt.pendingRestart).
+  _restartEncoderLatest(id, uriOf, attempt = 0) {
+    if (this._switchLocks.has(`switch:${id}`)) {
+      if (attempt === 0) this.logger.line(`svc:${id}`, 'encoder restart queued after the one in progress');
+      if (attempt < 40) { setTimeout(() => this._restartEncoderLatest(id, uriOf, attempt + 1), 250); return; }
+      const rt = this.serviceRuntime.get(id);
+      if (rt) rt.pendingRestart = [...new Set([...(rt.pendingRestart || []), 'gainDb'])];
+      this.logger.line(`svc:${id}`, 'encoder restart not done (another one still running after 10 s): applied at the next restart', 'WARN');
+      return;
+    }
+    const svc = this.preset.services.find((s) => s.id === id);
+    if (!svc || !this.muxRunning || !this.pm.isRunning(`svc:${id}:audioenc`)) return;
+    this._switchServiceUri(svc, uriOf(svc, this.serviceRuntime.get(id))).catch(() => { /* logged by _switchServiceUri */ });
   }
 
   addService(svc) {
