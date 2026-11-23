@@ -253,6 +253,50 @@ describe('end of track (no cover / title stuck on air during ads)', () => {
   });
 });
 
+describe('track cover download failure', () => {
+  it('the previous cover leaves the air, the download is retried, given up after 3 tries', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-coverfail-'));
+    fs.mkdirSync(path.join(dir, 'presets'), { recursive: true });
+    fs.copyFileSync(demoPreset, path.join(dir, 'presets', 'demo.json'));
+    const state = new AppState({ settings: structuredClone(DEFAULT_SETTINGS), dataDir: dir, logger: { line() {} }, processManager: { isRunning: () => false } });
+    state._initRuntime();
+    state.muxRunning = true;
+    state.preset.services.forEach((s, i) => { s.enabled = i === 0; });
+    const svc = state.preset.services[0];
+    Object.assign(svc.metadata, { mode: 'JSON', url: 'http://api.invalid/now', artistKey: 'artist', titleKey: 'title', slsKey: 'cover',
+      startKey: '', durationKey: '', trackMaxMin: 0, defaultDls: 'Station', defaultDlsAllowed: true, intervalSec: 10 });
+    const slideDir = path.join(state._resolveMotDir(svc), 'slide');
+    fs.mkdirSync(slideDir, { recursive: true });
+    const cover = path.join(slideDir, 'cover.jpg');
+    let api = { artist: 'A', title: 'Song 1', cover: 'http://img.invalid/1.jpg' };
+    state._fetchText = async () => JSON.stringify(api);
+    let works = true, calls = 0;
+    state._downloadImage = async (url, dest) => { calls++; if (!works) return false; fs.writeFileSync(dest, 'x'); return true; };
+    state._convertToSlide = (src, dest) => { fs.copyFileSync(src, dest); return true; };
+    const rt = state.serviceRuntime.get(svc.id);
+    const tick = async () => { rt.lastMetaUpdateMs = 0; await state._updateMetadata(); };
+
+    await tick();
+    assert.ok(fs.existsSync(cover), 'cover of song 1 on air');
+    works = false;
+    api = { artist: 'B', title: 'Song 2', cover: 'http://img.invalid/2.jpg' };
+    await tick();
+    assert.equal(rt.currentDls, 'B - Song 2');
+    assert.ok(!fs.existsSync(cover), 'the cover of song 1 does not stay with song 2: logo back');
+    works = true;
+    await tick();
+    assert.ok(fs.existsSync(cover), 'retried at the next tick: cover of song 2');
+    assert.equal(rt.currentSlsUrl, 'http://img.invalid/2.jpg');
+    works = false;
+    api = { artist: 'C', title: 'Song 3', cover: 'http://img.invalid/3.jpg' };
+    calls = 0;
+    for (let i = 0; i < 5; i++) await tick();
+    assert.equal(calls, 3, 'given up after 3 tries for the same address');
+    assert.ok(!fs.existsSync(cover));
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});
+
 describe('on-air slides: station logo every N seconds during a cover', () => {
   let dir, state, svc, slideDir, airDir, rt;
   // on-air names carry a version (cover__v<mtime><size>.jpg): compared by their slide/ name

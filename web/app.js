@@ -1041,12 +1041,17 @@ async function _forceRefreshSlides(svcId) {
 /** Preload and display current slide for a service */
 function _showSlide(svcId) {
   const rot = slideRotation.get(svcId);
-  if (!rot || !rot.files.length) return;
+  if (!rot) return;
   const tr = svcTableBody.querySelector(`tr[data-service-id="${svcId}"]`);
   if (!tr) return;
   const td = tr.children[16];   // SLS column
   const img = td?.querySelector('img');
   if (!img) return;
+  if (!rot.files.length) {   // last picture removed: the thumbnail goes too (it stayed shown before)
+    img.removeAttribute('src');
+    img.style.display = 'none';
+    return;
+  }
   const file = rot.files[rot.index % rot.files.length];
   // Add timestamp for cache-busting (especially important for single-slide services where cover updates)
   const url = `/api/mot/${rot.svcKey}/slide/${encodeURIComponent(file)}?v=${encodeURIComponent(rot.key)}&t=${Date.now()}`;

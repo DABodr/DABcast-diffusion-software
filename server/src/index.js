@@ -23,7 +23,7 @@ import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import { convertToSlide as convertSlideImage, removeBlackBands, imageCoder } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
-import { SPI_SIZES, normalizeSpiSettings, spiLogosDir, spiSid, isSpiFileName, spiSourceLogo, makeSpiLogos, spiLogoInfo, deleteSpiLogos, buildSpiCarousel, spiGeneratorStatus, SPI_ENSEMBLE, importSpiLogos, exportSpiBundle, importSpiBundle, loadSpiWebUrls, saveSpiWebUrl } from './spi.js';
+import { SPI_SIZES, normalizeSpiSettings, spiLogosDir, spiSid, isSpiFileName, spiSourceLogo, makeSpiLogos, spiLogoInfo, deleteSpiLogos, buildSpiCarousel, spiGeneratorStatus, SPI_ENSEMBLE, importSpiLogos, exportSpiBundle, importSpiBundle, loadSpiWebUrls, saveSpiWebUrl, renameSpiService } from './spi.js';
 import { EPG_SOURCES, loadEpgConfig, saveEpgEntry, readEpgCache, refreshEpgCache, epgProgrammes, xmltvChannels } from './spiEpg.js';
 import { estimateCU } from './cu.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
@@ -938,7 +938,16 @@ app.post('/api/services', (req, res) => {
 
 app.patch('/api/services/:id', (req, res) => {
   try {
+    const before = state.preset?.services?.find((x) => x.id === req.params.id);
+    const from = before ? { id: before.id, sid: spiSid(before) } : null;
     const svc = state.setService(req.params.id, req.body || {});
+    // PI changed (the id follows it): the SPI logos and the programme guide follow the service
+    if (from && (svc.id !== from.id || spiSid(svc) !== from.sid)) {
+      try {
+        const n = renameSpiService(dataDir, from, { id: svc.id, sid: spiSid(svc) });
+        if (n) { logger.line('spi', `${from.id} → ${svc.id}: SPI logos and programme guide moved to the new PI`); refreshSpiCarousel('service renamed'); }
+      } catch (e) { logger.line('spi', `${svc.id}: SPI data not moved: ${e.message}`, 'WARN'); }
+    }
     res.json(svc);
   } catch (e) {
     res.status(400).json({ error: String(e.message || e) });
@@ -1937,11 +1946,11 @@ function refreshSpiCarousel(reason) {
   if (!spiNow.enabled) return null;
   const airBitrate = !starting && state.muxRunning && spiAirBitrate ? spiAirBitrate : null;
   if (airBitrate && airBitrate !== spiNow.bitrate) logger.line('spi', `ON AIR at ${airBitrate} kbps: carousel kept at that bit rate, ${spiNow.bitrate} kbps from the next Start`);
-  const r = buildSpiCarousel({ dataDir, settings, bitrate: airBitrate, services: [...(state.preset?.services || [])].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0)) });
+  const r = buildSpiCarousel({ dataDir, settings, bitrate: airBitrate, allowEmpty: reason !== 'settings', services: [...(state.preset?.services || [])].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0)) });
   if (r.ok) {
     spiLast = { at: Date.now(), ...r.stats };
     if (settings.spi.file !== r.file) { settings.spi = { ...settings.spi, file: r.file }; writeJson(settingsPath, settings); }
-    logger.line('spi', `SPI carousel built (${reason}): ${r.stats.services} service(s), ${r.stats.logos} logo(s), ${Math.round(r.stats.bytes / 1024)} kB, one cycle ≈ ${r.stats.cycleSec} s`);
+    logger.line('spi', `SPI carousel built (${reason}): ${r.stats.services} service(s), ${r.stats.logos} logo(s), ${Math.round(r.stats.bytes / 1024)} kB, one cycle ≈ ${r.stats.cycleSec} s${!r.stats.logos && !r.stats.epgDocs ? ' — no logo nor guide left: ensemble information only' : ''}`);
   } else {
     spiLast = { at: Date.now(), error: r.error };
     logger.line('spi', `SPI carousel not built (${reason}): ${r.error}`, 'WARN');
