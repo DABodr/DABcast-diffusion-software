@@ -9,6 +9,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { imageCoder, parsePpm } from './slideImage.js';
 import { encodeSpiCarousel } from './spiCarousel.js';
+import { loadEpgConfig, epgProgrammes, epgSchedules, parseXml, fetchBuffer } from './spiEpg.js';
 
 export const SPI_SIZES = [[320, 240], [128, 128], [112, 32], [32, 32]];
 export const SPI_BITRATES = [8, 16, 24, 32];
@@ -54,7 +55,7 @@ function edgeColour(img) {
 // Writes the four sizes of `sid` from `src` into `outDir` (temp files then rename). Returns the sizes written.
 // 256-colour PNG (as the ODR SPI generators): half the weight of 24-bit PNG for the same look, so the
 // SPI carousel turns twice as fast (all logos of a 19-service multiplex: ~500 kB instead of ~1 MB).
-export function makeSpiLogos(src, outDir, sid, { exec = execFileSync } = {}) {
+export function makeSpiLogos(src, outDir, sid, { exec = execFileSync, sizes = SPI_SIZES } = {}) {
   const coder = imageCoder(src);
   if (!coder) throw new Error('not a JPEG / PNG / GIF / WebP picture');
   const input = `${coder}:${src}[0]`;
@@ -62,7 +63,7 @@ export function makeSpiLogos(src, outDir, sid, { exec = execFileSync } = {}) {
   const bg = edgeColour(img);
   fs.mkdirSync(outDir, { recursive: true });
   const written = [];
-  for (const [w, h] of SPI_SIZES) {
+  for (const [w, h] of sizes) {
     const dest = path.join(outDir, spiFileName(sid, w, h));
     const tmp = path.join(outDir, `.tmp_${process.pid}_${w}x${h}.png`);
     try {
@@ -75,6 +76,87 @@ export function makeSpiLogos(src, outDir, sid, { exec = execFileSync } = {}) {
     }
   }
   return written;
+}
+
+// ── Logos from the web: a picture URL, or the SI.xml of the station (RadioDNS / ETSI TS 102 818) ──
+// Services of an SI.xml: [{ name, bearers: ['dab:ce1.c221.c479.0', 'fm:ce1.c479.09580', …], logos: [{ url, width, height }] }]
+const SI_TYPE_SIZE = { logo_colour_square: [32, 32], logo_colour_rectangle: [112, 32] };   // SPI v1 types without width / height
+export function parseSiXml(text, base = '') {
+  const out = [];
+  const walk = (el) => {
+    if (el.name === 'service') {
+      const name = ['longName', 'mediumName', 'shortName'].map((n) => el.children.find((c) => c.name === n)?.text.trim()).find(Boolean) || '';
+      const bearers = el.children.filter((c) => c.name === 'bearer').map((b) => String(b.attrs.id || '').toLowerCase()).filter(Boolean);
+      const logos = el.children.filter((c) => c.name === 'mediaDescription').flatMap((m) => m.children.filter((c) => c.name === 'multimedia')).map((m) => {
+        const [tw, th] = SI_TYPE_SIZE[m.attrs.type] || [];
+        let url = m.attrs.url || '';
+        try { url = new URL(url, base || undefined).href; } catch { /* kept as is */ }
+        return { url, width: Number(m.attrs.width) || tw || 0, height: Number(m.attrs.height) || th || 0 };
+      }).filter((l) => l.url && l.width && l.height);
+      out.push({ name, bearers, logos });
+      return;
+    }
+    el.children.forEach(walk);
+  };
+  walk(parseXml(text));
+  return out;
+}
+// Does an SI.xml service carry this PI? (DAB bearer dab:<gcc>.<eid>.<sid>.<scids>, FM bearer fm:<gcc>.<pi>.<freq>)
+export function siServiceHasPi(svc, sid) {
+  const pi = String(sid).toLowerCase();
+  return svc.bearers.some((b) => { const p = b.split(/[:.]/); return (p[0] === 'dab' && p[3] === pi) || (p[0] === 'fm' && p[2] === pi); });
+}
+
+// Logos of one service from a URL (a picture, or an SI.xml). pick = index of the SI.xml service when its PI is not
+// in the file. Returns { ok, from: 'picture' | 'si', sizes, exact } or { choices: [{ index, name, bearers }] }.
+export async function importSpiLogos(url, outDir, sid, { pick = null, fetchImpl, exec = execFileSync } = {}) {
+  fs.mkdirSync(outDir, { recursive: true });
+  const tmpFile = (tag) => path.join(outDir, `.web_${process.pid}_${Date.now()}_${tag}`);
+  const download = async (u, tag) => {
+    const f = tmpFile(tag);
+    fs.writeFileSync(f, await fetchBuffer(u, { fetchImpl, maxBytes: 10 * 1024 * 1024 }));
+    return f;
+  };
+  const first = await fetchBuffer(url, { fetchImpl, maxBytes: 10 * 1024 * 1024 });
+  const head = first.subarray(0, 200).toString('utf8').trimStart();
+  if (!head.startsWith('<')) {   // a picture
+    const f = tmpFile('pic');
+    try {
+      fs.writeFileSync(f, first);
+      return { ok: true, from: 'picture', sizes: makeSpiLogos(f, outDir, sid, { exec }), exact: [] };
+    } finally { try { fs.unlinkSync(f); } catch { /* ignore */ } }
+  }
+  const services = parseSiXml(first.toString('utf8'), url);
+  if (!services.length) throw new Error('not a picture, nor an SI.xml with services');
+  let svc = services.find((x) => siServiceHasPi(x, sid));
+  if (!svc && pick !== null && services[pick]) svc = services[pick];
+  if (!svc) return { choices: services.map((x, index) => ({ index, name: x.name, bearers: x.bearers.filter((b) => /^(dab|fm):/.test(b)) })) };
+  if (!svc.logos.length) throw new Error(`no logo for ${svc.name} in this SI.xml`);
+  const files = [];
+  try {
+    // the station's own picture for each DAB size, converted as is (no resize); the others from its biggest logo
+    const exact = [];
+    for (const [w, h] of SPI_SIZES) {
+      const lg = svc.logos.find((l) => l.width === w && l.height === h);
+      if (!lg) continue;
+      try {
+        const f = await download(lg.url, `${w}x${h}`);
+        files.push(f);
+        if (imageCoder(f)) { makeSpiLogos(f, outDir, sid, { exec, sizes: [[w, h]] }); exact.push(`${w}x${h}`); }
+      } catch { /* this size from the biggest logo */ }
+    }
+    const missing = SPI_SIZES.filter(([w, h]) => !exact.includes(`${w}x${h}`));
+    if (missing.length) {
+      const big = [...svc.logos].sort((a, b) => b.width * b.height - a.width * a.height).find((l) => l.width * l.height >= 128 * 128) || svc.logos[0];
+      const f = await download(big.url, 'big');
+      files.push(f);
+      if (!imageCoder(f)) throw new Error('the logos of this SI.xml are not JPEG / PNG / WebP pictures');
+      makeSpiLogos(f, outDir, sid, { exec, sizes: missing });
+    }
+    return { ok: true, from: 'si', service: svc.name, sizes: SPI_SIZES.map(([w, h]) => `${w}x${h}`), exact };
+  } finally {
+    for (const f of files) { try { fs.unlinkSync(f); } catch { /* ignore */ } }
+  }
 }
 
 // { '320x240': { bytes, mtime } | null, … } for one service
@@ -111,7 +193,7 @@ export function spiGeneratorStatus() { return { ok: true }; }
 
 // Builds data/spi/spi.dat from the SPI logos of the services ON (in multiplex order).
 // Returns { ok, stats | error }. odr-dabmux preloads the file (load_entire_file): replacing it is safe.
-export function buildSpiCarousel({ dataDir, settings, services, nextTid }) {
+export function buildSpiCarousel({ dataDir, settings, services, nextTid, now = Date.now() }) {
   const spi = normalizeSpiSettings(settings.spi);
   const e = settings.ensemble || {};
   const hex = (v) => parseInt(String(v).replace(/^0x/i, ''), 16);
@@ -124,9 +206,13 @@ export function buildSpiCarousel({ dataDir, settings, services, nextTid }) {
       return { sid: hex(sid), label: svc.identity?.ps16 || svc.identity?.ps8 || sid, shortlabel: svc.identity?.ps8 || sid, logos: read(sid) };
     }).filter((s) => s.logos.length);
     const ensLogos = read(SPI_ENSEMBLE);
-    if (!list.length && !ensLogos.length) return { ok: false, error: 'No SPI logo for the multiplex or the services ON' };
-    const { data, siBytes } = encodeSpiCarousel({ ecc: hex(e.eccHex || '0xE1'), eid: hex(e.idHex || '0x0000'), label: e.label || '',
-      shortlabel: e.shortlabel || '', address: SPI_PACKET_ADDRESS, packetSize: SPI_PACKET_SIZE[spi.bitrate], logos: ensLogos, services: list }, { nextTid });
+    // programme guide (EPG): one PI document per service ON and per day, from its source (spiEpg.js)
+    const epg = loadEpgConfig(dataDir);
+    const schedules = services.filter((svc) => svc.enabled !== false && epg[svc.id])
+      .flatMap((svc) => epgSchedules(spiSid(svc), epgProgrammes(dataDir, spiSid(svc), epg[svc.id], now), now));
+    if (!list.length && !ensLogos.length && !schedules.length) return { ok: false, error: 'No SPI logo nor programme guide for the multiplex or the services ON' };
+    const { data, siBytes, piBytes } = encodeSpiCarousel({ ecc: hex(e.eccHex || '0xE1'), eid: hex(e.idHex || '0x0000'), label: e.label || '',
+      shortlabel: e.shortlabel || '', address: SPI_PACKET_ADDRESS, packetSize: SPI_PACKET_SIZE[spi.bitrate], logos: ensLogos, services: list, schedules }, { nextTid });
     const output = spiCarouselFile(dataDir);
     fs.mkdirSync(path.dirname(output), { recursive: true });
     const tmp = `${output}.tmp${process.pid}`;
@@ -134,7 +220,8 @@ export function buildSpiCarousel({ dataDir, settings, services, nextTid }) {
     fs.renameSync(tmp, output);   // odr-dabmux preloads the file (load_entire_file): replacing it is safe
     const logos = list.reduce((a, s) => a + s.logos.length, ensLogos.length);
     // carousel period: whole file at the sub-channel bit rate
-    return { ok: true, file: output, stats: { services: list.length, logos, siBytes, packets: data.length / SPI_PACKET_SIZE[spi.bitrate],
+    return { ok: true, file: output, stats: { services: list.length, logos, siBytes, epgDocs: schedules.length,
+      epgServices: new Set(schedules.map((x) => x.sid)).size, epgBytes: piBytes, packets: data.length / SPI_PACKET_SIZE[spi.bitrate],
       bytes: data.length, cycleSec: Math.round(data.length * 8 / (spi.bitrate * 1000)) } };
   } catch (err) {
     return { ok: false, error: String(err.message || err) };

@@ -394,8 +394,8 @@
     <td>Detects stream failures via audio probing (not just HTTP checks). Automatically switches to a backup stream and returns to main when audio is restored.</td>
   </tr>
   <tr>
-    <td><strong>SPI service logos</strong></td>
-    <td>Gives every service its logo in the 4 sizes receivers display in their station list (ETSI TS 102 818: PNG 32×32, 112×32, 128×128, 320×240), made from its slideshow logo, plus an optional logo for the multiplex, and broadcasts them in an SPI data service of the multiplex.</td>
+    <td><strong>SPI logos &amp; programme guide (EPG)</strong></td>
+    <td>Gives every service its logo in the 4 sizes receivers display in their station list (ETSI TS 102 818: PNG 32×32, 112×32, 128×128, 320×240), made from its slideshow logo or fetched from the web, plus an optional logo for the multiplex, and a 7-day programme guide (weekly grid, XMLTV or RadioDNS), broadcast in an SPI data service of the multiplex.</td>
   </tr>
   <tr>
     <td><strong>Mux input monitoring</strong></td>
@@ -733,19 +733,35 @@ txgain=40</pre>
   <li>Off air, the thumbnails of the services table show the logos only.</li>
 </ul>
 
-<h1>SPI Service Logos</h1>
-<p>Receivers show a logo next to each station in their list. These logos come from the <strong>SPI</strong> (Service and Programme Information, ETSI TS 102 818), a data service of the multiplex. Click <strong>SPI</strong> in the top bar.</p>
+<h1>SPI Service Logos &amp; Programme Guide</h1>
+<p>Receivers show a logo next to each station in their list, and many show a programme guide (EPG). Both come from the <strong>SPI</strong> (Service and Programme Information, ETSI TS 102 818 / TS 102 371), a data service of the multiplex. Click <strong>SPI/EPG</strong> in the top bar: tab <em>Logos</em> or <em>Programme guide</em>.</p>
 <h2>Logos</h2>
 <ul>
   <li><strong>Get all from slideshow logos</strong> makes the 4 sizes (PNG 32×32, 112×32, 128×128, 320×240) of every service from its slideshow logo &mdash; never from a track cover. The logo is fitted in each size and centred on the colour of its own edges.</li>
   <li><strong>Keep existing</strong> (ticked): only the services without SPI logos get them, logos uploaded by hand are kept. Untick it to remake every service.</li>
-  <li>Per service: <strong>From slideshow</strong>, <strong>Upload…</strong> (another picture) or <strong>Delete</strong>.</li>  <li><strong>Multiplex logo</strong>: the <strong>MUX</strong> row at the top of the table is the logo of the multiplex itself, shown by receivers that display an icon for the ensemble. The multiplex has no slideshow: use <strong>Upload…</strong> (the 4 sizes are made the same way) or <strong>Delete</strong>. Optional: without it, nothing changes.</li>
+  <li>Per service: <strong>From slideshow</strong>, <strong>Upload…</strong> (another picture), <strong>From web…</strong> or <strong>Delete</strong>.</li>
+  <li><strong>From web…</strong> takes an address: the picture of the logo on the station's website (the 4 sizes are made from it), or the <strong>SI.xml</strong> of the station (RadioDNS). With an SI.xml, DABcast finds the service by its PI and takes the station's own logos in the DAB sizes, as they are; a missing size is made from its biggest logo. When the PI is not in the file, a list of its stations is shown: choose one, then <em>Import</em>.</li>
+  <li><strong>Multiplex logo</strong>: the <strong>MUX</strong> row at the top of the table is the logo of the multiplex itself, shown by receivers that display an icon for the ensemble. The multiplex has no slideshow: use <strong>Upload…</strong> (the 4 sizes are made the same way) or <strong>Delete</strong>. Optional: without it, nothing changes.</li>
+</ul>
+<h2>Programme guide (EPG)</h2>
+<p>The tab lists every service with the programme on air now, the next one and the number of programmes. <strong>Edit</strong> opens the guide of a service; choose its source:</p>
+<table>
+  <tr><th>Source</th><th>Use</th></tr>
+  <tr><td><strong>Weekly grid</strong></td><td>Typed in the page: days (Mo–Su), start, end, title, optional description. Repeated every week; a show ending after midnight (22:00–02:00) ends the next day. <em>Add a line</em> starts where the previous one ends; <em>Copy the grid of</em> takes the grid of another service. Local time of the server.</td></tr>
+  <tr><td><strong>XMLTV file on the web</strong></td><td>URL of an XMLTV file (.xml or .xml.gz), then <em>Load the channels</em> and choose the one of the station.</td></tr>
+  <tr><td><strong>SPI / RadioDNS XML on the web</strong></td><td>Programme information published by the station (ETSI TS 102 818). Put <code>{date}</code> where the date goes (YYYYMMDD): one file per day is fetched.</td></tr>
+</table>
+<ul>
+  <li>The guide covers today and the next 6 days: one programme information document per service and per day, added to the SPI carousel, in UTC (receivers show local time).</li>
+  <li>Guides on the web are fetched at start-up, when the source is saved, with <em>Fetch now</em>, and every 6 hours; on error the last good guide is kept and the error is shown.</li>
+  <li>The carousel is rebuilt at Start, after each change, after each fetch and at midnight. odr-dabmux reloads the carousel file at each turn: a new guide or new logos go on air at the next turn, <strong>without interrupting the broadcast</strong>.</li>
+  <li>Small stations rarely publish a guide: the weekly grid is then the way. A bigger guide makes the carousel longer: watch the cycle time.</li>
 </ul>
 <h2>Broadcasting the SPI</h2>
 <ul>
   <li>Choose the bit rate (8 to 32 kbps) and the EEP-A protection: the CU needed are shown. 16 kbps EEP-A 3 = 12 CU.</li>
   <li>Tick <strong>Service activated</strong>, then Stop / Start the multiplex: DABcast adds the SPI data service (packet mode) with the multiplex logo and the logos of the services ON. It refuses when the ensemble has not enough free CU.</li>
-  <li>The page shows the carousel size and the time of one cycle (the time a receiver may need to get every logo). The carousel is rebuilt at each Start and after a logo change, without interrupting the broadcast.</li>
+  <li>The page shows the carousel size, the share of the guide and the time of one cycle (the time a receiver may need to get every logo and the whole guide). The carousel is rebuilt at each Start and after a logo or guide change, without interrupting the broadcast. Activation, bit rate and protection apply at the next Stop / Start.</li>
   <li>The <em>Capacity</em> card counts the SPI CU. Off by default: nothing changes until it is activated.</li>
 </ul>
 

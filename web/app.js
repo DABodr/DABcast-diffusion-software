@@ -2777,9 +2777,9 @@ async function loadSpi() {
   const c = SPI.carousel;
   const info = [];
   if (!SPI.generator?.ok) info.push(`<span class="sys-bad">SPI generator unavailable: ${esc(SPI.generator?.reason || '')}</span>`);
-  if (st.enabled && c && !c.error) info.push(`On air from the next Start · carousel ${spiKb(c.bytes)}, one cycle ≈ ${c.cycleSec >= 120 ? `${Math.round(c.cycleSec / 60)} min` : `${c.cycleSec} s`} at ${st.bitrate} kbps (${c.logos} logos, ${c.services} services)`);
+  if (st.enabled && c && !c.error) info.push(`Carousel ${spiKb(c.bytes)}, one cycle ≈ ${c.cycleSec >= 120 ? `${Math.round(c.cycleSec / 60)} min` : `${c.cycleSec} s`} at ${st.bitrate} kbps (${c.logos} logos, ${c.services} services${c.epgDocs ? ` · guide: ${c.epgServices} services, ${c.epgDocs} days, ${spiKb(c.epgBytes)}` : ''})`);
   if (st.enabled && c?.error) info.push(`<span class="sys-bad">Carousel not built: ${esc(c.error)}</span>`);
-  if (st.enabled && SPI.muxRunning) info.push('<span class="sys-warn">ON AIR: a change of the SPI service is applied at the next Stop / Start</span>');
+  if (st.enabled && SPI.muxRunning) info.push('<span class="sys-warn">ON AIR: logos and guide are picked up at the next turn of the carousel; activation, bit rate and protection at the next Stop / Start</span>');
   if (!st.enabled) info.push(`<span class="muted">Not broadcast · ${SPI.cuFree} CU free in the ensemble</span>`);
   $('#spiInfo').innerHTML = info.join(' · ');
   const box = (svc, size) => {
@@ -2795,6 +2795,7 @@ async function loadSpi() {
       ${SPI.sizes.map((sz) => box(ens, sz)).join('')}
       <td class="spi-act">
         <button type="button" class="btn btn-mini" data-spi="up" data-id="${ens.id}" title="Logo of the multiplex (ensemble)">Upload…</button>
+        <button type="button" class="btn btn-mini" data-spi="web" data-id="${ens.id}" title="Picture address on the web">From web…</button>
         <button type="button" class="btn btn-mini" data-spi="del" data-id="${ens.id}" ${Object.values(ens.logos).some(Boolean) ? '' : 'disabled'}>Delete</button>
       </td></tr>` : '';
   $('#spiBody').innerHTML = ensRow + SPI.services.map((svc) => `<tr class="${svc.enabled ? '' : 'svc-off'}">
@@ -2803,6 +2804,7 @@ async function loadSpi() {
       <td class="spi-act">
         <button type="button" class="btn btn-mini" data-spi="gen" data-id="${esc(svc.id)}" ${svc.hasSource ? '' : 'disabled title="No slideshow logo for this service"'}>From slideshow</button>
         <button type="button" class="btn btn-mini" data-spi="up" data-id="${esc(svc.id)}">Upload…</button>
+        <button type="button" class="btn btn-mini" data-spi="web" data-id="${esc(svc.id)}" title="A picture address, or the SI.xml of the station (RadioDNS): its own logos in the DAB sizes">From web…</button>
         <button type="button" class="btn btn-mini" data-spi="del" data-id="${esc(svc.id)}" ${Object.values(svc.logos).some(Boolean) ? '' : 'disabled'}>Delete</button>
       </td></tr>`).join('') || '<tr><td colspan="7" class="muted">No service.</td></tr>';
 }
@@ -2815,9 +2817,152 @@ async function spiAction(fn, msg) {
     return null;
   }
 }
+// ── SPI / EPG dialog: Programme guide tab ──
+let SPI_TAB = 'logos', EPG = null, epgEditId = null;
+try { SPI_TAB = localStorage.getItem('dabcast.spiTab') === 'epg' ? 'epg' : 'logos'; } catch { /* ignore */ }
+const EPG_SRC = { none: '—', grid: 'Weekly grid', xmltv: 'XMLTV', spixml: 'SPI XML' };
+const DAYS = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+const hm = (ms) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+function setSpiTab(tab) {
+  SPI_TAB = tab;
+  try { localStorage.setItem('dabcast.spiTab', tab); } catch { /* ignore */ }
+  document.querySelectorAll('[data-spitab]').forEach((b) => b.classList.toggle('active', b.dataset.spitab === tab));
+  $('#spiLogos').hidden = tab !== 'logos';
+  $('#spiEpg').hidden = tab !== 'epg';
+  if (tab === 'epg') renderEpgList();
+}
+function renderEpgList() {
+  if (!SPI) return;
+  $('#epgList').hidden = Boolean(epgEditId);
+  $('#epgEdit').hidden = !epgEditId;
+  $('#epgBody').innerHTML = SPI.services.map((svc) => {
+    const e = svc.epg || { source: 'none', count: 0 };
+    const f = e.fetch;
+    const fetchNote = f ? (f.ok ? `<div class="spi-kb">fetched ${new Date(f.at).toLocaleString()}</div>` : `<div class="spi-kb sys-bad" title="${esc(f.error || '')}">fetch failed: ${esc((f.error || '').slice(0, 60))}</div>`) : '';
+    return `<tr class="${svc.enabled ? '' : 'svc-off'}"><td class="spi-ps">${esc(svc.ps8)}</td><td>${EPG_SRC[e.source] || e.source}${fetchNote}</td>
+      <td>${e.now ? `<span class="t">${hm(e.now.start)}</span> ${esc(e.now.title)}` : '<span class="muted">—</span>'}</td>
+      <td>${e.next ? `<span class="t">${hm(e.next.start)}</span> ${esc(e.next.title)}` : '<span class="muted">—</span>'}</td>
+      <td class="num">${e.count || '—'}</td>
+      <td class="spi-act"><button type="button" class="btn btn-mini" data-epg="edit" data-id="${esc(svc.id)}">Edit</button></td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="muted">No service.</td></tr>';
+}
+const gridRow = (r = { days: [1, 2, 3, 4, 5], start: '', end: '', title: '', description: '' }) => `<tr>
+    <td><div class="epg-days">${DAYS.map((d, i) => `<label>${d}<input type="checkbox" data-day="${i + 1}" ${r.days.includes(i + 1) ? 'checked' : ''}></label>`).join('')}</div></td>
+    <td><input type="time" data-k="start" value="${esc(r.start)}" required></td><td><input type="time" data-k="end" value="${esc(r.end)}" required></td>
+    <td><input type="text" data-k="title" maxlength="128" value="${esc(r.title)}" placeholder="Programme title"></td>
+    <td><input type="text" data-k="description" maxlength="180" value="${esc(r.description || '')}" placeholder="Description (optional)"></td>
+    <td class="spi-act"><button type="button" class="btn btn-mini" data-epg="del-row" title="Remove this line">✕</button></td></tr>`;
+const readGrid = () => [...$('#epgGrid').querySelectorAll('tr')].map((tr) => ({
+  days: [...tr.querySelectorAll('[data-day]')].filter((c) => c.checked).map((c) => Number(c.dataset.day)),
+  start: tr.querySelector('[data-k=start]').value, end: tr.querySelector('[data-k=end]').value,
+  title: tr.querySelector('[data-k=title]').value.trim(), description: tr.querySelector('[data-k=description]').value.trim(),
+}));
+function epgSourceUi() {
+  const src = $('#epgSource').value;
+  $('#epgGridBox').hidden = src !== 'grid';
+  $('#epgWebBox').hidden = !['xmltv', 'spixml'].includes(src);
+  $('#epgXmltvBox').hidden = src !== 'xmltv';
+  $('#epgFetch').hidden = !['xmltv', 'spixml'].includes(src);
+  $('#epgWebHint').textContent = src === 'xmltv'
+    ? 'XMLTV file (.xml or .xml.gz) with several days of programmes: load the channels, then choose the one of this station.'
+    : src === 'spixml' ? 'Programme information of the station in SPI / RadioDNS XML (ETSI TS 102 818). Put {date} in the URL where the date goes (YYYYMMDD): one file per day is fetched, for today and the next 6 days.' : '';
+}
+function renderEpgEdit() {
+  const d = EPG;
+  const svc = SPI.services.find((x) => x.id === d.id);
+  $('#epgName').textContent = `${svc?.ps8 || d.id} — programme guide`;
+  $('#epgSource').value = d.entry.source || 'none';
+  $('#epgGrid').innerHTML = (d.entry.grid || []).map(gridRow).join('');
+  $('#epgUrl').value = d.entry.url || '';
+  const ch = d.entry.channel || '';
+  $('#epgChannel').innerHTML = `<option value="">—</option>${ch ? `<option value="${esc(ch)}" selected>${esc(ch)}</option>` : ''}`;
+  $('#epgCopyFrom').innerHTML = '<option value="">—</option>' + SPI.services.filter((x) => x.id !== d.id && x.epg?.source === 'grid').map((x) => `<option value="${esc(x.id)}">${esc(x.ps8)}</option>`).join('');
+  const f = d.summary.fetch;
+  $('#epgFetchInfo').innerHTML = f ? (f.ok ? `Last fetch ${new Date(f.at).toLocaleString()} · ${d.summary.count} programmes` : `<span class="sys-bad">Last fetch failed: ${esc(f.error || '')}</span>${d.summary.count ? ` — previous guide kept (${d.summary.count})` : ''}`) : '';
+  epgSourceUi();
+  // preview: today and tomorrow
+  const now = Date.now();
+  const end = new Date(); end.setHours(0, 0, 0, 0); end.setDate(end.getDate() + 2);
+  let day = '';
+  $('#epgPreview').innerHTML = d.programmes.filter((p) => p.start < end.getTime()).map((p) => {
+    const dd = new Date(p.start).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' });
+    const head = dd !== day ? `<div class="day">${esc(dd)}</div>` : '';
+    day = dd;
+    return `${head}<div class="${p.start <= now && p.end > now ? 'now' : ''}"><span class="t">${hm(p.start)}–${hm(p.end)}</span>${esc(p.title)}${p.description ? ` <span class="muted">· ${esc(p.description)}</span>` : ''}</div>`;
+  }).join('') || (d.entry.source !== 'none' ? '<div class="muted">No programme today or tomorrow.</div>' : '');
+}
+async function openEpgEdit(id) {
+  EPG = await api(`/api/spi/epg/${encodeURIComponent(id)}`);
+  epgEditId = id;
+  renderEpgList();
+  renderEpgEdit();
+}
+document.querySelectorAll('[data-spitab]').forEach((b) => b.addEventListener('click', () => setSpiTab(b.dataset.spitab)));
+$('#epgBody')?.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-epg="edit"]');
+  if (b) openEpgEdit(b.dataset.id).catch((err) => { $('#spiStatus').textContent = err.message || String(err); });
+});
+$('#epgBack')?.addEventListener('click', async () => { epgEditId = null; await loadSpi().catch(() => {}); renderEpgList(); });
+$('#epgSource')?.addEventListener('change', epgSourceUi);
+$('#epgAddRow')?.addEventListener('click', () => {
+  const rows = readGrid();
+  const last = rows[rows.length - 1];
+  $('#epgGrid').insertAdjacentHTML('beforeend', gridRow(last ? { days: last.days, start: last.end, end: '', title: '', description: '' } : undefined));
+});
+$('#epgGrid')?.addEventListener('click', (e) => { if (e.target.closest('[data-epg="del-row"]')) e.target.closest('tr').remove(); });
+$('#epgCopyFrom')?.addEventListener('change', async (e) => {
+  const from = e.target.value;
+  if (!from) return;
+  try {
+    const d = await api(`/api/spi/epg/${encodeURIComponent(from)}`);
+    if (!readGrid().length || confirm('Replace the lines of this grid?')) $('#epgGrid').innerHTML = (d.entry.grid || []).map(gridRow).join('');
+  } catch (err) { $('#spiStatus').textContent = err.message || String(err); }
+  e.target.value = '';
+});
+$('#epgLoadCh')?.addEventListener('click', async () => {
+  const url = $('#epgUrl').value.trim();
+  if (!url) return;
+  const cur = $('#epgChannel').value;
+  $('#spiStatus').textContent = 'Reading the XMLTV file…';
+  try {
+    const r = await api('/api/spi/epg-channels', { method: 'POST', body: JSON.stringify({ url }) });
+    $('#epgChannel').innerHTML = '<option value="">—</option>' + r.channels.map((c) => `<option value="${esc(c.id)}" ${c.id === cur ? 'selected' : ''}>${esc(c.name)} (${esc(c.id)}) · ${c.programmes}</option>`).join('');
+    $('#spiStatus').textContent = `${r.channels.length} channels in this file`;
+  } catch (err) { $('#spiStatus').textContent = err.message || String(err); }
+});
+$('#epgSave')?.addEventListener('click', async () => {
+  if (!epgEditId) return;
+  const source = $('#epgSource').value;
+  const grid = readGrid();
+  if (source === 'grid') {
+    const bad = grid.findIndex((r) => !r.days.length || !r.start || !r.end || !r.title);
+    if (bad >= 0) { $('#spiStatus').textContent = `Line ${bad + 1}: days, start, end and title are required`; return; }
+  }
+  if (['xmltv', 'spixml'].includes(source) && !/^https?:\/\//i.test($('#epgUrl').value.trim())) { $('#spiStatus').textContent = 'Enter the address of the guide (http:// or https://), or choose the source None to remove it'; return; }
+  if (source === 'xmltv' && !$('#epgChannel').value) { $('#spiStatus').textContent = 'Choose the channel (Load the channels)'; return; }
+  $('#spiStatus').textContent = ['xmltv', 'spixml'].includes(source) ? 'Saving and fetching the guide…' : 'Saving…';
+  try {
+    EPG = await api(`/api/spi/epg/${encodeURIComponent(epgEditId)}`, { method: 'PUT', body: JSON.stringify({ source, grid, url: $('#epgUrl').value.trim(), channel: $('#epgChannel').value }) });
+    await loadSpi();
+    renderEpgEdit();
+    $('#spiStatus').textContent = `Saved · ${EPG.summary.count} programmes in the next 7 days`;
+  } catch (err) { $('#spiStatus').textContent = err.message || String(err); }
+});
+$('#epgFetch')?.addEventListener('click', async () => {
+  if (!epgEditId) return;
+  $('#spiStatus').textContent = 'Fetching the guide…';
+  try {
+    EPG = await api(`/api/spi/epg/${encodeURIComponent(epgEditId)}/fetch`, { method: 'POST' });
+    await loadSpi();
+    renderEpgEdit();
+    $('#spiStatus').textContent = EPG.summary.fetch?.ok ? `Fetched · ${EPG.summary.count} programmes` : `Fetch failed: ${EPG.summary.fetch?.error || ''}`;
+  } catch (err) { $('#spiStatus').textContent = err.message || String(err); }
+});
 $('#btnSpi')?.addEventListener('click', async () => {
   $('#spiStatus').textContent = '';
   try { await loadSpi(); } catch (e) { alert(e.message || String(e)); return; }
+  epgEditId = null;
+  setSpiTab(SPI_TAB);
   dlgSpi.showModal();
 });
 // settings banner: saved at once (nothing broadcast yet)
@@ -2837,6 +2982,9 @@ $('#spiBody')?.addEventListener('click', async (e) => {
   if (b.dataset.spi === 'gen') {
     const r = await spiAction(() => api('/api/spi/generate', { method: 'POST', body: JSON.stringify({ id }) }), 'Making the SPI logos…');
     if (r) $('#spiStatus').textContent = r.done.length ? `${id}: SPI logos made from its slideshow logo` : `${id}: no slideshow logo`;
+  } else if (b.dataset.spi === 'web') {
+    const url = prompt('Address of the logo (picture) or of the SI.xml of the station (RadioDNS):', SPI_WEB_LAST);
+    if (url && url.trim()) { SPI_WEB_LAST = url.trim(); spiImport(id, SPI_WEB_LAST); }
   } else if (b.dataset.spi === 'up') {
     spiUploadId = id;
     $('#spiFile').value = '';
@@ -2846,6 +2994,26 @@ $('#spiBody')?.addEventListener('click', async (e) => {
     if (r) $('#spiStatus').textContent = `${id}: SPI logos deleted`;
   }
 });
+// Logos from the web (picture or SI.xml). When the PI of the service is not in the SI.xml, the station is chosen in a list.
+let SPI_WEB_LAST = '';
+async function spiImport(id, url, pick = null) {
+  const name = id === 'ensemble' ? 'multiplex' : id;
+  const r = await spiAction(() => api(`/api/spi/${encodeURIComponent(id)}/import`, { method: 'POST', body: JSON.stringify({ url, ...(pick !== null ? { pick } : {}) }) }), 'Downloading the logos…');
+  if (!r) return;
+  if (r.choices) {
+    $('#spiStatus').innerHTML = `<div class="spi-pick"><b>${esc(name)}: its PI is not in this SI.xml</b> (${r.choices.length} stations in the file). Choose the station whose logos you want, or Cancel:
+      <div class="spi-pick-row"><select id="spiPick">${r.choices.map((c) => `<option value="${c.index}">${esc(c.name)}${c.bearers.length ? ` (${esc(c.bearers.join(', '))})` : ''}</option>`).join('')}</select>
+      <button type="button" class="btn btn-primary btn-sm" id="spiPickGo">Import</button> <button type="button" class="btn btn-sm" id="spiPickNo">Cancel</button></div></div>`;
+    $('#spiPickGo').addEventListener('click', () => spiImport(id, url, Number($('#spiPick').value)));
+    $('#spiPickNo').addEventListener('click', () => { $('#spiStatus').textContent = 'Nothing imported'; });
+    $('#spiStatus').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    $('#spiPick').focus();
+    return;
+  }
+  $('#spiStatus').textContent = r.from === 'si'
+    ? `${name}: logos of ${r.service}${r.exact.length ? ` — station's own ${r.exact.join(', ')}` : ''}${r.exact.length < 4 ? `${r.exact.length ? ', others' : ''} made from its biggest logo` : ''}`
+    : `${name}: SPI logos made from the picture`;
+}
 $('#spiFile')?.addEventListener('change', () => {
   const file = $('#spiFile').files?.[0];
   if (!file || !spiUploadId) return;
@@ -2904,7 +3072,7 @@ function suggestLufsGain(cur, m, target) {
 function setLvMode(mode) {
   LV_MODE = mode;
   try { localStorage.setItem('dabcast.levelMode', mode); } catch { /* ignore */ }
-  document.querySelectorAll('.lv-tab').forEach((b) => b.classList.toggle('active', b.dataset.lvmode === mode));
+  document.querySelectorAll('[data-lvmode]').forEach((b) => b.classList.toggle('active', b.dataset.lvmode === mode));
   $('#lvPeaks').hidden = mode !== 'peaks';
   $('#lvLufs').hidden = mode !== 'lufs';
   clearInterval(LOUD_TIMER); LOUD_TIMER = 0;
@@ -2991,7 +3159,7 @@ function renderLoudness() {
   box.innerHTML = `<table class="lv-table"><thead><tr><th>Service</th><th class="num">LUFS</th><th class="num">True peak</th><th class="num" title="Loudness range: how much the level varies (dynamics)">LRA</th><th class="num">Gain</th><th>Suggestion</th><th></th></tr></thead><tbody>${rows}</tbody></table>`;
   $('#lufsApplyAll').disabled = !_lufsSuggestions.length;
 }
-document.querySelectorAll('.lv-tab').forEach((b) => b.addEventListener('click', () => setLvMode(b.dataset.lvmode)));
+document.querySelectorAll('[data-lvmode]').forEach((b) => b.addEventListener('click', () => setLvMode(b.dataset.lvmode)));
 dlgLevels?.addEventListener('close', () => { clearInterval(LOUD_TIMER); LOUD_TIMER = 0; });
 $('#btnLevels')?.addEventListener('click', () => setLvMode(LV_MODE));
 $('#statsRow')?.addEventListener('click', (e) => { if (e.target.closest('[data-act="levels"]')) setLvMode(LV_MODE); });
