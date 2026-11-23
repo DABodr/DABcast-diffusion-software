@@ -22,7 +22,8 @@ import { AppState } from './appState.js';
 import { queryDabmux, normalizeValues } from './odr/dabmuxStats.js';
 import { convertToSlide as convertSlideImage, removeBlackBands, imageCoder } from './slideImage.js';
 import { detectJsonKeys } from './utils/jsonKeys.js';
-import { SPI_SIZES, normalizeSpiSettings, spiLogosDir, spiSid, isSpiFileName, spiSourceLogo, makeSpiLogos, spiLogoInfo, deleteSpiLogos, buildSpiCarousel, spiGeneratorStatus, SPI_ENSEMBLE } from './spi.js';
+import { SPI_SIZES, normalizeSpiSettings, spiLogosDir, spiSid, isSpiFileName, spiSourceLogo, makeSpiLogos, spiLogoInfo, deleteSpiLogos, buildSpiCarousel, spiGeneratorStatus, SPI_ENSEMBLE, importSpiLogos } from './spi.js';
+import { EPG_SOURCES, loadEpgConfig, saveEpgEntry, readEpgCache, refreshEpgCache, epgProgrammes, xmltvChannels } from './spiEpg.js';
 import { estimateCU } from './cu.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
 import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy, sdrDeviceString } from './odr/outputs.js';
@@ -1878,6 +1879,7 @@ function refreshSpiCarousel(reason) {
 const spiDir = () => spiLogosDir(dataDir);
 const spiServices = () => [...(state.preset?.services || [])].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
 app.get('/api/spi', (req, res) => {
+  const epgCfg = loadEpgConfig(dataDir);
   res.json({
     settings: spiState(),
     generator: spiGeneratorStatus(),
@@ -1889,7 +1891,7 @@ app.get('/api/spi', (req, res) => {
     services: spiServices().map((svc) => {
       const sid = spiSid(svc);
       return { id: svc.id, sid, ps8: svc.identity?.ps8 || '', enabled: svc.enabled !== false,
-        hasSource: Boolean(spiSourceLogo(state._resolveMotDir(svc))), logos: spiLogoInfo(spiDir(), sid) };
+        hasSource: Boolean(spiSourceLogo(state._resolveMotDir(svc))), logos: spiLogoInfo(spiDir(), sid), epg: epgSummary(svc, epgCfg[svc.id]) };
     }),
   });
 });
@@ -1963,6 +1965,24 @@ app.post('/api/spi/:id/upload', (req, res) => {
     try { fs.unlinkSync(tmp); } catch { /* ignore */ }
   }
 });
+// Logos from the web: a picture URL, or the SI.xml of the station (its own DAB sizes, matched by PI;
+// pick = index of the SI.xml service when the PI is not in the file → the page shows the list)
+app.post('/api/spi/:id/import', async (req, res) => {
+  const svc = spiTarget(String(req.params.id));
+  if (!svc) return res.status(404).json({ error: 'Service not found' });
+  const url = String(req.body?.url || '').trim();
+  if (!url) return res.status(400).json({ error: 'URL required' });
+  const pick = Number.isInteger(req.body?.pick) ? req.body.pick : null;
+  try {
+    const r = await importSpiLogos(url, spiDir(), svc.sid, { pick });
+    if (r.choices) return res.json(r);
+    logger.line('spi', `${svc.id}: SPI logos from ${r.from === 'si' ? `the SI.xml (${r.service}${r.exact.length ? `, station sizes ${r.exact.join(' ')}` : ''})` : 'a picture'}: ${url}`);
+    refreshSpiCarousel('logos from the web');
+    res.json(r);
+  } catch (e) {
+    res.status(400).json({ error: `Not imported: ${e.message || e}` });
+  }
+});
 app.delete('/api/spi/:id', (req, res) => {
   const svc = spiTarget(String(req.params.id));
   if (!svc) return res.status(404).json({ error: 'Service not found' });
@@ -1970,6 +1990,80 @@ app.delete('/api/spi/:id', (req, res) => {
   refreshSpiCarousel('logo deleted');
   res.json({ ok: true });
 });
+
+// ── SPI programme guide (EPG): source per service (data/spi/epg.json), fetched guides cached in data/spi/epg/ ──
+const epgSummary = (svc, entry, now = Date.now()) => {
+  const sid = spiSid(svc);
+  const list = entry ? epgProgrammes(dataDir, sid, entry, now) : [];
+  const cur = list.find((p) => p.start <= now && p.end > now);
+  const next = list.find((p) => p.start > now);
+  const c = entry && ['xmltv', 'spixml'].includes(entry.source) ? readEpgCache(dataDir, sid) : null;
+  return { source: entry?.source || 'none', count: list.length, now: cur ? { title: cur.title, start: cur.start, end: cur.end } : null,
+    next: next ? { title: next.title, start: next.start, end: next.end } : null,
+    fetch: c ? { at: c.at, ok: c.ok, error: c.error || null } : null };
+};
+const epgDetail = (svc) => {
+  const entry = loadEpgConfig(dataDir)[svc.id] || { source: 'none', grid: [], url: '', channel: '' };
+  const now = Date.now();
+  const list = epgProgrammes(dataDir, spiSid(svc), entry, now);
+  return { id: svc.id, entry, summary: epgSummary(svc, entry, now), programmes: list.slice(0, 400) };
+};
+let epgRefreshing = false;
+async function refreshEpgSources(reason, onlyId = null) {
+  if (epgRefreshing && !onlyId) return;
+  if (!onlyId) epgRefreshing = true;
+  try {
+    const cfg = loadEpgConfig(dataDir);
+    let changed = 0;
+    for (const svc of spiServices()) {
+      const e = cfg[svc.id];
+      if (!e || !['xmltv', 'spixml'].includes(e.source) || (onlyId && svc.id !== onlyId)) continue;
+      const r = await refreshEpgCache(dataDir, spiSid(svc), e);
+      if (r.ok) { changed++; logger.line('spi', `${svc.id}: programme guide fetched (${reason}): ${r.programmes.length} programmes`); }
+      else logger.line('spi', `${svc.id}: programme guide not fetched (${reason}): ${r.error}${r.programmes.length ? ` — previous guide kept (${r.programmes.length})` : ''}`, 'WARN');
+    }
+    if (changed && !onlyId) refreshSpiCarousel(`programme guide ${reason}`);   // one service: the route rebuilds it
+  } finally { if (!onlyId) epgRefreshing = false; }
+}
+app.get('/api/spi/epg/:id', (req, res) => {
+  const svc = spiServices().find((s) => s.id === String(req.params.id));
+  if (!svc) return res.status(404).json({ error: 'Service not found' });
+  res.json({ ...epgDetail(svc), sources: EPG_SOURCES });
+});
+app.put('/api/spi/epg/:id', async (req, res) => {
+  const svc = spiServices().find((s) => s.id === String(req.params.id));
+  if (!svc) return res.status(404).json({ error: 'Service not found' });
+  const before = loadEpgConfig(dataDir)[svc.id];
+  const entry = saveEpgEntry(dataDir, svc.id, req.body || {});
+  logger.line('spi', `${svc.id}: programme guide source ${entry.source}${entry.source === 'grid' ? ` (${entry.grid.length} lines)` : entry.url ? ` ${entry.url}${entry.channel ? ` [${entry.channel}]` : ''}` : ''}`);
+  const moved = ['xmltv', 'spixml'].includes(entry.source) && (!before || before.source !== entry.source || before.url !== entry.url || before.channel !== entry.channel);
+  if (moved) await refreshEpgSources('source changed', svc.id);
+  refreshSpiCarousel('programme guide');
+  res.json({ ...epgDetail(svc), sources: EPG_SOURCES });
+});
+app.post('/api/spi/epg/:id/fetch', async (req, res) => {
+  const svc = spiServices().find((s) => s.id === String(req.params.id));
+  if (!svc) return res.status(404).json({ error: 'Service not found' });
+  await refreshEpgSources('on request', svc.id);
+  refreshSpiCarousel('programme guide');
+  res.json({ ...epgDetail(svc), sources: EPG_SOURCES });
+});
+// Channels of an XMLTV file (read-only), for the channel list of the page
+app.post('/api/spi/epg-channels', async (req, res) => {
+  try { res.json({ channels: await xmltvChannels(String(req.body?.url || '').trim()) }); } catch (e) {
+    res.status(400).json({ error: `XMLTV not read: ${e.message || e}` });
+  }
+});
+// Fetched guides every 6 h (first 30 s after start-up), carousel rebuilt at local midnight (day window moves)
+let epgDay = new Date().toDateString();
+setTimeout(() => refreshEpgSources('start-up').catch(() => {}), 30000).unref?.();
+setInterval(() => refreshEpgSources('every 6 h').catch(() => {}), 6 * 3600000).unref?.();
+setInterval(() => {
+  const d = new Date().toDateString();
+  if (d === epgDay) return;
+  epgDay = d;
+  if (Object.keys(loadEpgConfig(dataDir)).length) refreshSpiCarousel('new day (programme guide)');
+}, 60000).unref?.();
 
 app.get('/api/mot/:svcId/logo', (req, res) => {
   try {

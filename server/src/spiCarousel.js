@@ -62,6 +62,36 @@ export function encodeServiceInformation({ ecc, eid, label, shortlabel, logos = 
   return element(0x03, [attr(0x82, str(originator)), element(0x06, [str('en')]), element(0x26, ens)]);
 }
 
+// ── Programme Information (EPG) document (TS 102 371): one per service and per day ──
+const MJD_EPOCH = Date.UTC(1858, 10, 17);
+const num = (v, bytes) => { const b = Buffer.alloc(bytes); for (let i = bytes - 1; i >= 0; i--) { b[i] = v % 256; v = Math.floor(v / 256); } return b; };
+// time point, always in UTC (LTO flag 0): receivers show it in local time with the ensemble's offset
+function timepoint(ms) {
+  const d = new Date(ms);
+  const mjd = Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - MJD_EPOCH) / 86400000);
+  const b = new Bits().put(0, 1).put(mjd, 17).put(0, 1).put(0, 1);
+  if (d.getUTCSeconds() > 0) b.put(1, 1).put(d.getUTCHours(), 5).put(d.getUTCMinutes(), 6).put(d.getUTCSeconds(), 6).put(0, 10);
+  else b.put(0, 1).put(d.getUTCHours(), 5).put(d.getUTCMinutes(), 6);
+  return b.bytes();
+}
+const longName = (t) => element(0x12, [cdata(t)]);
+// { ecc, eid, sid, created, start, end, programmes: [{ crid, shortId, start, end, title, short?, medium?, description? }] } (times in ms)
+export function encodeProgrammeInformation({ ecc, eid, sid, created, start, end, programmes, originator = 'DABcast' }) {
+  const bearer = dabBearer(ecc, eid, sid);
+  const progs = programmes.map((p) => element(0x1c, [
+    attr(0x81, num(p.shortId, 3)), attr(0x80, str(p.crid)), attr(0x82, num(1, 2)),
+    shortName(String(p.short || p.title).slice(0, 8)), mediumName(String(p.medium || p.title).slice(0, 16)), longName(String(p.title).slice(0, 128)),
+    ...(p.description ? [element(0x13, [element(0x1a, [cdata(String(p.description).slice(0, 180))])])] : []),
+    element(0x19, [element(0x2c, [attr(0x80, timepoint(p.start)), attr(0x81, num(Math.min(65535, Math.round((p.end - p.start) / 1000)), 2))])]),
+  ]));
+  return element(0x02, [
+    element(0x06, [attr(0x80, str('en'))]),
+    element(0x21, [attr(0x81, timepoint(created)), attr(0x82, str(originator)),
+      element(0x24, [attr(0x80, timepoint(start)), attr(0x81, timepoint(end)), element(0x25, [attr(0x80, bearer)])]),
+      ...progs]),
+  ]);
+}
+
 // ── MOT (EN 301 234) ──
 export const CONTENT_PNG = [2, 3];
 export const CONTENT_SPI_SI = [7, 0];
@@ -75,6 +105,19 @@ function headerParam(id, data) {
 }
 const contentName = (name) => headerParam(12, Buffer.concat([Buffer.from([0x00]), str(name)]));   // EBU Latin (charset 0, the DAB default; names are digits)
 const scopeId = (ecc, eid) => headerParam(0x27, Buffer.from([ecc & 0xff, (eid >> 8) & 0xff, eid & 0xff]));
+// MOT absolute time (UTC): validity flag, MJD, UTC short / long form
+function motTime(ms) {
+  const d = new Date(ms);
+  const mjd = Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - MJD_EPOCH) / 86400000);
+  const b = new Bits().put(1, 1).put(mjd, 17).put(0, 2);
+  if (d.getUTCSeconds() > 0) b.put(1, 1).put(d.getUTCHours(), 5).put(d.getUTCMinutes(), 6).put(d.getUTCSeconds(), 6).put(d.getUTCMilliseconds(), 10);
+  else b.put(0, 1).put(d.getUTCHours(), 5).put(d.getUTCMinutes(), 6);
+  return b.bytes();
+}
+const scopeStart = (ms) => headerParam(0x25, motTime(ms));
+const scopeEnd = (ms) => headerParam(0x26, motTime(ms));
+const serviceScopeId = (ecc, eid, sid) => headerParam(0x27, dabBearer(ecc, eid, sid));
+export const CONTENT_SPI_PI = [7, 1];
 
 // MSB-first bit writer for the fields that are not byte aligned
 class Bits {
@@ -173,7 +216,7 @@ export function encodePackets(groups, { address = 1, size = 48, loop = false } =
 
 // Whole carousel: SI (object "0", scope = the ensemble) then the logos ("1", "2"… referred to by the SI):
 // the multiplex logos first (cfg.logos, optional), then those of the services
-// cfg: { ecc, eid, label, shortlabel, address, packetSize, logos?, services: [{ sid, label, shortlabel, logos: [{ body, width, height }] }] }
+// cfg: { ecc, eid, label, shortlabel, address, packetSize, logos?, schedules? (see encodeProgrammeInformation), services: [{ sid, label, shortlabel, logos: [{ body, width, height }] }] }
 // loop (default true): packet count multiple of 4, for a file read in loop (see encodePackets)
 export function encodeSpiCarousel(cfg, { nextTid, loop = true } = {}) {
   const objects = [];
@@ -185,7 +228,15 @@ export function encodeSpiCarousel(cfg, { nextTid, loop = true } = {}) {
   const logos = (cfg.logos || []).map(ref);
   const services = cfg.services.map((s) => ({ ...s, logos: s.logos.map(ref) }));
   const si = encodeServiceInformation({ ...cfg, logos, services });
+  // programme guide: one PI document per service and per day, after the logos
+  let piBytes = 0;
+  for (const sc of cfg.schedules || []) {
+    const body = encodeProgrammeInformation({ ecc: cfg.ecc, eid: cfg.eid, ...sc });
+    piBytes += body.length;
+    objects.push({ name: (objects.length + 1).toString(16), body, type: CONTENT_SPI_PI,
+      params: [scopeStart(sc.start), scopeEnd(sc.end), serviceScopeId(cfg.ecc, cfg.eid, sc.sid)] });
+  }
   objects.unshift({ name: '0', body: si, type: CONTENT_SPI_SI, params: [scopeId(cfg.ecc, cfg.eid)] });
   const groups = encodeDirectoryMode(objects, nextTid);
-  return { data: encodePackets(groups, { address: cfg.address, size: cfg.packetSize, loop }), siBytes: si.length, objects: objects.length };
+  return { data: encodePackets(groups, { address: cfg.address, size: cfg.packetSize, loop }), siBytes: si.length, piBytes, objects: objects.length };
 }

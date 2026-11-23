@@ -97,6 +97,60 @@ describe('SPI carousel encoder (Node)', () => {
     assert.equal(encodeSpiCarousel({ ...cfg, logos: [{ body: png(50), width: 32, height: 32 }] }, { nextTid: fixedTid }).objects, 7);
   });
 
+  it('programme guide (EPG) identical to the Python ODR SPI libraries, byte for byte', { skip: python ? false : 'python SPI libraries not installed' }, () => {
+    const t = (x) => Date.parse(x);
+    const c = { ecc: 0xe1, eid: 0xffff, label: 'DABcast Demo', shortlabel: 'DABcast', address: 1, packetSize: 48,
+      services: [{ sid: 0xf9a3, label: 'Fréquence 3 Gold', shortlabel: 'F3 Gold', logos: [{ body: Buffer.alloc(300, 7), width: 32, height: 32 }] }],
+      schedules: [{ sid: 0xf9a3, created: t('2026-11-23T08:00:00Z'), start: t('2026-11-22T23:00:00Z'), end: t('2026-11-23T23:00:00Z'), programmes: [
+        { crid: 'crid://dabcast/f9a3/202611230500', shortId: 123456, start: t('2026-11-23T05:00:00Z'), end: t('2026-11-23T08:00:00Z'), title: 'Le Réveil de la Gold', description: 'Les tubes du matin' },
+        { crid: 'crid://dabcast/f9a3/202611231130', shortId: 99, start: t('2026-11-23T11:30:30Z'), end: t('2026-11-23T13:00:00Z'), title: 'Midi' }] }] };
+    const ref = String.raw`
+import json, sys, datetime
+import mot, msc.datagroups
+mot.generate_transport_id = lambda name=None: int(getattr(name, 'name', name), 16) + 100
+msc.datagroups.generate_transport_id = lambda name=None: 999
+from spi import *
+from spi import binary
+from mot import MotObject, ContentType, ContentName
+from mot.epg import EpgContentType, ScopeId, ScopeStart, ScopeEnd
+from msc.datagroups import encode_directorymode
+from msc.packets import encode_packets
+c = json.load(sys.stdin)
+U = datetime.timezone.utc
+T = lambda ms: datetime.datetime.fromtimestamp(ms / 1000, U)
+EB = ContentName.EBU_LATIN
+objects = []
+info = ServiceInfo(created=None, originator='DABcast')
+for s in c['services']:
+    svc = Service(); svc.names = [MediumName(s['label']), ShortName(s['shortlabel'])]
+    svc.bearers = [DabBearer(c['ecc'], c['eid'], s['sid'], 0)]; svc.media = []
+    for lg in s['logos']:
+        name = '%x' % (len(objects) + 1)
+        objects.append(MotObject(ContentName(name, EB), bytes(lg['body']), ContentType.IMAGE_PNG))
+        svc.media.append(Multimedia(url=name, type=Multimedia.LOGO_COLOUR_SQUARE, width=32, height=32, content='image/png'))
+    info.services.append(svc)
+for sc in c['schedules']:
+    sched = Schedule(Scope(T(sc['start']), T(sc['end']), bearers=[DabBearer(c['ecc'], c['eid'], sc['sid'], 0)]), created=T(sc['created']), originator='DABcast')
+    for p in sc['programmes']:
+        pr = Programme(p['crid'], p['shortId'])
+        pr.names = [ShortName(p['title'][:8]), MediumName(p['title'][:16]), LongName(p['title'][:128])]
+        if p.get('description'): pr.descriptions = [ShortDescription(p['description'])]
+        pr.locations = [Location(times=[Time(T(p['start']), datetime.timedelta(seconds=(p['end'] - p['start']) // 1000))])]
+        sched.programmes.append(pr)
+    pi = ProgrammeInfo(); pi.schedules = [sched]
+    o = MotObject(ContentName('%x' % (len(objects) + 1), EB), binary.marshall(pi).tobytes(), EpgContentType.PROGRAMME_INFORMATION)
+    o.add_parameter(ScopeStart(T(sc['start']))); o.add_parameter(ScopeEnd(T(sc['end']))); o.add_parameter(ScopeId(c['ecc'], c['eid'], sc['sid'], 0))
+    objects.append(o)
+si = binary.marshall(info, ensemble=binary.Ensemble(c['ecc'], c['eid'], names=[MediumName(c['label']), ShortName(c['shortlabel'])])).tobytes()
+o = MotObject(ContentName('0', EB), si, EpgContentType.SERVICE_INFORMATION); o.add_parameter(ScopeId(c['ecc'], c['eid'])); objects.insert(0, o)
+for p in encode_packets(encode_directorymode(objects, directory_parameters=[]), address=1, size=48): sys.stdout.buffer.write(p.tobytes())
+`;
+    const input = JSON.stringify({ ...c, services: c.services.map((x) => ({ ...x, logos: x.logos.map((l) => ({ ...l, body: [...l.body] })) })) });
+    const expected = execFileSync('python3', ['-c', ref], { input, maxBuffer: 1 << 26 });
+    const { data } = encodeSpiCarousel(c, { nextTid: fixedTid, loop: false });
+    assert.ok(data.equals(expected), `first difference at byte ${data.findIndex((b, i) => b !== expected[i])}`);
+  });
+
   for (const withEns of [false, true]) it(`identical to the Python ODR SPI libraries, byte for byte${withEns ? ' (multiplex logos)' : ''}`, { skip: python ? false : 'python SPI libraries not installed' }, () => {
     const cfg2 = withEns ? { ...cfg, logos: [{ body: png(700), width: 128, height: 128 }, { body: png(80), width: 32, height: 32 }] } : cfg;
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-spiref-'));

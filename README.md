@@ -304,12 +304,17 @@ One or several transmitters fed at once by the same multiplex (**Multiplex & mod
   drives the device itself through SoapySDR; *Check device* lists it (`SoapySDRUtil --find`)
 - ✅ Connection state of every output; a raw ETI copy (port 9901) is always kept for the Player / Dablin
 
-### SPI service logos
+### SPI service logos and programme guide (EPG)
 
-- ✅ **SPI page** (button *SPI*): every service gets its logo in the 4 sizes of ETSI TS 102 818 for
+- ✅ **SPI/EPG page** (button *SPI/EPG*): every service gets its logo in the 4 sizes of ETSI TS 102 818 for
   broadcast delivery (PNG 32×32, 112×32, 128×128, 320×240), made from its slideshow logo (never a
   track cover) or from an uploaded picture, centred on the colour of its own edges; optional multiplex
-  (ensemble) logo in the *MUX* row (upload)
+  (ensemble) logo in the *MUX* row (upload); *From web…*: a picture URL, or the station's SI.xml (RadioDNS),
+  matched by PI, its own logos in the DAB sizes
+- ✅ **Programme guide (EPG)**: per service a weekly grid typed in the page, an XMLTV file or the station's
+  SPI / RadioDNS programme information on the web (fetched every 6 h, last good guide kept); today + 6 days
+  encoded in the carousel (TS 102 371, byte-identical to the ODR Python libraries), rebuilt at midnight and
+  picked up by odr-dabmux at the next turn of the carousel, without interrupting the broadcast
 - ✅ **SPI data service**: when activated, DABcast encodes the service information and the logos of the
   services ON (MOT directory mode, packet mode, built in, no external tool) and adds a packet sub-channel
   with `userapp "spi"` to the multiplex at the next Start; bit rate 8–32 kbps (EEP-A), CU checked,

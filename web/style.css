@@ -401,6 +401,42 @@ label.spi-check { flex-direction: row; align-items: center; gap: 6px; color: var
 .spi-320x240 { width: 107px; height: 80px; } .spi-128x128 { width: 64px; height: 64px; } .spi-112x32 { width: 112px; height: 32px; } .spi-32x32 { width: 32px; height: 32px; }
 .spi-act { white-space: nowrap; text-align: right; }
 .spi-act .btn { margin-left: 4px; }
+.spi-tabs { margin: 4px 0 10px; }
+.spi-pick { color: var(--text); background: rgba(241,196,15,.10); border: 1px solid var(--yellow); border-radius: 8px; padding: 10px 12px; font-size: 13px; }
+.spi-pick-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.spi-pick-row select { max-width: 100%; flex: 1 1 260px; }
+.epg-edit { display: flex; flex-direction: column; gap: 10px; color: var(--text); }
+.epg-head b { font-size: 15px; padding-bottom: 7px; }
+.epg-head, .epg-tools { display: flex; flex-wrap: wrap; align-items: end; gap: 10px 14px; font-size: 13px; }
+.epg-head label, .epg-tools label, .epg-web label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 13px; }
+.epg-head .spacer { flex: 1; }
+.epg-web input[type=url] { width: 100%; }
+.epg-gridwrap { max-height: 40vh; }
+.epg-grid input[type=text] { width: 100%; min-width: 120px; }
+.epg-grid input[type=time] { width: 96px; }
+.epg-days { display: flex; gap: 2px; }
+.epg-days label { display: flex; flex-direction: column; align-items: center; font-size: 10.5px; color: var(--muted); gap: 1px; }
+.epg-preview { font-size: 12.5px; max-height: 30vh; overflow: auto; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; }
+.epg-preview:empty { display: none; }
+.epg-preview .day { font-weight: 700; margin: 6px 0 2px; color: var(--muted); }
+.epg-preview .now { color: var(--green); font-weight: 600; }
+.epg-preview .t, .spi-table .t { font-family: var(--font-mono); color: var(--muted); margin-right: 8px; }
+.epg-edit[hidden], .epg-tools[hidden], .epg-head[hidden], #spiEpg [hidden] { display: none !important; }
+@media (max-width: 640px) {
+  /* list: the title of the programme on air wraps on a readable width, "Next" left to the edit page */
+  #epgList th:nth-child(4), #epgList td:nth-child(4) { display: none; }
+  #epgList td:nth-child(3) { min-width: 140px; }
+  /* weekly grid: one card per line instead of a wide table */
+  .epg-grid thead { display: none; }
+  .epg-grid tr { display: grid; grid-template-columns: 1fr 1fr auto; gap: 6px 8px; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  .epg-grid td { border: 0; padding: 0; }
+  .epg-grid td:nth-child(1) { grid-column: 1 / 3; }
+  .epg-grid td:nth-child(6) { grid-column: 3; grid-row: 1; }
+  .epg-grid td:nth-child(4), .epg-grid td:nth-child(5) { grid-column: 1 / -1; }
+  .epg-grid input[type=time] { width: 100%; }
+  .epg-grid input[type=text] { min-width: 0; }
+  .epg-gridwrap { max-height: none; overflow: visible; }
+}
 .lv-bar { display: flex; align-items: end; gap: 12px; flex-wrap: wrap; margin: 14px 0 10px; font-size: 13px; }
 .lv-bar label { display: flex; flex-direction: column; gap: 4px; }
 .lv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
