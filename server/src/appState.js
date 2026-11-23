@@ -1467,15 +1467,26 @@ export class AppState {
                 this._logMeta(svc, 'sls', `download cover${dlsChanged ? ' (new track)' : ''}`, 'DEBUG');
                 const tmpPath = path.resolve(slideDir, 'cover_tmp');
                 const ok = await this._downloadImage(coverUrl, tmpPath);
+                let converted = false;
                 if (ok) {
                   const coverDest = path.resolve(slideDir, 'cover.jpg');
-                  const converted = this._convertToSlide(tmpPath, coverDest);
+                  converted = this._convertToSlide(tmpPath, coverDest);
                   this._logMeta(svc, 'img', converted ? 'resize OK' : 'resize FAIL', converted ? undefined : 'WARN');
                 } else {
                   this._logMeta(svc, 'err', 'cover download failed', 'WARN');
                 }
                 try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
-                rt.currentSlsUrl = coverUrl;
+                if (converted) {
+                  rt.currentSlsUrl = coverUrl;
+                  rt.coverFailUrl = null;
+                } else {
+                  // the previous track's cover must not stay with the new title: logo back until a download
+                  // works; retried at the next ticks, given up after 3 tries for the same address
+                  try { fs.unlinkSync(path.resolve(slideDir, 'cover.jpg')); } catch { /* none */ }
+                  rt.coverFailCount = rt.coverFailUrl === coverUrl ? (rt.coverFailCount || 0) + 1 : 1;
+                  rt.coverFailUrl = coverUrl;
+                  if (rt.coverFailCount >= 3) rt.currentSlsUrl = coverUrl;
+                }
               }
             }
           } catch (err) {
@@ -1491,9 +1502,7 @@ export class AppState {
           try { fs.unlinkSync(coverPath); } catch { /* ignore */ }
           this._logMeta(svc, 'cleanup', 'removed stale cover.jpg (no cover from JSON)');
         }
-        if (rt.currentSlsUrl) {
-          rt.currentSlsUrl = null;
-        }
+        rt.currentSlsUrl = null;   // also when a failed download never set it ('' before)
       }
       if (!dlsValue && defaultDlsAllowed) {
         dlsValue = svc.metadata?.defaultDls || '';

@@ -229,7 +229,8 @@ export async function refreshEpgCache(dataDir, sid, entry, opts = {}) {
 // Programmes of one service from now on, by source (grid typed, or the cached guide)
 export function epgProgrammes(dataDir, sid, entry, now = Date.now()) {
   const e = normalizeEpgEntry(entry);
-  if (e.source === 'grid') return expandGrid(e.grid, now);
+  // from yesterday: a show of the evening before that ends after midnight (22:00–02:00) is still on air
+  if (e.source === 'grid') return expandGrid(e.grid, addDays(localDayStart(now), -1), EPG_DAYS + 1).filter((p) => p.end > localDayStart(now));
   if (e.source === 'xmltv' || e.source === 'spixml') {
     const c = readEpgCache(dataDir, sid);
     if (!c || c.source !== e.source || c.url !== e.url || c.channel !== e.channel) return [];
@@ -250,7 +251,8 @@ export function epgSchedules(sidHex, programmes, now = Date.now()) {
   const out = [];
   for (let i = 0; i < EPG_DAYS; i++) {
     const start = addDays(first, i), end = addDays(first, i + 1);
-    const list = programmes.filter((p) => p.start >= start && p.start < end).slice(0, MAX_PER_DAY).map((p) => {
+    // today also carries the show started yesterday that is still on air after midnight
+    const list = programmes.filter((p) => (p.start >= start && p.start < end) || (i === 0 && p.start < start && p.end > start)).slice(0, MAX_PER_DAY).map((p) => {
       const crid = `crid://dabcast/${sidHex}/${stamp(p.start)}`;
       return { crid, shortId: shortId(crid), start: p.start, end: p.end, title: p.title, description: p.description, short: p.short, medium: p.medium };
     });

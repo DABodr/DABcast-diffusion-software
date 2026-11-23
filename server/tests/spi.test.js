@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { SPI_SIZES, normalizeSpiSettings, spiSid, spiFileName, isSpiFileName, spiSourceLogo, makeSpiLogos, spiLogoInfo, deleteSpiLogos, parseSiXml, siServiceHasPi, importSpiLogos, exportSpiBundle, importSpiBundle, spiLogosDir, saveSpiWebUrl, loadSpiWebUrls } from '../src/spi.js';
+import { SPI_SIZES, normalizeSpiSettings, spiSid, spiFileName, isSpiFileName, spiSourceLogo, makeSpiLogos, spiLogoInfo, deleteSpiLogos, parseSiXml, siServiceHasPi, importSpiLogos, exportSpiBundle, importSpiBundle, spiLogosDir, saveSpiWebUrl, loadSpiWebUrls, renameSpiService, buildSpiCarousel } from '../src/spi.js';
 import { saveEpgEntry, loadEpgConfig } from '../src/spiEpg.js';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-spi-'));
@@ -170,6 +170,30 @@ describe('SPI / EPG in the configuration and service files', () => {
     assert.equal(loadEpgConfig(dir).E001.grid[0].title, 'Matin', 'guide source under the new id');
     assert.equal(importSpiBundle(dir, b, [], { ensemble: true }).logos, 1, 'multiplex logo with ensemble: true');
     assert.equal(loadSpiWebUrls(dir).ensemble, 'https://mux.example/logo.png');
+  });
+});
+
+describe('SPI data of a service whose PI changes, empty carousel', () => {
+  it('logos, guide source and web address follow the new PI', () => {
+    const dir = tmp();
+    fs.mkdirSync(spiLogosDir(dir), { recursive: true });
+    for (const [w, h] of SPI_SIZES) fs.writeFileSync(path.join(spiLogosDir(dir), spiFileName('f9a3', w, h)), 'png');
+    saveEpgEntry(dir, 'F9A3', { source: 'grid', grid: [{ days: [1], start: '06:00', end: '09:00', title: 'Matin' }] });
+    saveSpiWebUrl(dir, 'F9A3', 'https://st.example/SI.xml');
+    assert.ok(renameSpiService(dir, { id: 'F9A3', sid: 'f9a3' }, { id: 'F9A4', sid: 'f9a4' }) >= 6);
+    assert.deepEqual(fs.readdirSync(spiLogosDir(dir)).sort(), SPI_SIZES.map(([w, h]) => spiFileName('f9a4', w, h)).sort());
+    assert.equal(loadEpgConfig(dir).F9A4.grid[0].title, 'Matin');
+    assert.equal(loadEpgConfig(dir).F9A3, undefined);
+    assert.deepEqual(loadSpiWebUrls(dir), { F9A4: 'https://st.example/SI.xml' });
+  });
+
+  it('nothing left: refused at activation, ensemble-only carousel otherwise (the removed content leaves the air)', () => {
+    const dir = tmp();
+    const args = { dataDir: dir, settings: { spi: { enabled: true, bitrate: 16 }, ensemble: { eccHex: '0xE1', idHex: '0xFFFF', label: 'Mux', shortlabel: 'Mux' } }, services: [{ id: 'F9A3', identity: { pi: '0xF9A3' } }] };
+    assert.equal(buildSpiCarousel(args).ok, false);
+    const r = buildSpiCarousel({ ...args, allowEmpty: true });
+    assert.ok(r.ok);
+    assert.deepEqual([r.stats.logos, r.stats.epgDocs], [0, 0]);
   });
 });
 

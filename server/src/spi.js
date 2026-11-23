@@ -10,7 +10,7 @@ import { execFileSync } from 'node:child_process';
 import { imageCoder, parsePpm } from './slideImage.js';
 import { encodeSpiCarousel } from './spiCarousel.js';
 import { writeJson } from './fsutil.js';
-import { loadEpgConfig, epgProgrammes, epgSchedules, parseXml, fetchBuffer, saveEpgEntry } from './spiEpg.js';
+import { loadEpgConfig, epgProgrammes, epgSchedules, parseXml, fetchBuffer, saveEpgEntry, epgConfigFile, epgCacheFile } from './spiEpg.js';
 
 export const SPI_SIZES = [[320, 240], [128, 128], [112, 32], [32, 32]];
 export const SPI_BITRATES = [8, 16, 24, 32];
@@ -206,6 +206,21 @@ export function saveSpiWebUrl(dataDir, id, url) {
   writeJson(spiWebFile(dataDir), { ...loadSpiWebUrls(dataDir), [id]: url });
 }
 
+// A service whose PI changed (its id follows the PI): its SPI logos, guide source, cached guide and From web…
+// address move to the new id / SId (they stayed under the old one). Existing data of the new id is kept.
+export function renameSpiService(dataDir, from, to) {
+  if (!from?.id || !to?.id || (from.id === to.id && from.sid === to.sid)) return 0;
+  let moved = 0;
+  const mv = (a, b) => { try { if (fs.existsSync(a) && !fs.existsSync(b)) { fs.renameSync(a, b); moved++; } } catch { /* kept */ } };
+  for (const [w, h] of SPI_SIZES) mv(path.join(spiLogosDir(dataDir), spiFileName(from.sid, w, h)), path.join(spiLogosDir(dataDir), spiFileName(to.sid, w, h)));
+  mv(epgCacheFile(dataDir, from.sid), epgCacheFile(dataDir, to.sid));
+  const epg = loadEpgConfig(dataDir);
+  if (epg[from.id] && !epg[to.id]) { epg[to.id] = epg[from.id]; delete epg[from.id]; writeJson(epgConfigFile(dataDir), epg); moved++; }
+  const urls = loadSpiWebUrls(dataDir);
+  if (urls[from.id] && !urls[to.id]) { urls[to.id] = urls[from.id]; delete urls[from.id]; writeJson(spiWebFile(dataDir), urls); moved++; }
+  return moved;
+}
+
 // ── Export / import of the SPI logos and the programme guide sources (configuration and service files) ──
 // services: [{ id, sid }] ; ensemble: also the multiplex logos. Fetched web guides are not exported (fetched again).
 // → { logos: { '<sid>-<w>x<h>.png': 'data:image/png;base64,…' }, epg: { '<service id>': entry }, webUrls: { '<id>': url } } (empty parts left out)
@@ -278,7 +293,9 @@ export function spiGeneratorStatus() { return { ok: true }; }
 // Returns { ok, stats | error }. odr-dabmux preloads the file (load_entire_file): replacing it is safe.
 // bitrate: packet size to use instead of the saved one — the bit rate of the SPI sub-channel the running
 // odr-dabmux was started with (a carousel with another packet size would not match it until the next Start)
-export function buildSpiCarousel({ dataDir, settings, services, nextTid, now = Date.now(), bitrate = null }) {
+// allowEmpty: with no logo and no guide left, a carousel with the ensemble information only (the content
+// removed must leave the air; the last carousel stayed on air before). Activation still refuses it.
+export function buildSpiCarousel({ dataDir, settings, services, nextTid, now = Date.now(), bitrate = null, allowEmpty = false }) {
   const saved = normalizeSpiSettings(settings.spi);
   const spi = { ...saved, bitrate: SPI_BITRATES.includes(bitrate) ? bitrate : saved.bitrate };
   const e = settings.ensemble || {};
@@ -296,7 +313,7 @@ export function buildSpiCarousel({ dataDir, settings, services, nextTid, now = D
     const epg = loadEpgConfig(dataDir);
     const schedules = services.filter((svc) => svc.enabled !== false && epg[svc.id])
       .flatMap((svc) => epgSchedules(spiSid(svc), epgProgrammes(dataDir, spiSid(svc), epg[svc.id], now), now));
-    if (!list.length && !ensLogos.length && !schedules.length) return { ok: false, error: 'No SPI logo nor programme guide for the multiplex or the services ON' };
+    if (!list.length && !ensLogos.length && !schedules.length && !allowEmpty) return { ok: false, error: 'No SPI logo nor programme guide for the multiplex or the services ON' };
     const { data, siBytes, piBytes } = encodeSpiCarousel({ ecc: hex(e.eccHex || '0xE1'), eid: hex(e.idHex || '0x0000'), label: e.label || '',
       shortlabel: e.shortlabel || '', address: SPI_PACKET_ADDRESS, packetSize: SPI_PACKET_SIZE[spi.bitrate], logos: ensLogos, services: list, schedules }, { nextTid });
     const output = spiCarouselFile(dataDir);

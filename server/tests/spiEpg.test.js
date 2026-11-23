@@ -43,6 +43,18 @@ describe('programme guide (EPG)', () => {
     assert.equal(nuit.end - nuit.start, 4 * 3600000);
   });
 
+  it('a show of the evening before (22:00–02:00) is still in the guide after midnight', () => {
+    const entry = { source: 'grid', grid: [{ days: [1], start: '22:00', end: '02:00', title: 'Nuit du lundi' }] };
+    const tue0030 = Date.parse('2026-11-24T00:30:00+01:00');
+    const list = epgProgrammes(tmp(), 'f9a3', entry, tue0030);
+    assert.equal(list[0]?.title, 'Nuit du lundi', 'still on air at 00:30');
+    const today = epgSchedules('f9a3', list, tue0030)[0];
+    assert.equal(new Date(today.start).toISOString(), '2026-11-23T23:00:00.000Z', "Tuesday's document");
+    assert.equal(today.programmes[0].title, 'Nuit du lundi', "carried by today's document");
+    const wed = Date.parse('2026-11-25T00:30:00+01:00');
+    assert.equal(epgProgrammes(tmp(), 'f9a3', entry, wed).filter((p) => p.start < Date.parse('2026-11-25T00:00:00+01:00')).length, 0, 'the next day: gone (no show on Tuesday evening)');
+  });
+
   it('XMLTV: times with offset, entities, CDATA, channels', () => {
     assert.equal(parseXmltvTime('20261123060000 +0100'), Date.parse('2026-11-23T05:00:00Z'));
     assert.equal(parseXmltvTime('20261123060000'), Date.parse('2026-11-23T06:00:00Z'), 'no offset = UTC');
