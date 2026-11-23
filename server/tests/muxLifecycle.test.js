@@ -22,7 +22,7 @@ function fakePm({ dabmuxExit = null, stopDelayMs = 0, failSpawn = null } = {}) {
       procs.set(key, { bin, args, opts });
       if (key === 'mux:odr-dabmux' && dabmuxExit) setTimeout(() => exit(key, dabmuxExit.code), dabmuxExit.afterMs);
     },
-    async stop(key) { if (!procs.has(key)) throw new Error('not running'); if (stopDelayMs) await sleep(stopDelayMs); exit(key, null); },
+    async stop(key) { if (!procs.has(key)) return; if (stopDelayMs) await sleep(stopDelayMs); exit(key, null); },   // idempotent, like processManager
     async stopAll(prefix) { for (const k of [...procs.keys()]) if (k.startsWith(prefix)) exit(k, null); },
     exit,
   };
@@ -92,6 +92,22 @@ describe('multiplex start / stop', () => {
     await assert.rejects(st.startMux(), /ENOENT/);
     assert.equal(st.muxRunning, false);
     assert.deepEqual([...pm.procs.keys()], [], 'no padenc left');
+  });
+
+  for (const sw of [false, true]) it(`encoder crash with "Switch to backup on failure: ${sw ? 'Yes' : 'No'}" → restarts on ${sw ? 'the backup' : 'the main stream'}`, async () => {
+    const pm = fakePm();
+    const st = makeState(pm, { encoders: 1 });
+    const svc = st.preset.services[0];
+    svc.input.mode = 'GSTREAMER';
+    svc.input.uri = 'http://127.0.0.1:9/main';
+    svc.input.backupUri = 'http://127.0.0.1:9/backup';
+    svc.watchdog = { ...svc.watchdog, enabled: true, switchToBackupOnSilence: sw };
+    await st.startMux();
+    pm.exit(`svc:${svc.id}:audioenc`, 1);   // crash
+    for (let i = 0; i < 40 && !pm.procs.has(`svc:${svc.id}:audioenc`); i++) await sleep(250);
+    const args = pm.procs.get(`svc:${svc.id}:audioenc`)?.args || [];
+    assert.ok(args.includes(sw ? svc.input.backupUri : svc.input.uri), `restarted on ${sw ? 'backup' : 'main'}: ${args.join(' ')}`);
+    await st.stopMux();
   });
 
   it('a normal start then stop still works', async () => {

@@ -2126,7 +2126,10 @@ export class AppState {
 
             // Decide: switch to backup or restart on same URI?
             // When on backup, crashes restart on backup — probe handles return to main.
-            if (crashes >= FAILOVER_CRASH_THRESHOLD && hasDistinctBackup && activeIsMainUri) {
+            // "Switch to backup on failure: No" forbids any automatic switch, crash included (it only
+            // stopped the switch on silence before): the encoder then restarts on the stream it was on.
+            const mayFailover = svc.watchdog?.switchToBackupOnSilence !== false;
+            if (crashes >= FAILOVER_CRASH_THRESHOLD && hasDistinctBackup && activeIsMainUri && mayFailover) {
               // Threshold reached on main — switch to backup
               const targetUri = svc.input.backupUri;
               const targetOk = activeIsMainUri ? okBackup : okMain;
@@ -2140,9 +2143,9 @@ export class AppState {
                 this.logger.line(`svc:${svc.id}`, `switch failed: ${err.message}`, 'WARN');
                 rt.status = 'ERROR';
               });
-            } else if (crashes >= FAILOVER_CRASH_THRESHOLD && !hasDistinctBackup) {
-              // Threshold reached but no distinct backup — restart on same, log once
-              this.logger.line(`svc:${svc.id}`, `failover: ${crashes} crashes but no distinct backup — restarting on ${rt.activeUri}`);
+            } else if (crashes >= FAILOVER_CRASH_THRESHOLD && (!hasDistinctBackup || !mayFailover)) {
+              // Threshold reached but no distinct backup (or switching turned off) — restart on same, log once
+              this.logger.line(`svc:${svc.id}`, `failover: ${crashes} crashes but ${mayFailover ? 'no distinct backup' : 'switch to backup turned off'} — restarting on ${rt.activeUri}`);
               await Promise.race([
                 this._switchServiceUri(svc, rt.activeUri || svc.input.uri),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('switch timeout')), 5000))
