@@ -3508,7 +3508,9 @@ function renderAutoUpdate(c) {
   ].filter(Boolean).join('<br>');
 }
 async function loadAutoUpdate() {
-  try { renderAutoUpdate(await api('/api/update/auto')); } catch (e) { $('#autoUpdLast').textContent = e.message || String(e); }
+  // Save stays off until the saved settings are shown: an early click saved the defaults over them
+  $('#btnAutoUpdSave').disabled = true;
+  try { renderAutoUpdate(await api('/api/update/auto')); $('#btnAutoUpdSave').disabled = false; } catch (e) { $('#autoUpdLast').textContent = e.message || String(e); }
 }
 $('#btnAutoUpdSave')?.addEventListener('click', async () => {
   const days = [...document.querySelectorAll('[data-au-day]')].filter((c) => c.checked).map((c) => Number(c.dataset.auDay));
@@ -4471,22 +4473,21 @@ $('#svcForm').addEventListener('submit', async (e) => {
     identity: {
       pi: normalizedPi || undefined,
       ps8: $('#f_ps8').value.trim(),
-      ps16: $('#f_ps16').value.trim() || null,
+      ps16: $('#f_ps16').value.trim(),   // '' clears it (null kept the previous label; the mux then uses PS8)
       pty: Number($('#f_pty').value || 10),
       languageHex: $('#f_lang').value.trim() || undefined
     },
     dab: {
       bitrateKbps: Number($('#f_bitrate').value),
       protectionLevel: Number($('#f_prot').value || 3),
-      eepMode: 'A',
+      eepMode: (editingId && STATE?.preset?.services?.find((x) => x.id === editingId)?.dab?.eepMode) || 'A',   // an EEP-B service stays EEP-B
       padSize: Number($('#f_padsize').value || 58)
     },
     pad: { sls: { enabled: $('#f_slideshow').value !== '0' } },
     input: {
       mode: $('#f_src').value,
       uri: $('#f_uri').value.trim() || null,
-      backupUri: $('#f_backup').value.trim() || null
-      ,
+      backupUri: $('#f_backup').value.trim(),   // '' clears it (null kept the previous backup stream)
       encoderBufferMs: Number($('#f_encbuf').value || 200),
       driftComp: $('#f_drift')?.value === '1',
       zmqBuffer: Number($('#f_zbuf').value || 40),

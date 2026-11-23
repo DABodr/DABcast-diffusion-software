@@ -11,7 +11,8 @@ import { execSync, execFileSync, execFile, spawn } from 'node:child_process';
 import archiver from 'archiver';
 import bcrypt from 'bcryptjs';
 
-import { DEFAULT_SETTINGS, WEAK_PASSWORDS, MIN_PASSWORD_LENGTH, DAB_FREQ_TABLE } from './defaults.js';
+import { DEFAULT_SETTINGS, WEAK_PASSWORDS, MIN_PASSWORD_LENGTH, DAB_FREQ_TABLE, ALLOWED_BITRATES_KBPS } from './defaults.js';
+import { validateService } from './odr/validate.js';
 import { getDabmodValue, setDabmodValue } from './odr/dabmodRc.js';
 import { ensureDir, readJson, writeJson } from './fsutil.js';
 import { FileLogger } from './logger.js';
@@ -729,6 +730,17 @@ app.post('/api/import/full', (req, res) => {
     const logoEntries = payload.logos && typeof payload.logos === 'object' ? Object.entries(payload.logos) : [];
     const badLogo = logoEntries.find(([k]) => !/^(0x)?[0-9A-F]{4}$/i.test(k));
     if (badLogo) throw new Error(`Invalid logo key "${String(badLogo[0]).slice(0, 40)}" (expected a PI code)`);
+    // The preset is checked BEFORE anything is written: a refused file changes nothing (settings included)
+    if (payload.preset) {
+      if (state.muxRunning) throw new Error('Cannot import a configuration while ON AIR: press Stop first');
+      if (!Array.isArray(payload.preset.services)) throw new Error('Invalid preset: no list of services');
+      payload.preset.services.forEach((svc, i) => {
+        let errors;
+        try { ({ errors } = validateService(svc && typeof svc === 'object' ? svc : {}, ALLOWED_BITRATES_KBPS)); } catch { errors = ['incomplete service']; }
+        if (errors.length) throw new Error(`Service ${i + 1} (${String(svc?.identity?.ps8 || svc?.id || '?').slice(0, 16)}): ${errors.join(' ')}`);
+      });
+      state.setPreset(payload.preset);   // the only step left that can fail: before the settings
+    }
     if (payload.settings) {
       settings.ensemble = { ...settings.ensemble, ...payload.settings.ensemble };
       settings.dabmux = { ...settings.dabmux, ...payload.settings.dabmux };
@@ -744,9 +756,6 @@ app.post('/api/import/full', (req, res) => {
         logger.line('export', `Import: odrBinDir "${String(payload.settings.odrBinDir).slice(0, 80)}" ignored (kept "${settings.odrBinDir || ''}")`, 'WARN');
       }
       writeJson(settingsPath, settings);
-    }
-    if (payload.preset) {
-      state.setPreset(payload.preset);
     }
 
     // Import logos if present
@@ -951,7 +960,10 @@ app.post('/api/services/reorder', (req, res) => {
     if (!Array.isArray(order)) {
       return res.status(400).json({ error: 'Order must be an array of service IDs' });
     }
-    state.reorderServices(order);
+    // a list that misses services must never remove them: the missing ones keep their place at the end
+    const ids = order.map(String).filter((id, i, a) => a.indexOf(id) === i && state.preset.services.some((s) => s.id === id));
+    const missing = [...state.preset.services].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0)).map((s) => s.id).filter((id) => !ids.includes(id));
+    state.reorderServices([...ids, ...missing]);
     res.json({ ok: true });
   } catch (e) {
     res.status(400).json({ error: String(e.message || e) });
@@ -1914,9 +1926,18 @@ const audioCu = () => (state.preset?.services || []).filter((s) => s.enabled !==
 // Carousel (data/spi/spi.dat) rebuilt from the current logos / labels when SPI is activated: at Start,
 // at activation and after a logo change. settings.spi.file = last good carousel, read by muxBuilder.
 let spiLast = null;
+// Bit rate of the SPI sub-channel the running odr-dabmux was started with: while ON AIR the carousel keeps
+// that packet size (dabmux re-reads the file at each turn but keeps its sub-channel); a new bit rate goes on
+// air at the next Start.
+let spiAirBitrate = null;
 function refreshSpiCarousel(reason) {
-  if (!normalizeSpiSettings(settings.spi).enabled) return null;
-  const r = buildSpiCarousel({ dataDir, settings, services: [...(state.preset?.services || [])].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0)) });
+  const starting = ['start', 'autostart', 'resume'].includes(reason);
+  const spiNow = normalizeSpiSettings(settings.spi);
+  if (starting) spiAirBitrate = spiNow.enabled ? spiNow.bitrate : null;
+  if (!spiNow.enabled) return null;
+  const airBitrate = !starting && state.muxRunning && spiAirBitrate ? spiAirBitrate : null;
+  if (airBitrate && airBitrate !== spiNow.bitrate) logger.line('spi', `ON AIR at ${airBitrate} kbps: carousel kept at that bit rate, ${spiNow.bitrate} kbps from the next Start`);
+  const r = buildSpiCarousel({ dataDir, settings, bitrate: airBitrate, services: [...(state.preset?.services || [])].sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0)) });
   if (r.ok) {
     spiLast = { at: Date.now(), ...r.stats };
     if (settings.spi.file !== r.file) { settings.spi = { ...settings.spi, file: r.file }; writeJson(settingsPath, settings); }
@@ -2402,21 +2423,32 @@ function startUpdate(version, { assetName, onFail } = {}) {
   const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
   const asset = { name: assetName || `dabcast_${version}_${arch}.deb` };
   const wasOnAir = state.muxRunning;
-  _updateState = { status: wasOnAir ? 'stopping' : 'downloading', progress: 0, error: null, version, onAir: wasOnAir };
+  let stopped = false;
+  _updateState = { status: 'downloading', progress: 0, error: null, version, onAir: wasOnAir };
   (async () => {
+    if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(String(version || ''))) throw new UpdateStageError('download', `Invalid release version: ${version}`);
+    // ON AIR: download first while still broadcasting, then stop only for the installation itself
+    let prefetched = false;
     if (wasOnAir) {
+      logger.line('update', `Downloading ${asset.name} while ON AIR...`);
+      prefetched = !(await runHelper(['--prefetch', version], { stage: 'download' })).unsupported;
+      if (!prefetched) logger.line('update', 'Installer without download in advance (packages before 1.12): the multiplex is stopped during the download too');
+      _updateState = { ..._updateState, status: 'stopping', progress: 0 };
       writeResumeMarker(version);
-      logger.line('update', 'ON AIR: stopping the multiplex for the update (it is put back on air after the restart)');
+      logger.line('update', 'ON AIR: stopping the multiplex for the installation (it is put back on air after the restart)');
       await state.stopMux();
-      _updateState = { ..._updateState, status: 'downloading' };
-    }
-    await _doUpdate(asset, version);
+      stopped = true;
+      _updateState = { ..._updateState, status: prefetched ? 'installing' : 'downloading' };
+    } else logger.line('update', `Downloading and installing ${asset.name} (v${version})...`);
+    await runHelper([version], { stage: prefetched ? 'install' : 'download' });
+    _updateState = { ..._updateState, status: 'restarting' };
+    logger.line('update', 'Update installed, service restarting...');
     // the package restarts the service; if this process is still alive a minute later, nothing restarted it
-    if (wasOnAir) setTimeout(() => resumeAfterUpdate('service not restarted after the update'), 60000).unref?.();
+    if (stopped) setTimeout(() => resumeAfterUpdate('service not restarted after the update'), 60000).unref?.();
   })().catch(err => {
-    logger.line('update', `Update failed: ${err.message || err}`, 'ERROR');
+    logger.line('update', `Update failed${err.stage === 'download' ? ' (download, nothing installed)' : ''}: ${err.message || err}`, 'ERROR');
     _updateState = { status: 'error', progress: 0, error: String(err.message || err), version: null };
-    if (wasOnAir) resumeAfterUpdate('update failed');   // back on air at once, on the current version
+    if (stopped) resumeAfterUpdate('update failed');   // back on air at once, on the current version
     onFail?.(err);
   });
 }
@@ -2448,19 +2480,24 @@ async function resumeAfterUpdate(reason) {
 // The root helper (dabcast-install-update, sudo rule of the package) downloads the official release
 // itself and checks it: the service only gives the version number, never a file (security).
 // Its "PROGRESS n" lines drive the progress bar, "INSTALLING" switches to the installing step.
-async function _doUpdate(asset, version) {
-  if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(String(version || ''))) throw new Error(`Invalid release version: ${version}`);
-  if (process.env.DABCAST_UPDATE_DRYRUN === '1') {   // tests only: never runs the root installer
-    logger.line('update', `DRY RUN: would install ${asset.name} (v${version})`);
-    _updateState = { ..._updateState, status: 'restarting' };
-    return;
+// Helper v2 (packages from 1.12): "--prefetch X.Y.Z" downloads and checks the package in advance (root-only
+// cache), then "X.Y.Z" installs it and watches the restarted service (previous version installed again
+// when it does not stay up). A v1 helper answers "--prefetch" with its usage (exit 2): old sequence.
+// DABCAST_UPDATE_DRYRUN (tests only, never the real installer): 1 | fail-download | old-helper.
+class UpdateStageError extends Error {
+  constructor(stage, message) { super(message); this.stage = stage; }   // stage: download | install
+}
+function runHelper(args, { stage }) {
+  const dry = process.env.DABCAST_UPDATE_DRYRUN;
+  if (dry) {
+    logger.line('update', `DRY RUN: dabcast-install-update ${args.join(' ')}`);
+    if (args[0] === '--prefetch' && dry === 'old-helper') return Promise.resolve({ unsupported: true });
+    if (args[0] === '--prefetch' && dry === 'fail-download') return Promise.reject(new UpdateStageError('download', 'download failed: HTTP 504 (simulated)'));
+    return Promise.resolve({});
   }
-  logger.line('update', `Downloading and installing ${asset.name} (v${version})...`);
   let errText = '';
-  await new Promise((ok, fail) => {
-    const child = spawn('sudo', ['-n', '/opt/dabcast/bin/dabcast-install-update', version], {
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
+  return new Promise((ok, fail) => {
+    const child = spawn('sudo', ['-n', '/opt/dabcast/bin/dabcast-install-update', ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
     let buf = '';
     child.stdout.on('data', (d) => {
       buf += d.toString();
@@ -2471,18 +2508,20 @@ async function _doUpdate(asset, version) {
         const m = /^PROGRESS (\d+)$/.exec(line);
         if (m) _updateState.progress = Math.min(100, Number(m[1]));
         else if (line === 'INSTALLING') {
+          stage = 'install';
           _updateState = { ..._updateState, status: 'installing', progress: 100 };
-          logger.line('update', `Installing ${asset.name}...`);
+          logger.line('update', `Installing DABcast ${args[args.length - 1]}...`);
         } else if (line) logger.line('update', line, 'DEBUG');
       }
     });
     child.stderr.on('data', (d) => { errText = (errText + d.toString()).slice(-500); });
-    child.on('exit', (code) => (code === 0 ? ok() : fail(new Error(`Installer exited with code ${code}${errText.trim() ? `: ${errText.trim().split('\n').pop()}` : ''}`))));
-    child.on('error', fail);
+    child.on('exit', (code) => {
+      if (code === 0) return ok({});
+      if (code === 2 && args[0] === '--prefetch' && /usage: dabcast-install-update X\.Y\.Z\s*$/.test(errText.trim())) return ok({ unsupported: true });
+      fail(new UpdateStageError(stage, `Installer exited with code ${code}${errText.trim() ? `: ${errText.trim().split('\n').pop()}` : ''}`));
+    });
+    child.on('error', (e) => fail(new UpdateStageError(stage, e.message)));
   });
-
-  _updateState = { ..._updateState, status: 'restarting' };
-  logger.line('update', 'Update installed, service restarting...');
 }
 
 // ── Automatic updates (⚙ Settings, off by default): rules in autoUpdate.js ──
@@ -2510,20 +2549,37 @@ async function autoUpdateTick(now = new Date()) {
   const cfg = normalizeAutoUpdate(settings.autoUpdate);
   if (autoBusy || !isDue(cfg, now, autoLastDay)) return;
   autoLastDay = dayKey(now);
+  if (_updateState.status !== 'idle' && _updateState.status !== 'error') return logger.line('update', 'Automatic update: an update is already running');
   autoBusy = true;
+  // shared lock with the Update button (/api/update/apply refuses while not idle) during the release check
+  _updateState = { status: 'checking', progress: 0, error: null, version: null };
+  const release = () => { if (_updateState.status === 'checking') _updateState = { status: 'idle', progress: 0, error: null, version: null }; };
   try {
-    if (_updateState.status !== 'idle' && _updateState.status !== 'error') return logger.line('update', 'Automatic update: an update is already running');
     if (settings.autoStart && !state.muxRunning) return autoReport(false, 'Automatic update postponed: the multiplex should be on air but is not (problem in progress)');
     const info = await loadReleaseInfo(true);
-    const pick = pickVersion({ cfg, current: APP_VER, latest: info?.latestVersion, publishedAt: info?.publishedAt });
+    const now2 = normalizeAutoUpdate(settings.autoUpdate);   // settings may have changed during the check
+    if (!now2.enabled) return logger.line('update', 'Automatic update: turned off during the check, nothing installed');
+    const pick = pickVersion({ cfg: now2, current: APP_VER, latest: info?.latestVersion, publishedAt: info?.publishedAt });
     if (!pick.version) return logger.line('update', `Automatic update: nothing to install — ${pick.none}`);
+    const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+    if (!(info.assets || []).some((a) => a.name === `dabcast_${pick.version}_${arch}.deb`)) {
+      return logger.line('update', `Automatic update: v${pick.version} has no ${arch} package yet, tried again at the next scheduled time`, 'WARN');
+    }
     writeJson(autoMarkerPath(), { from: APP_VER, to: pick.version, at: new Date().toISOString(), wasOnAir: state.muxRunning,
       before: { muxRunning: state.muxRunning, running: runningServices() } });
-    logger.line('update', `Automatic update: installing v${pick.version} (current v${APP_VER})${state.muxRunning ? ', the multiplex is stopped then put back on air' : ''}`);
-    startUpdate(pick.version, { onFail: (e) => { clearAutoMarker(); saveAutoUpdate({ skip: [...cfg.skip, pick.version] }); autoReport(false, `Automatic update to v${pick.version} failed, still on v${APP_VER}: ${e.message || e}`); } });
+    logger.line('update', `Automatic update: installing v${pick.version} (current v${APP_VER})${state.muxRunning ? ', downloaded first, then the multiplex is stopped and put back on air' : ''}`);
+    _updateState = { status: 'idle', progress: 0, error: null, version: null };
+    startUpdate(pick.version, { onFail: (e) => {
+      clearAutoMarker();
+      // only a failed installation excludes the version; a download problem (network, GitHub) is retried next time
+      if (e.stage === 'install') {
+        saveAutoUpdate({ skip: [...normalizeAutoUpdate(settings.autoUpdate).skip, pick.version] });
+        autoReport(false, `Automatic update to v${pick.version} failed during the installation, still on v${APP_VER} (version not retried): ${e.message || e}`);
+      } else autoReport(false, `Automatic update to v${pick.version}: download failed, nothing installed, still on v${APP_VER} — tried again at the next scheduled time (${e.message || e})`);
+    } });
   } catch (e) {
     logger.line('update', `Automatic update: ${e.message || e}`, 'WARN');
-  } finally { autoBusy = false; }
+  } finally { release(); autoBusy = false; }
 }
 setInterval(() => autoUpdateTick().catch(() => {}), 30000).unref?.();   // 2 ticks a minute: the HH:MM minute is never missed
 // After the restart: was it an automatic update (or its rollback)? Check, then report or roll back.
