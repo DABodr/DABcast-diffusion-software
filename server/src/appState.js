@@ -2020,19 +2020,27 @@ export class AppState {
     if (rt) rt.status = 'STARTING';
 
     const activeUri = rt?.activeUri || svc.input.uri;
-    const codecArgs = this._getCodecArgs(svc.audio?.codec);
-    const audioCmd = buildAudioEncCommand({
-      svc: { ...svc, audio: { ...svc.audio, codecArgs } },
-      activeUri,
-      mtaPath
-    });
-    this.pm.spawn(`svc:${svc.id}:audioenc`, audioCmd.bin, audioCmd.args, {
-      cwd: motDirAbs,
-      onStderr: (text) => {
-        const lvl = parseAudioLevel(text);
-        if (lvl && rt) rt.audioLevels = lvl;
-      }
-    });
+    // audioenc failing to start after padenc: padenc is stopped too (the start rollback only stops the
+    // services started completely, it stayed running before)
+    try {
+      const codecArgs = this._getCodecArgs(svc.audio?.codec);
+      const audioCmd = buildAudioEncCommand({
+        svc: { ...svc, audio: { ...svc.audio, codecArgs } },
+        activeUri,
+        mtaPath
+      });
+      this.pm.spawn(`svc:${svc.id}:audioenc`, audioCmd.bin, audioCmd.args, {
+        cwd: motDirAbs,
+        onStderr: (text) => {
+          const lvl = parseAudioLevel(text);
+          if (lvl && rt) rt.audioLevels = lvl;
+        }
+      });
+    } catch (err) {
+      try { await this.pm.stop(`svc:${svc.id}:padenc`); } catch { /* not running */ }
+      if (rt) rt.status = 'STOPPED';
+      throw err;
+    }
 
     if (rt) {
       rt.lastStartMs = nowMs();

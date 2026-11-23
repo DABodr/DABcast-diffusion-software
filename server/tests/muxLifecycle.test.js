@@ -10,7 +10,7 @@ import { DEFAULT_SETTINGS } from '../src/defaults.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // fake ODR processes: dabmuxExit = { afterMs, code } makes odr-dabmux exit by itself
-function fakePm({ dabmuxExit = null, stopDelayMs = 0 } = {}) {
+function fakePm({ dabmuxExit = null, stopDelayMs = 0, failSpawn = null } = {}) {
   const procs = new Map();
   const exit = (key, code) => { const p = procs.get(key); if (!p) return; procs.delete(key); p.opts?.onExit?.(code); };
   return {
@@ -18,6 +18,7 @@ function fakePm({ dabmuxExit = null, stopDelayMs = 0 } = {}) {
     binaryExists: () => true,
     isRunning: (key) => procs.has(key),
     spawn(key, bin, args, opts = {}) {
+      if (failSpawn && key.endsWith(failSpawn)) throw new Error(`spawn ${bin} ENOENT (simulated)`);
       procs.set(key, { bin, args, opts });
       if (key === 'mux:odr-dabmux' && dabmuxExit) setTimeout(() => exit(key, dabmuxExit.code), dabmuxExit.afterMs);
     },
@@ -83,6 +84,14 @@ describe('multiplex start / stop', () => {
     assert.equal(st.preset.services[0].audio.gainDb, 6);
     assert.equal(gainOf(), '6', 'encoder restarted with the last gain');
     await st.stopMux();
+  });
+
+  it('audioenc failing to start after padenc: start fails, padenc not left running', async () => {
+    const pm = fakePm({ failSpawn: ':audioenc' });
+    const st = makeState(pm, { encoders: 1 });
+    await assert.rejects(st.startMux(), /ENOENT/);
+    assert.equal(st.muxRunning, false);
+    assert.deepEqual([...pm.procs.keys()], [], 'no padenc left');
   });
 
   it('a normal start then stop still works', async () => {
