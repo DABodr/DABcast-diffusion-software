@@ -897,7 +897,7 @@ function render() {
       ['col-bitrate', `${svc.dab.bitrateKbps} kbps`],
       ['col-cu', `${svc.cu ?? ''}`],
       ['col-prot', esc(String(svc.dab.protectionLevel ?? 3))],
-      ['col-codec', esc(svc.audio?.codec || 'HE-AAC v1')],
+      ['col-codec', ((c) => `<span title="${esc(c)}">${esc(c.replace(/\s*\((SBR|PS)\)$/, ''))}</span>`)(svc.audio?.codec || 'HE-AAC v1')],   // short label, full name on hover
       ['col-ch', (svc.audio?.channels ?? 2) === 1 ? 'Mono' : 'Stereo'],
       ['col-sr', `${esc(String((svc.audio?.sampleRateHz ?? 48000) / 1000))} kHz`],
       ['col-port', `${svc.network.ediOutputTcp.port}`],
@@ -2829,6 +2829,8 @@ function setSpiTab(tab) {
   document.querySelectorAll('[data-spitab]').forEach((b) => b.classList.toggle('active', b.dataset.spitab === tab));
   $('#spiLogos').hidden = tab !== 'logos';
   $('#spiEpg').hidden = tab !== 'epg';
+  const logoActions = dlgSpi?.querySelector('.spi-actions');   // Get all from slideshow logos / Keep existing: logos only
+  if (logoActions) logoActions.style.display = tab === 'logos' ? '' : 'none';
   if (tab === 'epg') renderEpgList();
 }
 function renderEpgList() {
@@ -3115,6 +3117,10 @@ function setLvMode(mode) {
   document.querySelectorAll('[data-lvmode]').forEach((b) => b.classList.toggle('active', b.dataset.lvmode === mode));
   $('#lvPeaks').hidden = mode !== 'peaks';
   $('#lvLufs').hidden = mode !== 'lufs';
+  const sub = dlgLevels?.querySelector('.modal-sub');   // the subtitle follows the tab
+  if (sub) sub.textContent = mode === 'lufs'
+    ? 'Perceived loudness (EBU R128) of each service, decoded from the multiplex, one service at a time'
+    : 'Peaks measured by odr-dabmux over a sliding window (measured while this page is open)';
   clearInterval(LOUD_TIMER); LOUD_TIMER = 0;
   if (mode === 'lufs' && dlgLevels?.open) { loadLoudness(); LOUD_TIMER = setInterval(loadLoudness, 2000); }
 }
@@ -3241,7 +3247,9 @@ function renderAboutGrid(grid, info) {
   let html = '';
   html += row('Available memory', info.memAvailableMb != null ? `${info.memAvailableMb} MB` : 'N/A');
   html += row('CPU', info.cpuLoadPct != null ? `${info.cpuLoadPct} %` : 'N/A');
-  html += row('Disk', info.diskUsedPct != null ? `${info.diskUsedPct} %` : 'N/A');
+  // same reading as the System card of the header: used and free (the bare "93 %" read as free space)
+  const freeGb = SYS_LOAD?.disk?.freeGb;
+  html += row('Disk', info.diskUsedPct != null ? `${info.diskUsedPct} % used${freeGb != null ? ` · ${freeGb} GB free` : ''}` : 'N/A');
   if (info.versions) {
     html += '<hr class="about-sep">';
     for (const [name, ver] of Object.entries(info.versions)) {
@@ -3728,10 +3736,11 @@ function showUpdateDialog() {
   if (!dlgUpdate || !_updateInfo?.updateAvailable) return;
   $('#updateCurrentVer').textContent = STATE?.appVersion ? `v${STATE.appVersion}` : '—';
   $('#updateNewVer').textContent = `v${_updateInfo.latestVersion}`;
+  const sub = $('#updateDialogSub');
+  if (sub) sub.textContent = `A new version of DABcast is available (v${_updateInfo.latestVersion})`;
   const warn = $('#updateOnAirWarning');
   const onAir = !!STATE?.muxRunning;
-  if (warn) warn.classList.toggle('hidden', !onAir);
-  $('#btnUpdateStart').disabled = onAir;
+  if (warn) warn.classList.toggle('hidden', !onAir);   // ON AIR: allowed, the server stops and restarts the mux
   const changelogEl = $('#updateChangelog');
   if (changelogEl) {
     if (_updateInfo.releaseNotes) {
@@ -3797,7 +3806,9 @@ $('#btnUpdateStart')?.addEventListener('click', async () => {
     try {
       const prog = await api('/api/update/progress');
       _netErrCount = 0;
-      if (prog.status === 'downloading') {
+      if (prog.status === 'stopping') {
+        _setUpdateProgress('Stopping the multiplex…', 0);
+      } else if (prog.status === 'downloading') {
         _setUpdateProgress(`Downloading… (${prog.progress}%)`, prog.progress);
       } else if (prog.status === 'installing') {
         _sawInstalling = true;

@@ -858,6 +858,13 @@ txgain=40</pre>
   the multiplex 2 seconds after the web server starts — ideal for unattended broadcast servers.
   The systemd service is configured to start on boot by default.
 </p>
+<h2>Updates while ON AIR</h2>
+<p>
+  When a new version is available (badge in the header, or <em>Sys. info → Check for updates</em>), <strong>Download &amp; Install</strong>
+  also works while the multiplex is ON AIR: DABcast stops the multiplex, installs the update, restarts, and puts the multiplex
+  back on air by itself — even when <em>Start multiplex at startup</em> is not ticked. Expect about a minute without broadcast.
+  If the installation fails, the multiplex goes back on air at once on the current version.
+</p>
 
 <h1>Settings (⚙)</h1>
 <p>The round <strong>⚙</strong> button of the top bar opens the Settings window:</p>
