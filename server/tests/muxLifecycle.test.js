@@ -110,6 +110,23 @@ describe('multiplex start / stop', () => {
     await st.stopMux();
   });
 
+  for (const [back, probes] of [[0, false], [600, false], [1, true]]) it(`on backup, "Back to main after" ${back} s: audio probe of the main stream ${probes ? 'runs' : 'waits'}`, async () => {
+    const pm = fakePm();
+    const st = makeState(pm, { encoders: 1 });
+    const svc = st.preset.services[0];
+    svc.input.mode = 'GSTREAMER';
+    svc.input.uri = 'http://127.0.0.1:9/main';
+    svc.input.backupUri = 'http://127.0.0.1:9/backup';
+    svc.watchdog = { ...svc.watchdog, enabled: true, switchToBackupOnSilence: true, returnToMainAfterSec: back };
+    await st.startMux();
+    pm.exit(`svc:${svc.id}:audioenc`, 1);   // crash → backup
+    for (let i = 0; i < 40 && !pm.procs.get(`svc:${svc.id}:audioenc`)?.args.includes(svc.input.backupUri); i++) await sleep(250);
+    let probed = false;
+    for (let i = 0; i < 28 && !probed; i++) { await sleep(250); probed = pm.procs.has('mux:probe-audioenc'); }
+    assert.equal(probed, probes);
+    await st.stopMux();
+  });
+
   it('a normal start then stop still works', async () => {
     const pm = fakePm();
     const st = makeState(pm);

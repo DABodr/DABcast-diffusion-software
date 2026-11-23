@@ -2295,6 +2295,10 @@ export class AppState {
         if (!svc.enabled || !svc.watchdog?.enabled) return false;
         const rt = this.serviceRuntime.get(svc.id);
         if (!rt || !rt.activeUri) return false;
+        // "Back to main after (s)": no return before that delay since the switch, 0 = no automatic return
+        // (as the watchdog's own return path; the probe returned as soon as audio came back before)
+        const backSec = Number(svc.watchdog?.returnToMainAfterSec ?? 60);
+        if (!(backSec > 0) || nowMs() - (rt.lastSwitchMs || 0) < backSec * 1000) return false;
         return rt.activeUri !== svc.input.uri && svc.input.uri;
       });
       if (!candidates.length) return;
