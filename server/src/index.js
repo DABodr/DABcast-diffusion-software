@@ -27,6 +27,7 @@ import { estimateCU } from './cu.js';
 import { resetPassword, resolveDataDir } from './resetPassword.js';
 import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy, sdrDeviceString } from './odr/outputs.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
+import { createLoudnessQueue, LOUDNESS_DURATIONS } from './loudness.js';
 import {
   LoginAttemptLimiter,
   REMEMBERED_SESSION_MAX_AGE_MS,
@@ -1454,6 +1455,37 @@ app.get('/api/player/levels', (req, res) => {
   if (!levels) return res.status(404).json({ error: 'No such stream' });
   res.json({ levels });
 });
+
+// Perceived loudness (LUFS) of the services on air, page "Audio levels": one measurement at a time,
+// decoded from the mux monitoring output like the player (read-only for the broadcast chain)
+const loudness = createLoudnessQueue({
+  getTarget: (id) => {
+    if (!state.muxRunning) return null;
+    const sorted = [...(state.preset?.services || [])].filter((s) => s.enabled !== false).sort((a, b) => (a.ui?.order ?? 0) - (b.ui?.order ?? 0));
+    const idx = sorted.findIndex((s) => s.id === id);
+    if (idx < 0) return null;
+    return { port: Number(state.settings?.dabmux?.easyDabOutput?.netPort) || 9901, subchId: idx + 1, gainDb: Number(sorted[idx].audio?.gainDb) || 0 };
+  },
+  log: (m, l) => logger.line('levels', m, l),
+});
+app.get('/api/levels/loudness', (req, res) => {
+  const txMode = (state.settings?.dabmux?.txMode || 'EASYDAB').toUpperCase();
+  res.json({ ...loudness.state(), durations: LOUDNESS_DURATIONS, missing: missingPlayerTools(), supported: PLAYER_TX_MODES.includes(txMode) });
+});
+app.post('/api/levels/loudness', (req, res) => {
+  if (!state.muxRunning) return res.status(409).json({ error: 'Multiplex is off air' });
+  const txMode = (state.settings?.dabmux?.txMode || 'EASYDAB').toUpperCase();
+  if (!PLAYER_TX_MODES.includes(txMode)) return res.status(409).json({ error: `Not available in ${txMode} mode` });
+  const missing = missingPlayerTools();
+  if (missing.length) return res.status(503).json({ error: `Not installed: ${missing.join(', ')}` });
+  const seconds = LOUDNESS_DURATIONS.includes(Number(req.body?.seconds)) ? Number(req.body.seconds) : 60;
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(String)
+    .filter((id) => (state.preset?.services || []).some((s) => s.id === id && s.enabled !== false));
+  if (!ids.length) return res.status(400).json({ error: 'No service on air to measure' });
+  loudness.add(ids, seconds);
+  res.json(loudness.state());
+});
+app.delete('/api/levels/loudness', (req, res) => { loudness.cancelAll(); res.json(loudness.state()); });
 
 // Lines below the requested level removed (lines without a level tag kept, old format)
 function filterLogLevel(content, level) {

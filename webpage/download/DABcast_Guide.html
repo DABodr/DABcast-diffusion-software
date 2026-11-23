@@ -415,7 +415,7 @@
   </tr>
   <tr>
     <td><strong>Audio levels assistant</strong></td>
-    <td>Measures every service over 5 to 30 minutes, flags encoder clipping and suggests a gain that keeps 3 dB of headroom for AAC.</td>
+    <td>Measures every service over 5 to 30 minutes, flags encoder clipping and suggests a gain that keeps 3 dB of headroom for AAC. The <em>Loudness (LUFS)</em> tab measures the perceived volume (EBU R128) to give every station the same loudness.</td>
   </tr>
   <tr>
     <td><strong>Guided service setup</strong></td>
@@ -762,6 +762,19 @@ txgain=40</pre>
   <tr><td><strong>CLIP ×N</strong></td><td>The encoder saturated N times: a cut of at least 2 dB is suggested.</td></tr>
 </table>
 <p><strong>Apply</strong> (or <em>Apply all</em>) saves the gain and restarts only that service's encoder (2–3 s gap on that service; the multiplex keeps running). An isolated peak does not make a quiet station quieter.</p>
+<h2>Loudness (LUFS)</h2>
+<p>Peaks are not what the ear hears: a heavily processed station and a dynamic one can have the same peaks and sound very different. The <strong>Loudness (LUFS)</strong> tab measures the perceived volume (EBU R128) of each service, decoded from the multiplex as receivers get it (after the gain and the AAC encoding), one service at a time, without touching the broadcast.</p>
+<table>
+  <tr><th>Setting / column</th><th>Meaning</th></tr>
+  <tr><td><strong>Target loudness</strong></td><td><em>Multiplex average</em> (default, needs at least 2 measured services) or a fixed level: −23 LUFS (EBU R128), −18, −16, −14 (loud).</td></tr>
+  <tr><td><strong>Duration per service</strong></td><td>30 s to 5 min. Measure during music rather than talk or jingles, ideally 2–5 min.</td></tr>
+  <tr><td><strong>Measure / Measure all / Stop</strong></td><td>Measure one service, queue them all, cancel.</td></tr>
+  <tr><td><strong>LUFS · True peak · LRA</strong></td><td>Perceived loudness, highest peak after decoding (in red near 0 dBTP), loudness range (dynamics: below 2 LU = heavily compressed source).</td></tr>
+  <tr><td><strong>LIMITED</strong></td><td>The true peak leaves no room for more gain: the station is as loud as its processing allows.</td></tr>
+  <tr><td><strong>TRUE PEAK</strong></td><td>True peak above −1 dBTP: it crackles in receivers, so a reduction is suggested even below the target.</td></tr>
+  <tr><td><strong>SOURCE</strong></td><td>True peak near 0 dBTP without any added gain: the source itself is probably clipped. Lowering the gain removes the crackles in receivers but not the distortion already in the stream — see with the station.</td></tr>
+</table>
+<p>A boost never pushes the true peak above −1 dBTP. <strong>Apply</strong> works as in the Peaks tab (restart of that service's encoder only); measure again afterwards. For ZMQ / EDI inputs the gain is to be set at the remote encoder.</p>
 </div>
 
 <!-- Page 4: Failover & Watchdog -->
