@@ -436,3 +436,35 @@ describe('JSON: repaired DLS text (cleanDlsText) and cover downloads', () => {
     assert.equal(lines.filter((l) => /\(new track\)/.test(l)).length, 1, 'one new track, not one per tick');
   });
 });
+
+describe('cover download: a "?" belonging to the file name', () => {
+  it('retries once with the "?" encoded after a 404; a working query string is left alone', async () => {
+    const http = await import('node:http');
+    const seen = [];
+    const srv = http.createServer((req, res) => {
+      seen.push(req.url);
+      if (req.url === '/covers/o_que_sera%3F__tu_verras_.jpg' || req.url === '/img.jpg?size=big') { res.writeHead(200); return res.end('JPEG'); }
+      res.writeHead(404); res.end();
+    });
+    await new Promise((r) => srv.listen(0, '127.0.0.1', r));
+    const base = `http://127.0.0.1:${srv.address().port}`;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-cover-q-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'presets'), { recursive: true });
+      fs.copyFileSync(demoPreset, path.join(dir, 'presets', 'demo.json'));
+      const state = new AppState({ settings: structuredClone(DEFAULT_SETTINGS), dataDir: dir, logger: { line() {} }, processManager: { isRunning: () => false } });
+      assert.equal(await state._downloadImage(`${base}/covers/o_que_sera?__tu_verras_.jpg`, path.join(dir, 'a.jpg')), true);
+      assert.equal(fs.readFileSync(path.join(dir, 'a.jpg'), 'utf8'), 'JPEG');
+      assert.deepEqual(seen, ['/covers/o_que_sera?__tu_verras_.jpg', '/covers/o_que_sera%3F__tu_verras_.jpg']);
+      seen.length = 0;
+      assert.equal(await state._downloadImage(`${base}/img.jpg?size=big`, path.join(dir, 'b.jpg')), true);
+      assert.deepEqual(seen, ['/img.jpg?size=big']);
+      seen.length = 0;
+      assert.equal(await state._downloadImage(`${base}/missing.jpg?x=1`, path.join(dir, 'c.jpg')), false);
+      assert.equal(seen.length, 2);   // one retry only
+    } finally {
+      srv.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
