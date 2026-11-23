@@ -530,6 +530,9 @@ metadata, slide conversion, sessions, Telegram.
 - One-click update: a root helper (sudo rule installed by the package) downloads the **official**
   GitHub release itself and checks the package before installing it. ON AIR, the multiplex is stopped for
   the installation and put back on air automatically after the restart (about a minute without broadcast).
+- Automatic updates (⚙ Settings, off by default): at a chosen time and days, releases older than N days only;
+  health check 5 min after the restart (multiplex back on air, as many services running), else automatic
+  rollback to the previous version, never retried; Telegram report whatever its minimum level.
 - Report a vulnerability privately: see [SECURITY.md](SECURITY.md).
 
 ## 📰 Release notes

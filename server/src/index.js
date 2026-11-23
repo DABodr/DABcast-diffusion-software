@@ -29,6 +29,7 @@ import { resetPassword, resolveDataDir } from './resetPassword.js';
 import { normalizeOutput, normalizeOutputs, normalizeEdiOptions, validateOutputs, outputsFromLegacy, sdrDeviceString } from './odr/outputs.js';
 import { streamService, missingPlayerTools, acquireListenerSlot, playerListeners, playerLevels, playerLastError, PLAYER_MAX_LISTENERS } from './player.js';
 import { createLoudnessQueue, LOUDNESS_DURATIONS } from './loudness.js';
+import { normalizeAutoUpdate, isDue, dayKey, pickVersion, healthAfterUpdate, AUTO_UPDATE_CHECK_MS } from './autoUpdate.js';
 import {
   LoginAttemptLimiter,
   REMEMBERED_SESSION_MAX_AGE_MS,
@@ -2312,12 +2313,10 @@ let _releaseCache = null;
 let _releaseCacheTime = 0;
 let _updateNotifiedVersion = null;
 
-app.get('/api/update/check', async (req, res) => {
-  try {
+// Latest official release (cached 1 h; force = fresh). Used by the page and by the automatic updates.
+async function loadReleaseInfo(force = false) {
     const now = Date.now();
-    if (_releaseCache && (now - _releaseCacheTime) < 3600000 && !req.query.force) {
-      return res.json(_releaseCache);
-    }
+    if (_releaseCache && (now - _releaseCacheTime) < 3600000 && !force) return _releaseCache;
     const r = await fetch(
       'https://api.github.com/repos/DABodr/DABcast-diffusion-software/releases/latest',
       {
@@ -2325,7 +2324,7 @@ app.get('/api/update/check', async (req, res) => {
         signal: AbortSignal.timeout(8000)
       }
     );
-    if (!r.ok) return res.json({ latestVersion: null, releaseUrl: null, assets: [] });
+    if (!r.ok) return { latestVersion: null, releaseUrl: null, assets: [] };
     const data = await r.json();
     // Prefer proper release assets; fall back to .deb links embedded in the release body
     let assets = (data.assets || []).map(a => ({ name: a.name, url: a.browser_download_url, size: a.size || 0 }));
@@ -2340,6 +2339,7 @@ app.get('/api/update/check', async (req, res) => {
       latestVersion: String(data.tag_name || '').replace(/^v/, ''),
       releaseUrl: data.html_url || null,
       releaseNotes: data.body || null,
+      publishedAt: data.published_at || null,
       assets
     };
     _releaseCacheTime = now;
@@ -2361,8 +2361,11 @@ app.get('/api/update/check', async (req, res) => {
         logger.line('update', `New version available: v${latestVersion}`, 'WARN');
       }
     }
-
-    res.json(_releaseCache);
+    return _releaseCache;
+}
+app.get('/api/update/check', async (req, res) => {
+  try {
+    res.json(await loadReleaseInfo(Boolean(req.query.force)));
   } catch (_) {
     res.json({ latestVersion: null, releaseUrl: null, assets: [] });
   }
@@ -2387,29 +2390,36 @@ app.post('/api/update/apply', async (req, res) => {
   if (!asset) {
     return res.status(400).json({ error: `No package found for architecture: ${arch}` });
   }
-
-  // ON AIR: the mux is stopped cleanly for the installation and put back on air by the restarted service
-  // (resume marker read at start-up, whatever autoStart says) — no manual Stop / Start
   const wasOnAir = state.muxRunning;
-  _updateState = { status: wasOnAir ? 'stopping' : 'downloading', progress: 0, error: null, version: _releaseCache.latestVersion, onAir: wasOnAir };
+  startUpdate(_releaseCache.latestVersion, { assetName: asset.name });
   res.json({ ok: true, arch, asset: asset.name, onAir: wasOnAir });
+});
 
+// Installs the official release `version` (newer, or older for a rollback). ON AIR: the multiplex is stopped
+// cleanly for the installation and put back on air by the restarted service (resume marker read at start-up,
+// whatever autoStart says) — no manual Stop / Start. Returns at once; onFail(err) after a failure.
+function startUpdate(version, { assetName, onFail } = {}) {
+  const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
+  const asset = { name: assetName || `dabcast_${version}_${arch}.deb` };
+  const wasOnAir = state.muxRunning;
+  _updateState = { status: wasOnAir ? 'stopping' : 'downloading', progress: 0, error: null, version, onAir: wasOnAir };
   (async () => {
     if (wasOnAir) {
-      writeResumeMarker(_releaseCache.latestVersion);
+      writeResumeMarker(version);
       logger.line('update', 'ON AIR: stopping the multiplex for the update (it is put back on air after the restart)');
       await state.stopMux();
       _updateState = { ..._updateState, status: 'downloading' };
     }
-    await _doUpdate(asset, _releaseCache.latestVersion);
+    await _doUpdate(asset, version);
     // the package restarts the service; if this process is still alive a minute later, nothing restarted it
     if (wasOnAir) setTimeout(() => resumeAfterUpdate('service not restarted after the update'), 60000).unref?.();
   })().catch(err => {
     logger.line('update', `Update failed: ${err.message || err}`, 'ERROR');
     _updateState = { status: 'error', progress: 0, error: String(err.message || err), version: null };
     if (wasOnAir) resumeAfterUpdate('update failed');   // back on air at once, on the current version
+    onFail?.(err);
   });
-});
+}
 
 // Resume marker (data/runtime/resume-after-update.json): written before an update stops the mux ON AIR,
 // read and deleted at start-up (or when the update fails) to put the multiplex back on air.
@@ -2440,6 +2450,11 @@ async function resumeAfterUpdate(reason) {
 // Its "PROGRESS n" lines drive the progress bar, "INSTALLING" switches to the installing step.
 async function _doUpdate(asset, version) {
   if (!/^\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(String(version || ''))) throw new Error(`Invalid release version: ${version}`);
+  if (process.env.DABCAST_UPDATE_DRYRUN === '1') {   // tests only: never runs the root installer
+    logger.line('update', `DRY RUN: would install ${asset.name} (v${version})`);
+    _updateState = { ..._updateState, status: 'restarting' };
+    return;
+  }
   logger.line('update', `Downloading and installing ${asset.name} (v${version})...`);
   let errText = '';
   await new Promise((ok, fail) => {
@@ -2469,6 +2484,90 @@ async function _doUpdate(asset, version) {
   _updateState = { ..._updateState, status: 'restarting' };
   logger.line('update', 'Update installed, service restarting...');
 }
+
+// ── Automatic updates (⚙ Settings, off by default): rules in autoUpdate.js ──
+const APP_VER = typeof __APP_VERSION__ !== 'undefined'
+  ? __APP_VERSION__
+  : (() => { try { return JSON.parse(fs.readFileSync(new URL('../package.json', import.meta.url))).version; } catch { return '0.0.0'; } })();
+// check marker (data/runtime/auto-update.json): what the restarted service must check, kept across the restart
+const autoMarkerPath = () => path.join(dataDir, 'runtime', 'auto-update.json');
+const readAutoMarker = () => { try { return JSON.parse(fs.readFileSync(autoMarkerPath(), 'utf8')); } catch { return null; } };
+const clearAutoMarker = () => { try { fs.unlinkSync(autoMarkerPath()); } catch { /* none */ } };
+// services ON whose encoder (or direct input) is running
+const runningServices = () => (state.preset?.services || []).filter((s) => s.enabled !== false && state.serviceRuntime.get(s.id)?.status === 'RUNNING').length;
+function autoReport(ok, message) {
+  logger.line('update', message, ok ? 'INFO' : 'ERROR');
+  try { telegramNotifier?.notifyAlways({ level: ok ? '✅ UPDATE' : 'ERROR', scope: 'update', message }); } catch { /* never blocks */ }
+  settings.autoUpdateLast = { at: new Date().toISOString(), ok, message };
+  try { writeJson(settingsPath, settings); } catch { /* ignore */ }
+}
+function saveAutoUpdate(patch) {
+  settings.autoUpdate = normalizeAutoUpdate({ ...normalizeAutoUpdate(settings.autoUpdate), ...patch });
+  writeJson(settingsPath, settings);
+}
+let autoLastDay = null, autoBusy = false;
+async function autoUpdateTick(now = new Date()) {
+  const cfg = normalizeAutoUpdate(settings.autoUpdate);
+  if (autoBusy || !isDue(cfg, now, autoLastDay)) return;
+  autoLastDay = dayKey(now);
+  autoBusy = true;
+  try {
+    if (_updateState.status !== 'idle' && _updateState.status !== 'error') return logger.line('update', 'Automatic update: an update is already running');
+    if (settings.autoStart && !state.muxRunning) return autoReport(false, 'Automatic update postponed: the multiplex should be on air but is not (problem in progress)');
+    const info = await loadReleaseInfo(true);
+    const pick = pickVersion({ cfg, current: APP_VER, latest: info?.latestVersion, publishedAt: info?.publishedAt });
+    if (!pick.version) return logger.line('update', `Automatic update: nothing to install — ${pick.none}`);
+    writeJson(autoMarkerPath(), { from: APP_VER, to: pick.version, at: new Date().toISOString(), wasOnAir: state.muxRunning,
+      before: { muxRunning: state.muxRunning, running: runningServices() } });
+    logger.line('update', `Automatic update: installing v${pick.version} (current v${APP_VER})${state.muxRunning ? ', the multiplex is stopped then put back on air' : ''}`);
+    startUpdate(pick.version, { onFail: (e) => { clearAutoMarker(); saveAutoUpdate({ skip: [...cfg.skip, pick.version] }); autoReport(false, `Automatic update to v${pick.version} failed, still on v${APP_VER}: ${e.message || e}`); } });
+  } catch (e) {
+    logger.line('update', `Automatic update: ${e.message || e}`, 'WARN');
+  } finally { autoBusy = false; }
+}
+setInterval(() => autoUpdateTick().catch(() => {}), 30000).unref?.();   // 2 ticks a minute: the HH:MM minute is never missed
+// After the restart: was it an automatic update (or its rollback)? Check, then report or roll back.
+function autoUpdateAfterRestart() {
+  const m = readAutoMarker();
+  if (!m) return;
+  if (Date.now() - Date.parse(m.at) > 2 * 3600000) { clearAutoMarker(); return; }   // stale (power cut…)
+  if (m.rollback) {
+    clearAutoMarker();
+    if (APP_VER === m.from) autoReport(false, `Automatic update to v${m.to} rolled back: v${m.from} is on air again (${m.reason})`);
+    else autoReport(false, `Automatic update to v${m.to}: rollback to v${m.from} not confirmed (running v${APP_VER}) — check the server`);
+    return;
+  }
+  if (APP_VER !== m.to) {   // the new version did not start: the old one is still here
+    clearAutoMarker();
+    saveAutoUpdate({ skip: [...normalizeAutoUpdate(settings.autoUpdate).skip, m.to] });
+    autoReport(false, `Automatic update to v${m.to} not installed, still on v${APP_VER}`);
+    return;
+  }
+  const checkMs = Number(process.env.DABCAST_AUTOUPDATE_CHECK_MS) || AUTO_UPDATE_CHECK_MS;   // env: tests only
+  logger.line('update', `Automatic update to v${m.to}: health check in ${Math.round(checkMs / 1000)} s`);
+  setTimeout(() => {
+    const h = healthAfterUpdate({ wasOnAir: m.wasOnAir, before: m.before, after: { muxRunning: state.muxRunning, running: runningServices() } });
+    if (h.ok) { clearAutoMarker(); autoReport(true, `Automatic update installed: v${m.from} → v${m.to}, ${h.reason}`); return; }
+    // rollback: the previous official release, the version that failed is never installed again
+    logger.line('update', `Automatic update to v${m.to} unhealthy (${h.reason}): rolling back to v${m.from}`, 'ERROR');
+    saveAutoUpdate({ skip: [...normalizeAutoUpdate(settings.autoUpdate).skip, m.to] });
+    writeJson(autoMarkerPath(), { ...m, rollback: true, reason: h.reason, at: new Date().toISOString() });
+    if (!state.muxRunning && m.wasOnAir) writeResumeMarker(m.from);   // put it back on air after the rollback
+    startUpdate(m.from, { onFail: (e) => { clearAutoMarker(); autoReport(false, `Automatic update to v${m.to} unhealthy (${h.reason}) and rollback to v${m.from} failed: ${e.message || e} — check the server`); } });
+  }, checkMs).unref?.();
+}
+autoUpdateAfterRestart();
+app.get('/api/update/auto', (req, res) => {
+  res.json({ ...normalizeAutoUpdate(settings.autoUpdate), last: settings.autoUpdateLast || null, current: APP_VER,
+    serverTime: new Date().toTimeString().slice(0, 5) });
+});
+app.put('/api/update/auto', (req, res) => {
+  const b = req.body || {};
+  saveAutoUpdate({ enabled: b.enabled === true, time: b.time, days: b.days, delayDays: b.delayDays });
+  const c = normalizeAutoUpdate(settings.autoUpdate);
+  logger.line('update', `Automatic updates ${c.enabled ? `on: ${c.time}, days ${c.days.join(',')}, releases older than ${c.delayDays} day(s)` : 'off'}`);
+  res.json({ ...c, last: settings.autoUpdateLast || null, current: APP_VER, serverTime: new Date().toTimeString().slice(0, 5) });
+});
 
 const listenHost = process.env.HOST || settings.host || '0.0.0.0';
 const listenPort = Number(process.env.PORT || settings.port || 9090);

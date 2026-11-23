@@ -865,6 +865,19 @@ txgain=40</pre>
   back on air by itself — even when <em>Start multiplex at startup</em> is not ticked. Expect about a minute without broadcast.
   If the installation fails, the multiplex goes back on air at once on the current version.
 </p>
+<h2>Automatic updates</h2>
+<p>
+  <strong>⚙ Settings → Automatic updates</strong> (off by default): DABcast installs new versions by itself at the chosen time
+  (server time, 02:00 by default), on the days ticked, and only releases published at least 0, 1, 3 or 7 days before
+  (3 by default: a faulty release is usually replaced within days). It is postponed when the multiplex should be on air but is not.
+</p>
+<ul>
+  <li>ON AIR, the multiplex is stopped for the installation and put back on air after the restart, as above.</li>
+  <li>Five minutes after the restart, DABcast checks that the multiplex is back on air with at least as many services running as before.
+      If not, it installs the previous version again and never installs the faulty one again (listed in the card).</li>
+  <li>The result (installed, rolled back, failed) is sent by Telegram when it is configured, whatever its minimum level, and shown in the card.</li>
+  <li>Rolling back to a version older than this feature (v1.11.0 or before) puts the multiplex back on air only when <em>Start multiplex at startup</em> is ticked.</li>
+</ul>
 
 <h1>Settings (⚙)</h1>
 <p>The round <strong>⚙</strong> button of the top bar opens the Settings window:</p>

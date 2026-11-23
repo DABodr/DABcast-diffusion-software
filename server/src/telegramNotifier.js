@@ -59,6 +59,12 @@ export class TelegramLogNotifier {
     return true;
   }
 
+  // Sent whatever the minimum level: report of an automatic update (installed, rolled back, failed)
+  notifyAlways({ timestamp = new Date().toISOString(), level = 'INFO', scope = 'app', message = '' } = {}) {
+    this._enqueue(this._format({ timestamp, level, scope, message }));
+    return true;
+  }
+
   // "✅ RESOLVED" message (transmitter output back: SDR transmitting / modulator reconnected; service back
   // on air / on its main stream):
   // false = its option is off (the caller then logs it as an ordinary INFO line)

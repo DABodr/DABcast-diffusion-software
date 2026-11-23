@@ -403,6 +403,10 @@ label.spi-check { flex-direction: row; align-items: center; gap: 6px; color: var
 .spi-act .btn { margin-left: 4px; }
 .spi-tabs { margin: 4px 0 10px; }
 .modal-spiweb { width: min(560px, calc(100vw - 20px)); }
+#autoUpdCard label.au-check { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 8px; color: var(--text); margin: 4px 0 10px; font-size: 13.5px; text-align: left; }
+.au-days { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 10px 0; }
+#autoUpdCard .au-days label { display: flex; flex-direction: row; align-items: center; gap: 4px; color: var(--text); font-size: 13px; }
+.au-save { margin-bottom: 6px; }
 .spiweb-url { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; color: var(--muted); font-size: 13px; }
 .spiweb-url input { width: 100%; }
 .spiweb-result { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; margin: 4px 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface2); color: var(--text); font-size: 13px; }
@@ -830,6 +834,7 @@ input, select { background: var(--surface2); border-radius: 6px; padding: 8px 10
 .stat-unit { font-size: 11px; font-weight: 600; color: var(--muted); }
 .sys-warn { color: var(--yellow); }
 .sys-bad { color: var(--red); font-weight: 600; }
+.sys-ok { color: var(--green); font-weight: 600; }
 .stat-title { font-size: 10px; color: var(--muted); font-weight: 600; letter-spacing: .05em; text-transform: uppercase; }
 .stat-val { font-size: 20px; font-weight: 700; line-height: 1.25; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .stat-val-sm { font-size: 14px; line-height: 1.7; }

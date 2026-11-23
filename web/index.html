@@ -32,7 +32,7 @@
       <button id="btnPlayer" class="btn" title="Listen to a service of the multiplex in this browser">Player</button>
       <button id="btnTelegram" class="btn" title="Telegram notifications">Telegram</button>
       <button id="btnAbout" class="btn" title="System information">Sys. info</button>
-      <button id="btnAuth" class="btn btn-about" title="Settings: account, password and web port" aria-label="Settings">&#9881;</button>
+      <button id="btnAuth" class="btn btn-about" title="Settings: account, password, web port, automatic updates" aria-label="Settings">&#9881;</button>
       <button id="btnSignOut" class="btn btn-about" title="Sign out" aria-label="Sign out">&#x23FB;</button>
       <button id="btnLegal" class="btn btn-about" title="About DABcast: credits and license">?</button>
       <button id="btnStop" class="btn btn-danger">Stop</button>
@@ -1179,7 +1179,7 @@
       <div class="modal-head">
         <div>
           <div class="modal-title">Settings</div>
-          <div class="modal-sub">Account, password and web interface port</div>
+          <div class="modal-sub">Account, password, web interface port and automatic updates</div>
         </div>
         <button type="button" class="icon" data-action="auth-cancel" aria-label="Close">&#10005;</button>
       </div>
@@ -1216,6 +1216,24 @@
           </div>
         </div>
         <p class="meta-help" id="webPortMsg">Save &amp; restart saves the port and restarts DABcast: the interface reopens at the new port. ON AIR, the multiplex is cut for about 10 s (autoStart puts it back on air).</p>
+      </div>
+      <div class="meta-card" id="autoUpdCard">
+        <div class="meta-card-title">Automatic updates</div>
+        <label class="au-check"><input type="checkbox" id="au_on" /> Install new versions automatically</label>
+        <div class="grid2">
+          <label>
+            <span class="lbl-row">Time<span class="dls-count" id="au_now"></span></span>
+            <input id="au_time" type="time" value="02:00" />
+          </label>
+          <label>
+            <span class="lbl-row">Only releases published at least</span>
+            <select id="au_delay"><option value="0">0 days (at once)</option><option value="1">1 day ago</option><option value="3">3 days ago</option><option value="7">7 days ago</option></select>
+          </label>
+        </div>
+        <div class="au-days" id="au_days"></div>
+        <div class="settings-btn-cell au-save"><button type="button" class="btn btn-success" id="btnAutoUpdSave">Save</button></div>
+        <p class="meta-help" id="autoUpdMsg">At the chosen time, DABcast installs the latest release (ON AIR: the multiplex is stopped, then put back on air, about a minute without broadcast). Five minutes later it checks the multiplex is back on air with as many services running as before; if not, it installs the previous version again and never retries the faulty one. The result is sent by Telegram (when configured) whatever its minimum level.</p>
+        <p class="meta-help" id="autoUpdLast"></p>
       </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-danger" id="btnLogout">Sign out</button>
