@@ -3489,7 +3489,35 @@ function showAuth() {
   $('#authError').classList.add('hidden');
   dlg.showModal();
   loadWebPort();
+  loadAutoUpdate();
 }
+
+// Settings › Automatic updates
+const AU_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+function renderAutoUpdate(c) {
+  $('#au_on').checked = c.enabled;
+  $('#au_time').value = c.time;
+  $('#au_delay').value = String(c.delayDays);
+  $('#au_days').innerHTML = AU_DAYS.map((d, i) => `<label><input type="checkbox" data-au-day="${i + 1}" ${c.days.includes(i + 1) ? 'checked' : ''}> ${d}</label>`).join('');
+  $('#au_now').textContent = `server time ${c.serverTime}`;
+  const l = c.last;
+  $('#autoUpdLast').innerHTML = [
+    `Installed: v${esc(c.current)}`,
+    l ? `<span class="${l.ok ? 'sys-ok' : 'sys-bad'}">Last automatic update (${esc(new Date(l.at).toLocaleString())}): ${esc(l.message)}</span>` : '',
+    c.skip.length ? `Never installed again (rolled back): ${c.skip.map((v) => `v${esc(v)}`).join(', ')}` : '',
+  ].filter(Boolean).join('<br>');
+}
+async function loadAutoUpdate() {
+  try { renderAutoUpdate(await api('/api/update/auto')); } catch (e) { $('#autoUpdLast').textContent = e.message || String(e); }
+}
+$('#btnAutoUpdSave')?.addEventListener('click', async () => {
+  const days = [...document.querySelectorAll('[data-au-day]')].filter((c) => c.checked).map((c) => Number(c.dataset.auDay));
+  if ($('#au_on').checked && !days.length) { $('#autoUpdLast').textContent = 'Tick at least one day'; return; }
+  try {
+    renderAutoUpdate(await api('/api/update/auto', { method: 'PUT', body: JSON.stringify({ enabled: $('#au_on').checked, time: $('#au_time').value, delayDays: Number($('#au_delay').value), days }) }));
+    showToast($('#au_on').checked ? 'Automatic updates on' : 'Automatic updates off', 'success');
+  } catch (e) { $('#autoUpdLast').textContent = e.message || String(e); }
+});
 
 // Settings › Web server: port of the web interface (applied at the next DABcast start)
 let WEB_PORT = null;   // last /api/settings/web answer
