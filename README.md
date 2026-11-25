@@ -7,7 +7,9 @@
 
 # DABcast - WebUI for DAB/DAB+ (ODR-mmbTools)
 
-Modern web interface for managing DAB/DAB+ multiplexes with ODR-mmbTools.
+Free **DAB+ multiplexer and encoder web interface** for the Opendigitalradio **ODR-mmbTools**:
+run a small-scale DAB+ multiplex from your browser and feed an **EasyDABV2** (ETI over ZMQ), an
+EDI transmitter or a local SDR (HackRF, LimeSDR) — on a Linux PC or a **Raspberry Pi**.
 
 [![Tests](https://github.com/DABodr/DABcast-diffusion-software/actions/workflows/tests.yml/badge.svg)](https://github.com/DABodr/DABcast-diffusion-software/actions/workflows/tests.yml)
 **[Latest release](https://github.com/DABodr/DABcast-diffusion-software/releases/latest)** ·
