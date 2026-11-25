@@ -559,6 +559,7 @@
             <select id="f_src">
               <option value="GSTREAMER">GStreamer</option>
               <option value="VLC">VLC</option>
+              <option value="ALSA">Sound card (ALSA)</option>
               <option value="ZMQ">ZMQ direct (external encoder)</option>
               <option value="EDI">EDI direct (external encoder)</option>
             </select>
@@ -599,10 +600,12 @@
           </label>
 
           <label id="f_uri_row" class="span2">
-            <span>Main stream</span>
+            <span id="f_uri_label">Main stream</span>
             <span class="url-test">
               <input id="f_uri" placeholder="http://..." />
               <button type="button" class="btn btn-sm" data-test-url="f_uri">Test</button>
+              <button type="button" class="btn btn-sm" id="f_alsa_detect" style="display:none;" title="List the sound cards of the server that can record">Detect</button>
+              <button type="button" class="btn btn-sm" id="f_alsa_check" style="display:none;" title="Check that this sound card exists on the server and can record">Check</button>
             </span>
             <span class="field-note" id="f_uri_test"></span>
           </label>
@@ -611,6 +614,11 @@
             <span>Backup stream</span>
             <span class="url-test">
               <input id="f_backup" placeholder="http://..." />
+              <select id="f_backup_mode" title="Player of the backup stream" style="width:auto;">
+                <option value="">Same as main</option>
+                <option value="GSTREAMER">GStreamer</option>
+                <option value="VLC">VLC</option>
+              </select>
               <button type="button" class="btn btn-sm" data-test-url="f_backup">Test</button>
             </span>
             <span class="field-note" id="f_backup_test"></span>

@@ -17,8 +17,26 @@ export function buildPadEncCommand(svc, motDirAbs, dlsPath) {
 }
 
 // odr-audioenc command builder
+// Player used for a URI of the service: the backup stream can have its own (input.backupMode:
+// GSTREAMER / VLC; '' or missing = same as main). A sound card main source (ALSA) always needs a
+// stream player for its backup: GStreamer when none is set.
+export function inputModeFor(svc, uri) {
+  const main = String(svc.input?.mode || '').toUpperCase();
+  const onBackup = Boolean(svc.input?.backupUri) && uri === svc.input.backupUri && uri !== svc.input?.uri;
+  if (!onBackup) return main;
+  const b = String(svc.input?.backupMode || '').toUpperCase();
+  if (b === 'GSTREAMER' || b === 'VLC') return b;
+  return main === 'ALSA' ? 'GSTREAMER' : main;
+}
+// Sound card: seconds of silence before odr-audioenc stops (then the watchdog restarts it, or switches
+// to the backup stream) = the service's "Silence threshold", 30 s when not set, at least 5 s.
+// Streams keep the fixed 180 s.
+export const ALSA_SILENCE_DEFAULT_SEC = 30;
+const alsaSilenceSec = (svc) => Math.max(5, Math.round(Number(svc.watchdog?.silenceThresholdSec ?? ALSA_SILENCE_DEFAULT_SEC)) || ALSA_SILENCE_DEFAULT_SEC);
+
 export function buildAudioEncCommand({ svc, activeUri, mtaPath }) {
-  const isGst = svc.input?.mode?.toUpperCase().includes('GST');
+  const mode = inputModeFor(svc, activeUri);
+  const isGst = mode.includes('GST');
   // Respect user choice: only use -G if explicitly set to GST mode
   const sourceFlag = isGst ? '-G' : '-v';
   const codecArgs = svc.audio?.codecArgs || [];
@@ -32,10 +50,14 @@ export function buildAudioEncCommand({ svc, activeUri, mtaPath }) {
   args.push('-l');
 
   // 3. Input source
-  args.push(sourceFlag, activeUri);
+  // ALSA (local sound card, input.uri = device such as plughw:1,0): odr-audioenc reads it itself (-d);
+  // -D always: a sound card clock never runs exactly at the DAB clock (else "input empty" underruns)
+  const isAlsa = mode === 'ALSA';
+  if (isAlsa) args.push('-d', activeUri, '-D');
+  else args.push(sourceFlag, activeUri);
 
   // 4. VLC-specific options (resampler + buffer + drift comp) - only for VLC mode
-  if (sourceFlag === '-v') {
+  if (!isAlsa && sourceFlag === '-v') {
     args.push(
       '-L', '--audio-resampler=speex-resampler',
       '-L', '--speex-resampler-quality=10',
@@ -55,7 +77,7 @@ export function buildAudioEncCommand({ svc, activeUri, mtaPath }) {
     '-b', String(svc.dab.bitrateKbps),
     '-r', String(svc.audio.sampleRateHz ?? 48000),
     '-g', String(svc.audio.gainDb ?? 0),
-    '-s', '180'  // silence timeout 180s
+    '-s', isAlsa ? String(alsaSilenceSec(svc)) : '180'  // silence timeout 180s (sound card: see alsaSilenceSec)
   );
 
   // 6. Output (ZMQ)
@@ -73,10 +95,11 @@ export function buildAudioEncCommand({ svc, activeUri, mtaPath }) {
 export function buildProbeCommand(uri, mode) {
   const isGst = String(mode || '').toUpperCase().includes('GST');
   const sourceFlag = isGst ? '-G' : '-v';
+  const isAlsa = String(mode || '').toUpperCase() === 'ALSA';   // sound card main source: is the sound back?
   return {
     bin: 'odr-audioenc',
     args: [
-      sourceFlag, uri,
+      ...(isAlsa ? ['-d', uri] : [sourceFlag, uri]),
       '-c', '1',      // mono — less CPU
       '-b', '32',     // 32 kbps minimum
       '-r', '48000',

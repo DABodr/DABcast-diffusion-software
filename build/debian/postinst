@@ -58,6 +58,16 @@ case "$1" in
     sed -i "s/^Group=.*/Group=$RUN_AS_GROUP/" /lib/systemd/system/dabcast.service
     log "  -> Service unit: User=$RUN_AS_USER Group=$RUN_AS_GROUP"
 
+    # Sound card source (ALSA): /dev/snd belongs to the group audio — the service takes the groups of
+    # its user (systemd initgroups), so that user must be in it. Never fatal.
+    if getent group audio >/dev/null 2>&1 && ! id -nG "$RUN_AS_USER" | tr ' ' '\n' | grep -qx audio; then
+      if usermod -aG audio "$RUN_AS_USER" 2>/dev/null; then
+        log "  -> $RUN_AS_USER added to the group audio (sound card sources)"
+      else
+        log "  WARNING: could not add $RUN_AS_USER to the group audio (sound card sources will not open)"
+      fi
+    fi
+
     # --- Data directories ---
     log "[2/5] Creating the data directories..."
     for dir in /var/lib/dabcast/presets \

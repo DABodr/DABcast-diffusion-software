@@ -296,7 +296,8 @@ function updateFailoverVisibility() {
   const on = $('#f_switch')?.value === '1';
   for (const id of ['f_thresh_row', 'f_return_row']) {
     const el = document.getElementById(id);
-    if (el) el.style.display = on ? '' : 'none';
+    // sound card: the silence threshold also stops / restarts the encoder when switching is off
+    if (el) el.style.display = on || (id === 'f_thresh_row' && mode === 'ALSA') ? '' : 'none';
   }
 }
 $('#f_switch')?.addEventListener('change', updateFailoverVisibility);
@@ -350,7 +351,69 @@ function updateSourceVisibility() {
     const el = document.getElementById(id);
     if (el) el.style.display = isDirect ? '' : 'none';
   }
+  // Sound card (ALSA): the "stream" is a capture device; no backup stream / failover (encoder restart only)
+  const isAlsa = mode === 'ALSA';
+  if ($('#f_uri_label')) $('#f_uri_label').textContent = isAlsa ? 'Sound card (ALSA device)' : 'Main stream';
+  if ($('#f_uri')) $('#f_uri').placeholder = isAlsa ? 'plughw:1,0' : 'http://...';
+  document.querySelector('[data-test-url="f_uri"]')?.style.setProperty('display', isAlsa ? 'none' : '');
+  $('#f_alsa_detect')?.style.setProperty('display', isAlsa ? '' : 'none');
+  $('#f_alsa_check')?.style.setProperty('display', isAlsa ? '' : 'none');
+  if (isAlsa && $('#f_meta_mode')?.value === 'STREAM') { $('#f_meta_mode').value = 'NONE'; updateMetaModeVisibility(); }
+  else updateMetaModeVisibility();   // the Stream (ICY) button follows the source
+  if (isAlsa) {
+    $('#f_uri_test').textContent = '';
+    const sw = document.getElementById('f_swap_row');   // a card and a web stream cannot be swapped
+    if (sw) sw.style.display = 'none';
+    // silence threshold = how long the card may stay silent before the switch (or the restart): always shown
+    const th = document.getElementById('f_thresh_row');
+    if (th) th.style.display = '';
+  }
+  // backup player: "Same as main" is not possible for a sound card (its backup is a web stream)
+  const sameOpt = $('#f_backup_mode')?.querySelector('option[value=""]');
+  if (sameOpt) {
+    sameOpt.disabled = isAlsa;
+    if (isAlsa && !$('#f_backup_mode').value) $('#f_backup_mode').value = 'GSTREAMER';
+  }
+  // a card's silence threshold: 30 s rather than the 10 s default of the streams
+  if (isAlsa && $('#f_thresh') && String($('#f_thresh').value) === '10') $('#f_thresh').value = '30';
 }
+// 'Detect' (sound card source): the capture devices of the server, click one to use it
+$('#f_alsa_detect')?.addEventListener('click', async () => {
+  const out = $('#f_uri_test');
+  out.className = 'field-note';
+  out.textContent = 'Looking for sound cards…';
+  try {
+    const { devices } = await api('/api/audio/devices');
+    if (!devices.length) { out.textContent = 'No sound card that can record was found on the server.'; return; }
+    out.innerHTML = devices.map((d) => `<a href="#" data-alsa="${esc(d.device)}">${esc(d.device)}</a> — ${esc(d.card)} · ${esc(d.name)} <span class="muted">(${esc(d.hw)})</span>`).join('<br>');
+  } catch (err) {
+    out.textContent = err.message || String(err);
+    out.className = 'field-note err';
+  }
+});
+// 'Check' (sound card source): the card exists on the server, can record, is it already open
+async function checkAlsaDevice(device) {
+  return api('/api/audio/check', { method: 'POST', body: JSON.stringify({ device }) });
+}
+$('#f_alsa_check')?.addEventListener('click', async () => {
+  const out = $('#f_uri_test');
+  const device = ($('#f_uri').value || '').trim();
+  if (!device) { out.className = 'field-note err'; out.textContent = 'Enter a sound card first (or use Detect).'; return; }
+  try {
+    const r = await checkAlsaDevice(device);
+    out.className = r.ok === false ? 'field-note err' : 'field-note';
+    out.textContent = `${r.ok === false ? '✗' : r.ok ? (r.busy ? '⚠' : '✓') : 'ℹ'} ${r.message}`;
+  } catch (err) {
+    out.className = 'field-note err';
+    out.textContent = err.message || String(err);
+  }
+});
+$('#f_uri_test')?.addEventListener('click', (e) => {
+  const a = e.target.closest('a[data-alsa]');
+  if (!a) return;
+  e.preventDefault();
+  $('#f_uri').value = a.dataset.alsa;
+});
 
 // EBU Latin character set (ETSI EN 300 401, Annex A):
 // ASCII printable (0x20-0x7E) + accented European characters
@@ -890,7 +953,10 @@ function render() {
 
     // Cell definitions: [cssClass, innerHTML]
     const cells = [
-      ['', badge(status) + (STATE.muxRunning ? bufTag(MUX_STATS?.inputs?.[svc.id]) + pendingTag(svc.runtime) : '')],
+      ['', badge(status) + (STATE.muxRunning ? bufTag(MUX_STATS?.inputs?.[svc.id]) + pendingTag(svc.runtime) : '')
+        // why the encoder keeps stopping (last error line of odr-audioenc), while it restarts in a loop
+        + (STATE.muxRunning && (status === 'ERROR' || status === 'WARNING') && svc.runtime?.encLastError
+          ? `<div class="muted" style="font-size:11px;max-width:220px;color:var(--red);" title="${esc(svc.runtime.encLastError)}">${esc(svc.runtime.encLastError.length > 70 ? `${svc.runtime.encLastError.slice(0, 70)}…` : svc.runtime.encLastError)}</div>` : '')],
       ['', `<div class="ps"${ps8Title ? ` title="${esc(ps8Title)}"` : ''}>${esc(ps8)}</div><div class="muted">${esc(ps16)}</div>`],
       ['col-pid hide-mobile', esc(svc.id)],
       ['col-pty hide-mobile', ptyCell(svc.identity?.pty)],
@@ -1195,7 +1261,7 @@ function openDialogFor(service) {
 
   // --- Audio tab ---
   const _rawMode = (service?.input?.mode || 'GSTREAMER').toUpperCase();
-  if (_rawMode === 'ZMQ' || _rawMode === 'EDI') {
+  if (_rawMode === 'ZMQ' || _rawMode === 'EDI' || _rawMode === 'ALSA') {
     $('#f_src').value = _rawMode;
   } else {
     $('#f_src').value = _rawMode.includes('GST') ? 'GSTREAMER' : 'VLC';
@@ -1209,6 +1275,7 @@ function openDialogFor(service) {
   updateSourceVisibility();
   $('#f_uri').value = service?.input?.uri || '';
   $('#f_backup').value = service?.input?.backupUri || '';
+  $('#f_backup_mode').value = service?.input?.backupMode || ($('#f_src').value === 'ALSA' ? 'GSTREAMER' : '');
 
   $('#f_thresh').value = service?.watchdog?.silenceThresholdSec ?? 10;
   $('#f_return').value = service?.watchdog?.returnToMainAfterSec ?? 60;
@@ -1216,6 +1283,7 @@ function openDialogFor(service) {
 
   // --- Metadata tab ---
   $('#f_meta_mode').value = service?.metadata?.mode || 'STREAM';
+  if ($('#f_src').value === 'ALSA' && $('#f_meta_mode').value === 'STREAM') $('#f_meta_mode').value = 'NONE';   // no ICY title on a sound card
   $('#f_default_dls').value = service?.metadata?.defaultDls || '';
   updateDlsCount();
   $('#f_sls_url').value = service?.metadata?.slsUrl || '';
@@ -2189,7 +2257,8 @@ function updateMetaModeVisibility() {
     const on = b.dataset.mode === mode;
     b.classList.toggle('active', on);
     b.setAttribute('aria-checked', on ? 'true' : 'false');
-    b.disabled = Boolean($('#f_meta_mode')?.disabled);
+    // sound card source: no ICY title to read, so no "Stream (ICY)" mode
+    b.disabled = Boolean($('#f_meta_mode')?.disabled) || (b.dataset.mode === 'STREAM' && $('#f_src')?.value === 'ALSA');
   });
   const help = $('#metaModeHelp');
   if (help) help.textContent = META_MODE_HELP[mode] || '';
@@ -4493,6 +4562,7 @@ $('#svcForm').addEventListener('submit', async (e) => {
       mode: $('#f_src').value,
       uri: $('#f_uri').value.trim() || null,
       backupUri: $('#f_backup').value.trim(),   // '' clears it (null kept the previous backup stream)
+      backupMode: $('#f_backup_mode')?.value || '',
       encoderBufferMs: Number($('#f_encbuf').value || 200),
       driftComp: $('#f_drift')?.value === '1',
       zmqBuffer: Number($('#f_zbuf').value || 40),
@@ -4513,6 +4583,21 @@ $('#svcForm').addEventListener('submit', async (e) => {
     ...metaPayload()
   };
 
+  // Sound card: one ALSA device can be opened by one encoder only; its backup is a web stream
+  if ($('#f_src').value === 'ALSA') {
+    if (payload.input.backupUri && !/^https?:\/\//i.test(payload.input.backupUri)) {
+      showServiceError('With a sound card, the backup must be a web stream (http:// or https://).');
+      return;
+    }
+    const dev = String(payload.input.uri || '').toLowerCase();
+    const other = STATE.preset.services.find((s) => s.id !== editingId && String(s.input?.mode || '').toUpperCase() === 'ALSA'
+      && String(s.input?.uri || '').toLowerCase() === dev);
+    if (other) {
+      showServiceError(`Sound card ${payload.input.uri} is already used by ${other.identity?.ps8 || other.id}.`);
+      return;
+    }
+  }
+
   // ZMQ/EDI direct: input port chosen by the user (empty on a new service = automatic)
   if (['ZMQ', 'EDI'].includes($('#f_src').value)) {
     const rawPort = String($('#f_direct_port').value || '').trim();
@@ -4529,6 +4614,14 @@ $('#svcForm').addEventListener('submit', async (e) => {
       }
       payload.network = { ediOutputTcp: { port } };
     }
+  }
+
+  // Sound card: a card the server does not have is said before saving (the encoder would restart in a loop)
+  if ($('#f_src').value === 'ALSA' && payload.input.uri) {
+    try {
+      const r = await checkAlsaDevice(payload.input.uri);
+      if (r.ok === false && !confirm(`${r.message}.\n\nThe encoder of this service will not start with it. Save anyway?`)) return;
+    } catch { /* check not possible: save as before */ }
   }
 
   const needMuxRestart = Boolean(editingId && restartFieldsChanged());

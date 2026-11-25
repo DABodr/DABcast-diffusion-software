@@ -66,6 +66,18 @@ export function validateService(service, allowedBitrates) {
   if (mode === 'VLC' && /^https?:\/\//i.test(uri)) {
     warnings.push('VLC input with an HTTP/HTTPS stream: GStreamer is recommended for stability.');
   }
+  const backupMode = String(service.input?.backupMode || '').toUpperCase();
+  if (backupMode && !['GSTREAMER', 'VLC'].includes(backupMode)) errors.push('Backup player must be GStreamer or VLC.');
+  // ALSA (local sound card): input.uri = ALSA capture device, passed to odr-audioenc -d
+  if (mode === 'ALSA') {
+    if (!/^[A-Za-z][A-Za-z0-9_]*(:[A-Za-z0-9_=,.-]+)?$/.test(uri)) {
+      errors.push('Sound card: enter an ALSA capture device, e.g. plughw:1,0 or plughw:CARD=Device,DEV=0.');
+    } else if (service.input?.backupUri && !/^https?:\/\//i.test(String(service.input.backupUri))) {
+      errors.push('Sound card source: the backup must be a web stream (http:// or https://).');
+    } else if (/^hw:/i.test(uri)) {
+      warnings.push('hw: opens the card as it is: the encoder fails if the card does not support the sample rate. plughw: converts it.');
+    }
+  }
 
   return { errors, warnings, normalized };
 }

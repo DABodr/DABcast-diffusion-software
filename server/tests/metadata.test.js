@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { encoderErrorLine } from '../src/appState.js';
 import { AppState, parseTimeMs, parseDurationMs, trackEndMs, TRACK_END_GRACE_MS, classifyItemType, findNearTitle } from '../src/appState.js';
 import { DEFAULT_SETTINGS } from '../src/defaults.js';
 
@@ -464,6 +465,36 @@ describe('cover download: a "?" belonging to the file name', () => {
       assert.equal(seen.length, 2);   // one retry only
     } finally {
       srv.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('encoder stop reason (encoderErrorLine)', () => {
+  it('keeps the last error line of odr-audioenc stderr, ignores the VU meter and plain lines', () => {
+    const t = 'Initialising ALSA...\nALSA lib confmisc.c:165:(snd_config_get_card) Cannot get card index for Nope\nInitialising input triggered exception: cannot open audio device plughw:CARD=Nope,DEV=0(No such device)\n';
+    assert.equal(encoderErrorLine(t), 'Initialising input triggered exception: cannot open audio device plughw:CARD=Nope,DEV=0(No such device)');
+    assert.equal(encoderErrorLine('In: [!=====|=====!] P U'), null);
+    assert.equal(encoderErrorLine('Starting encoding\nPAD socket opened'), null);
+    assert.equal(encoderErrorLine(''), null);
+  });
+});
+
+describe('sound card source: one ALSA device for one service (server side)', () => {
+  it('refuses a second service on the same card (import / edit), accepts another card', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dabcast-alsa-dup-'));
+    try {
+      fs.mkdirSync(path.join(dir, 'presets'), { recursive: true });
+      fs.copyFileSync(demoPreset, path.join(dir, 'presets', 'demo.json'));
+      const state = new AppState({ settings: structuredClone(DEFAULT_SETTINGS), dataDir: dir, logger: { line() {} }, processManager: { isRunning: () => false } });
+      const base = structuredClone(state.preset.services[0]);
+      const mk = (id, uri) => ({ ...structuredClone(base), id, identity: { ...base.identity, pi: `0x${id}`, serviceIdHex: `0x${id}`, ps8: id, ps16: id }, input: { ...base.input, mode: 'ALSA', uri, backupUri: '' }, network: { ediOutputTcp: { host: '127.0.0.1', port: 9800 + Number.parseInt(id.slice(-1), 16) } } });
+      state.upsertService(mk('E001', 'plughw:CARD=Device,DEV=0'));
+      assert.throws(() => state.upsertService(mk('E002', 'plughw:card=device,dev=0')), /already used by E001/);
+      state.upsertService(mk('E003', 'plughw:CARD=Other,DEV=0'));
+      assert.throws(() => state.setService('E003', { input: { uri: 'plughw:CARD=Device,DEV=0' } }), /already used by E001/);
+      state.setService('E001', { input: { uri: 'plughw:CARD=Device,DEV=0' } });   // its own card: fine
+    } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
