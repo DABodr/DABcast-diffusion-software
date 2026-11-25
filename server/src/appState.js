@@ -130,6 +130,18 @@ export function trackEndMs({ startMs = null, durationMs = null, firstSeenMs = nu
   return null;   // show / talk / unknown: never cut
 }
 
+// Why an encoder stopped, from its stderr: the last line that looks like an error ("Initialising input
+// triggered exception: cannot open audio device plughw:CARD=X,DEV=0(No such device)", a stream that
+// cannot be opened…). Shown on the service row and in the crash log line. null = no such line.
+const ENC_ERROR_RE = /exception|cannot|could not|couldn't|error|failed|no such|not found|busy|refused|denied|unauthori[sz]ed|forbidden/i;
+export function encoderErrorLine(text) {
+  const lines = String(text || '').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !/^In:\s*\[/.test(l) && ENC_ERROR_RE.test(l));
+  return lines.length ? lines[lines.length - 1].slice(0, 200) : null;
+}
+// Restarts in a row without a stable run: the service is shown ERROR (not RUNNING) until it runs
+// FAILOVER_STABLE_MS (a wrong sound card or a dead stream used to show RUNNING between restarts)
+const ENC_LOOP_CRASHES = 2;
+
 // Parse odr-audioenc VU meter: "In: [LLLLLL|RRRRRR] P"
 // Be tolerant to spacing after 'In:' (some builds use multiple spaces).
 const LEVEL_STEREO_RE = /In:\s*\[(.{6})\|(.{6})\]/;
@@ -299,6 +311,7 @@ export class AppState {
         mode: svc.input?.mode || 'GSTREAMER',
         uri: svc.input?.uri || null,
         backupUri: svc.input?.backupUri || null,
+        backupMode: svc.input?.backupMode || '',   // player of the backup stream ('' = same as main)
         zmqBuffer: Number.isInteger(svc.input?.zmqBuffer) ? svc.input.zmqBuffer : DEFAULT_ZMQ_BUFFER,
         zmqPrebuffering: Number.isInteger(svc.input?.zmqPrebuffering) ? svc.input.zmqPrebuffering : DEFAULT_ZMQ_PREBUFFER,
         encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200,
@@ -485,6 +498,7 @@ export class AppState {
 
     const { errors, warnings, normalized } = validateService(next, ALLOWED_BITRATES_KBPS);
     if (errors.length) throw new Error(errors.join(' '));
+    this._checkSoundCard(normalized);
     if (warnings?.length) {
       warnings.forEach(w => this.logger.line('service', `${next.id}: ${w}`, 'WARN'));
     }
@@ -537,6 +551,7 @@ export class AppState {
       next.input.uri = patch.input.uri ?? next.input.uri;
       next.input.backupUri = patch.input.backupUri ?? next.input.backupUri;
       if (typeof patch.input.mode === 'string') next.input.mode = patch.input.mode;
+      if (typeof patch.input.backupMode === 'string') next.input.backupMode = patch.input.backupMode;   // applied at the next switch
       if (Number.isInteger(patch.input.encoderBufferMs)) next.input.encoderBufferMs = patch.input.encoderBufferMs;
       if (typeof patch.input.driftComp === 'boolean') next.input.driftComp = patch.input.driftComp;
     }
@@ -648,6 +663,7 @@ export class AppState {
 
     const { errors, warnings, normalized } = validateService(next, ALLOWED_BITRATES_KBPS);
     if (errors.length) throw new Error(errors.join(' '));
+    this._checkSoundCard(normalized);
     if (warnings?.length) {
       warnings.forEach(w => this.logger.line('service', `${next.id}: ${w}`, 'WARN'));
     }
@@ -728,9 +744,18 @@ export class AppState {
     this.preset.services[idx] = normalized;
     this._savePreset();
 
+    // input changed by the user: a new start — crash count and last encoder error of the old input cleared
+    const rtIn = needRestart && this.muxRunning ? this.serviceRuntime.get(id) : null;
+    if (rtIn) { rtIn.consecutiveCrashes = 0; rtIn.encLastError = null; }
     if (needRestart && this.pm.isRunning(`svc:${id}:audioenc`)) {
       this.logger.line(`svc:${id}`, `input changed while ON AIR — restarting encoder`);
       this._restartEncoderLatest(normalized.id, (svc) => svc.input.uri);
+    } else if (rtIn && (!rtIn.activeUri || rtIn.activeUri === existing.input?.uri)) {
+      // encoder down (restart loop on a wrong card / dead stream): the watchdog restarts it on
+      // rt.activeUri — point it at the new input, else the correction was never used
+      rtIn.activeUri = normalized.input?.uri;
+      rtIn.encWasAlive = false;   // the last death belongs to the old input: not counted against the new one
+      this.logger.line(`svc:${id}`, `input changed while the encoder is down — next restart uses ${normalized.input?.uri}`);
     }
     if (gainRestart) {
       const what = gainChanged ? `audio gain changed while ON AIR (${existing.audio?.gainDb ?? 0} → ${normalized.audio?.gainDb ?? 0} dB)`
@@ -802,6 +827,7 @@ export class AppState {
         mode: svc.input?.mode || 'GSTREAMER',
         uri: svc.input?.uri || null,
         backupUri: svc.input?.backupUri || null,
+        backupMode: svc.input?.backupMode || '',   // player of the backup stream ('' = same as main)
         zmqBuffer: Number.isInteger(svc.input?.zmqBuffer) ? svc.input.zmqBuffer : DEFAULT_ZMQ_BUFFER,
         zmqPrebuffering: Number.isInteger(svc.input?.zmqPrebuffering) ? svc.input.zmqPrebuffering : DEFAULT_ZMQ_PREBUFFER,
         encoderBufferMs: Number.isInteger(svc.input?.encoderBufferMs) ? svc.input.encoderBufferMs : 200,
@@ -861,6 +887,7 @@ export class AppState {
 
     const { errors, warnings, normalized } = validateService(newSvc, ALLOWED_BITRATES_KBPS);
     if (errors.length) throw new Error(errors.join(' '));
+    this._checkSoundCard(normalized);
     if (warnings?.length) {
       warnings.forEach(w => this.logger.line('service', `${newSvc.id}: ${w}`, 'WARN'));
     }
@@ -959,6 +986,16 @@ export class AppState {
   }
 
   // Validate a service mux input port: integer 1024–65535, not used by another service.
+  // Sound card source: one ALSA device for one service (a second encoder cannot open a USB card already
+  // recording: "Device or resource busy"). Edit, add and import (the form checks it too).
+  _checkSoundCard(svc) {
+    if (String(svc?.input?.mode || '').toUpperCase() !== 'ALSA') return;
+    const dev = String(svc.input?.uri || '').toLowerCase();
+    const other = this.preset.services.find((s) => s.id !== svc.id && String(s.input?.mode || '').toUpperCase() === 'ALSA'
+      && String(s.input?.uri || '').toLowerCase() === dev);
+    if (other) throw new Error(`Sound card ${svc.input.uri} is already used by ${other.identity?.ps8 || other.id}`);
+  }
+
   _checkInputPort(value, exceptId = null) {
     const port = Number(value);
     if (!Number.isInteger(port) || port < 1024 || port > 65535) {
@@ -2036,11 +2073,14 @@ export class AppState {
         activeUri,
         mtaPath
       });
+      if (rt) rt.encLastError = null;
       this.pm.spawn(`svc:${svc.id}:audioenc`, audioCmd.bin, audioCmd.args, {
         cwd: motDirAbs,
         onStderr: (text) => {
           const lvl = parseAudioLevel(text);
           if (lvl && rt) rt.audioLevels = lvl;
+          const errLine = encoderErrorLine(text);
+          if (errLine && rt) rt.encLastError = errLine;
         }
       });
     } catch (err) {
@@ -2115,7 +2155,7 @@ export class AppState {
             rt.lastDeathMs = nowMs();
             const ranMs = rt.lastStartMs ? (rt.lastDeathMs - rt.lastStartMs) : 0;
             rt.status = 'ERROR';
-            this.logger.line(`svc:${svc.id}`, `encoder died — crash #${rt.consecutiveCrashes}/${FAILOVER_CRASH_THRESHOLD}, ran ${Math.round(ranMs / 1000)}s, uri=${rt.activeUri}`, 'ERROR');
+            this.logger.line(`svc:${svc.id}`, `encoder died — crash #${rt.consecutiveCrashes}/${FAILOVER_CRASH_THRESHOLD}, ran ${Math.round(ranMs / 1000)}s, uri=${rt.activeUri}${rt.encLastError ? ` — ${rt.encLastError}` : ''}`, 'ERROR');
           }
           rt.encWasAlive = encAlive;
 
@@ -2181,6 +2221,7 @@ export class AppState {
             if (upMs >= FAILOVER_STABLE_MS) {
               this._logRecovery('services', `svc:${svc.id}`, `encoder stable for ${Math.round(upMs / 1000)}s — crash counter reset (${svc.identity?.ps8 || svc.id} back on air)`);
               rt.consecutiveCrashes = 0;
+              rt.encLastError = null;
             }
           }
 
@@ -2206,6 +2247,8 @@ export class AppState {
             const backupUnstable = !activeIsMain && rt.consecutiveCrashes > 0;
             if (backupUnstable) {
               if (rt.status !== 'WARNING') rt.status = 'WARNING';
+            } else if ((rt.consecutiveCrashes || 0) >= ENC_LOOP_CRASHES) {
+              if (rt.status !== 'ERROR') rt.status = 'ERROR';   // restarting in a loop: not shown RUNNING
             } else if (rt.status && rt.status !== 'RUNNING') {
               rt.status = 'RUNNING';
             }
@@ -2386,7 +2429,9 @@ export class AppState {
       this.logger.line(`svc:${svc.id}`, `[failover] audioenc stopped`);
 
       rt.activeUri = newUri;
-      rt.lastSwitchMs = nowMs();
+      // "Back to main after" counts from the real switch: a restart on the same stream (a backup that
+      // crashes in a loop) no longer pushes it back — else the probe never checked main again
+      if (newUri !== prevUri) rt.lastSwitchMs = nowMs();
       rt.status = 'RESTARTING';
 
       // Rebuild audioenc command with new URI
@@ -2400,17 +2445,20 @@ export class AppState {
       });
 
       this.logger.line(`svc:${svc.id}`, `[failover] spawn: ${audioCmd.bin} ... ${newUri}`);
+      rt.encLastError = null;   // the error shown is the one of the encoder now running
       this.pm.spawn(`svc:${svc.id}:audioenc`, audioCmd.bin, audioCmd.args, {
         cwd: motDirAbs,
         onStderr: (text) => {
           const lvl = parseAudioLevel(text);
           if (lvl && rt) rt.audioLevels = lvl;
+          const errLine = encoderErrorLine(text);
+          if (errLine && rt) rt.encLastError = errLine;
         }
       });
 
       rt.lastStartMs = nowMs();
       rt.encWasAlive = true;
-      rt.status = 'RUNNING';
+      rt.status = (rt.consecutiveCrashes || 0) >= ENC_LOOP_CRASHES ? 'ERROR' : 'RUNNING';   // restart loop: stays ERROR
       if (newUri === svc.input.uri && prevUri !== newUri) this._logRecovery('services', `svc:${svc.id}`, `[failover] switch OK — now on ${newUri} (${svc.identity?.ps8 || svc.id} back on its main stream)`);
       else this.logger.line(`svc:${svc.id}`, `[failover] switch OK — now on ${newUri}`);
     } catch (err) {
