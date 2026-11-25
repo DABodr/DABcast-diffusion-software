@@ -3,7 +3,33 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DABcast — DAB+ Broadcast Software</title>
+  <title>DABcast — DAB+ multiplexer &amp; encoder web interface (ODR-mmbTools)</title>
+  <meta name="description" content="Free DAB+ broadcast software: run a small-scale DAB+ multiplex from your browser with Opendigitalradio ODR-mmbTools. EasyDABV2, EDI, HackRF / LimeSDR, Raspberry Pi." />
+  <meta name="keywords" content="DAB+, DAB+ multiplexer, DAB+ encoder, DAB+ broadcast software, small-scale DAB, small scale DAB+, EasyDABV2, EasyDAB V2, Opendigitalradio, ODR-mmbTools, ODR-DabMux, odr-audioenc, EDI, ETI, ZMQ, SDR DAB transmitter, HackRF, LimeSDR, Raspberry Pi DAB+, DLS, DL+, slideshow, SPI, EPG, logiciel diffusion DAB+, multiplexeur DAB+, encodeur DAB+, radio associative DAB+" />
+  <link rel="canonical" href="https://dabodr.github.io/DABcast-diffusion-software/" />
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="DABcast" />
+  <meta property="og:title" content="DABcast — run a DAB+ multiplex from a web browser" />
+  <meta property="og:description" content="Free, open-source DAB+ multiplexer &amp; encoder web interface for Opendigitalradio ODR-mmbTools: small-scale DAB+, EasyDABV2, EDI, HackRF / LimeSDR, Raspberry Pi." />
+  <meta property="og:url" content="https://dabodr.github.io/DABcast-diffusion-software/" />
+  <meta property="og:image" content="https://dabodr.github.io/DABcast-diffusion-software/screenshot.png" />
+  <meta property="og:image:alt" content="DABcast web interface: DAB+ multiplex with its services on air" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "DABcast",
+    "description": "Web interface to run a DAB+ multiplex with Opendigitalradio ODR-mmbTools: audio encoders, multiplexer, EDI / ETI / ZMQ outputs (EasyDABV2), local SDR (HackRF, LimeSDR).",
+    "applicationCategory": "MultimediaApplication",
+    "operatingSystem": "Linux (Debian, Ubuntu, Raspberry Pi OS) — amd64, arm64",
+    "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+    "url": "https://dabodr.github.io/DABcast-diffusion-software/",
+    "downloadUrl": "https://github.com/DABodr/DABcast-diffusion-software/releases/latest",
+    "screenshot": "https://dabodr.github.io/DABcast-diffusion-software/screenshot.png",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" }
+  }
+  </script>
   <link rel="icon" type="image/png" href="favicon.png" />
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -167,6 +193,34 @@
             <div class="feature-icon">🧭</div>
             <h3>Guided service setup <span class="new-badge">New</span></h3>
             <p>Test a stream URL and see its current title, detect the artist / title / cover keys of a JSON API automatically, and get live hints on PI, PS8 / PS16 and multiplex capacity while you type.</p>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- Who it is for (plain words people search for) -->
+    <section class="features" id="about">
+      <div class="section-inner">
+        <h2>Free DAB+ broadcast software for small-scale DAB</h2>
+        <div class="feature-grid">
+
+          <div class="feature-card">
+            <div class="feature-icon">📻</div>
+            <h3>Small-scale DAB+ multiplex</h3>
+            <p>DABcast is a free DAB+ multiplexer and DAB+ encoder web interface for local, community and small-scale DAB multiplexes: internet radio streams to DAB+, with DLS / DL+ text, slideshow (logos and covers), SPI logos and the programme guide (EPG).</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🔗</div>
+            <h3>Built on Opendigitalradio</h3>
+            <p>It drives the Opendigitalradio ODR-mmbTools — ODR-AudioEnc, ODR-PadEnc, ODR-DabMux, ODR-DabMod — and feeds your transmitter: EasyDABV2 (EasyDAB V2, ETI over ZMQ), EDI over TCP / UDP, or a local SDR such as HackRF or LimeSDR.</p>
+          </div>
+
+          <div class="feature-card">
+            <div class="feature-icon">🌍</div>
+            <h3>Logiciel de diffusion DAB+</h3>
+            <p>DABcast est un logiciel libre de diffusion DAB+ : multiplexeur et encodeur DAB+ dans une page web, pour radio associative, mux DAB+ local ou small-scale DAB. Il fonctionne sur PC Linux et Raspberry Pi, avec EasyDABV2, un émetteur EDI ou un HackRF.</p>
           </div>
 
         </div>
