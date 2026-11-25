@@ -106,3 +106,18 @@ describe('validateService', () => {
     assert.ok(!warnings?.length || !warnings.some((w) => w.includes('GStreamer')));
   });
 });
+
+describe('validateService — sound card (ALSA)', () => {
+  const svc = (uri) => ({ identity: { pi: 'F408', ps8: 'TEST', ps16: 'TESTRADIO' }, dab: { bitrateKbps: 88, protectionLevel: 3 }, network: { ediOutputTcp: { port: 9001 } }, input: { mode: 'ALSA', uri } });
+  it('accepts plughw / named / default devices', () => {
+    for (const u of ['plughw:1,0', 'plughw:CARD=Device,DEV=0', 'default', 'dsnoop:CARD=USB']) assert.deepEqual(validateService(svc(u), ALLOWED_BITRATES_KBPS).errors, [], u);
+  });
+  it('warns on hw: (no sample-rate conversion)', () => {
+    const { errors, warnings } = validateService(svc('hw:1,0'), ALLOWED_BITRATES_KBPS);
+    assert.deepEqual(errors, []);
+    assert.ok(warnings.some((w) => w.includes('plughw')));
+  });
+  it('refuses an empty device, a URL or anything with spaces', () => {
+    for (const u of ['', 'http://x/y', 'plughw:1,0 -o x', null]) assert.equal(validateService(svc(u), ALLOWED_BITRATES_KBPS).errors.length, 1, String(u));
+  });
+});

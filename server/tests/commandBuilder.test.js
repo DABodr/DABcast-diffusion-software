@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildPadEncCommand, buildAudioEncCommand, buildDabMuxCommand, buildDabModConfig, buildHackrfTransferCommand } from '../src/odr/commandBuilder.js';
+import { buildPadEncCommand, buildAudioEncCommand, buildDabMuxCommand, buildDabModConfig, buildHackrfTransferCommand, buildProbeCommand } from '../src/odr/commandBuilder.js';
 
 const makeSvc = (overrides = {}) => ({
   id: 'test1',
@@ -220,5 +220,62 @@ describe('buildHackrfTransferCommand', () => {
       '-s', '4096000',
       '-b', '1750000'
     ]);
+  });
+});
+
+describe('buildAudioEncCommand — sound card (ALSA)', () => {
+  it('reads the ALSA device with -d and -D, without the VLC / GStreamer options', () => {
+    const svc = makeSvc({ input: { mode: 'ALSA', uri: 'plughw:CARD=Device,DEV=0', encoderBufferMs: 200 } });
+    const { args } = buildAudioEncCommand({ svc, activeUri: svc.input.uri, mtaPath: '/tmp/x.mta' });
+    const i = args.indexOf('-d');
+    assert.deepEqual(args.slice(i, i + 3), ['-d', 'plughw:CARD=Device,DEV=0', '-D']);
+    for (const f of ['-v', '-G', '-L', '-C']) assert.ok(!args.includes(f), `${f} must not be passed`);
+    assert.ok(args.includes('-o') && args.includes('-P'));
+  });
+  it('leaves the other modes unchanged', () => {
+    const svc = makeSvc();
+    const { args } = buildAudioEncCommand({ svc, activeUri: svc.input.uri, mtaPath: '/tmp/x.mta' });
+    assert.ok(args.includes('-v') && !args.includes('-d'));
+  });
+});
+
+describe('buildAudioEncCommand — backup player and sound card silence', () => {
+  const alsa = (extra = {}) => makeSvc({ input: { mode: 'ALSA', uri: 'plughw:CARD=Device,DEV=0', backupUri: 'https://radio.example/live', ...extra }, watchdog: { silenceThresholdSec: 30 } });
+  const run = (svc, uri) => buildAudioEncCommand({ svc, activeUri: uri, mtaPath: '/tmp/x.mta' }).args;
+  it('sound card main: -d and -s = silence threshold (30 s)', () => {
+    const a = run(alsa(), 'plughw:CARD=Device,DEV=0');
+    assert.ok(a.includes('-d'));
+    assert.equal(a[a.indexOf('-s') + 1], '30');
+  });
+  it('its web backup goes through GStreamer by default (never -d), with the 180 s silence timeout', () => {
+    const a = run(alsa(), 'https://radio.example/live');
+    assert.ok(a.includes('-G') && !a.includes('-d') && !a.includes('-D'));
+    assert.equal(a[a.indexOf('-s') + 1], '180');
+  });
+  it('backup player VLC when chosen', () => {
+    const a = run(alsa({ backupMode: 'VLC' }), 'https://radio.example/live');
+    assert.ok(a.includes('-v') && !a.includes('-G'));
+  });
+  it('a stream service: backup player of its own, main unchanged; no backupMode = same as main', () => {
+    const svc = makeSvc({ input: { mode: 'GSTREAMER', uri: 'http://a/live', backupUri: 'http://b/live', backupMode: 'VLC' } });
+    assert.ok(run(svc, 'http://a/live').includes('-G'));
+    assert.ok(run(svc, 'http://b/live').includes('-v'));
+    const same = makeSvc({ input: { mode: 'GSTREAMER', uri: 'http://a/live', backupUri: 'http://b/live' } });
+    assert.ok(run(same, 'http://b/live').includes('-G'));
+  });
+  it('silence threshold below 5 s is raised to 5 s', () => {
+    const svc = alsa(); svc.watchdog.silenceThresholdSec = 1;
+    const a = run(svc, 'plughw:CARD=Device,DEV=0');
+    assert.equal(a[a.indexOf('-s') + 1], '5');
+  });
+});
+
+describe('buildProbeCommand — sound card', () => {
+  it('probes a sound card main source with -d', () => {
+    const { args } = buildProbeCommand('plughw:CARD=Device,DEV=0', 'ALSA');
+    assert.deepEqual(args.slice(0, 2), ['-d', 'plughw:CARD=Device,DEV=0']);
+  });
+  it('streams unchanged', () => {
+    assert.deepEqual(buildProbeCommand('http://a/live', 'GSTREAMER').args.slice(0, 2), ['-G', 'http://a/live']);
   });
 });

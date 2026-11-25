@@ -1823,6 +1823,46 @@ function probeStream(url, redirectsLeft = 5, deadline = Date.now() + 6000) {
     req.setTimeout(Math.max(500, deadline - Date.now()), () => req.destroy(Object.assign(new Error('no answer within 6 s'), { code: 'TIMEOUT' })));
   });
 }
+// Sound cards of the server that can record (service source "ALSA"), read-only from /proc/asound.
+// device = plughw:CARD=<id>,DEV=<n>: the card name stays the same when USB cards are plugged in
+// another order (the card number can change at each boot)
+app.get('/api/audio/devices', (req, res) => {
+  const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } };
+  const cards = new Map();   // number -> { id, name }
+  for (const m of read('/proc/asound/cards').matchAll(/^\s*(\d+)\s+\[([^\]]+?)\s*\]:\s*(.*)$/gm)) {
+    cards.set(Number(m[1]), { id: m[2].trim(), name: m[3].replace(/^.*? - /, '').trim() });
+  }
+  const devices = [];
+  for (const m of read('/proc/asound/pcm').matchAll(/^(\d+)-(\d+):\s*([^:]*?)\s*:.*capture\s+\d+/gm)) {
+    const card = Number(m[1]), dev = Number(m[2]);
+    const c = cards.get(card) || { id: String(card), name: '' };
+    devices.push({ device: `plughw:CARD=${c.id},DEV=${dev}`, hw: `hw:${card},${dev}`, card: c.name || c.id, name: m[3] });
+  }
+  res.json({ devices });
+});
+// 'Check' (sound card source): does this ALSA device exist and can it record, is it already open?
+// Read-only (/proc/asound), never opens the card. Named PCMs (default, dsnoop…) cannot be checked.
+app.post('/api/audio/check', (req, res) => {
+  const device = String(req.body?.device || '').trim();
+  const read = (f) => { try { return fs.readFileSync(f, 'utf8'); } catch { return ''; } };
+  const m = /^(?:plug)?hw:(?:CARD=)?([^,]+)(?:,(?:DEV=)?(\d+))?$/i.exec(device);
+  if (!m) return res.json({ ok: null, message: `${device || 'This device'} cannot be checked here (named ALSA device): it is tried at the start of the encoder` });
+  let card = null;
+  for (const c of read('/proc/asound/cards').matchAll(/^\s*(\d+)\s+\[([^\]]+?)\s*\]:\s*(.*)$/gm)) {
+    if (c[1] === m[1] || c[2].trim() === m[1]) card = { n: Number(c[1]), id: c[2].trim(), name: c[3].replace(/^.*? - /, '').trim() };
+  }
+  if (!card) return res.json({ ok: false, message: `Sound card "${m[1]}" not found on the server (Detect lists the cards)` });
+  const dev = Number(m[2] || 0);
+  const pcm = new RegExp(`^${String(card.n).padStart(2, '0')}-${String(dev).padStart(2, '0')}:.*capture`, 'm');
+  if (!pcm.test(read('/proc/asound/pcm'))) return res.json({ ok: false, message: `${card.name}: device ${dev} cannot record (Detect lists the devices that can)` });
+  // a capture substream already open (another program, or this service's encoder while ON AIR)
+  let subs = [];
+  try { subs = fs.readdirSync(`/proc/asound/card${card.n}/pcm${dev}c`, { withFileTypes: true }).filter((d) => /^sub\d+$/.test(d.name)); } catch { /* no status: not busy */ }
+  const busy = subs.length > 0 && subs.every((d) => !/closed/.test(read(`/proc/asound/card${card.n}/pcm${dev}c/${d.name}/status`)));
+  if (busy) return res.json({ ok: true, busy: true, message: `${card.name} found, but it is already recording (this service's encoder while ON AIR, or another program such as PulseAudio)` });
+  res.json({ ok: true, message: `${card.name} found — device ${dev} can record` });
+});
+
 app.post('/api/streams/test', async (req, res) => {
   const url = String(req.body?.url || '').trim();
   if (!/^https?:\/\//i.test(url)) {

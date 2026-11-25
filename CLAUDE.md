@@ -14,7 +14,7 @@ processes to produce and multiplex DAB+ radio signals.
 **Stack:**
 - Backend: Node.js 24 (ESM `type: "module"`), Express 4, no TypeScript — the .deb embeds Node 24 LTS (pkg)
 - Frontend: Vanilla JS single-page app (`web/app.js`), no framework, no build step
-- Tests: Node.js built-in test runner (`node --test server/tests/*.test.js` — Node 24 no longer accepts a bare directory)  — **385 tests**; CI runs them on every PR (`.github/workflows/tests.yml`)
+- Tests: Node.js built-in test runner (`node --test server/tests/*.test.js` — Node 24 no longer accepts a bare directory)  — **399 tests**; CI runs them on every PR (`.github/workflows/tests.yml`)
 - Build: `esbuild` (bundle) → `@yao-pkg/pkg` (binary) → `dpkg-deb` (.deb package)
 - Targets: `./build.sh` → amd64 | `./build.sh arm64` → Raspberry Pi OS 64-bit
 - Service port: **9090** (default)
@@ -334,6 +334,7 @@ These are non-negotiable patterns. Breaking them causes runtime failures.
 | **Failover option** | `watchdog.switchToBackupOnSilence: false` ("Switch to backup on failure: No") forbids any automatic switch, crash failover included (`mayFailover`): the encoder restarts on the stream it was on. |
 | **Probe return delay** | The audio probe only takes a service on backup once `returnToMainAfterSec` has elapsed since `rt.lastSwitchMs`; `0` = no automatic return (same as the watchdog's own return path). |
 | **ON AIR declaration** | `startMux()` declares ON AIR only if `mux:odr-dabmux` is still running after the 500 ms wait. `stopMux()` bumps `_muxGen`: a start in progress is cancelled (status `off`) instead of ending ON AIR. dabmux `onExit` treats any exit while `muxRunning` as a failure (code 0 too). |
+| **Encoder stop reason / restart loop** | `encoderErrorLine()` keeps the last error-looking stderr line of odr-audioenc in `rt.encLastError` (shown under the ERROR badge of the row, appended to the 'encoder died' log line; cleared after `FAILOVER_STABLE_MS` or an input change). `ENC_LOOP_CRASHES = 2` restarts in a row without a stable run → status `ERROR` (was RUNNING between restarts). Input changed while the encoder is down (restart loop): `rt.activeUri` is pointed at the new input, crash count reset and `encWasAlive = false` — the correction used to be ignored (the watchdog kept restarting the old input). |
 | **Encoder restarts ON AIR** | Gain / drift / input changes go through `_restartEncoderLatest()`: when a switch of the service is running (`_switchLocks`), the restart waits for it (up to 10 s) and uses the config saved now — the lock used to skip the second restart. `_startService` stops padenc when audioenc fails to start. |
 
 ### Service identity
@@ -551,6 +552,7 @@ These are non-obvious behaviors that have caused bugs in the past:
 | **GStreamer mode** | `-G` flag. Incompatible with `-L`, `-C`, `-D` VLC flags. Never mix. |
 | **Process group kill** | Use `process.kill(-pid, signal)` (negative). `child.kill()` only kills the direct process. |
 | **encWasAlive** | Set to `true` in `_startService()` for encoder modes. For ZMQ/EDI direct modes, set to `false` (no encoder). |
+| **Sound card source (ALSA)** | `input.mode === 'ALSA'`, `input.uri` = ALSA capture device (`plughw:CARD=<id>,DEV=<n>` from *Detect* = `GET /api/audio/devices`, read-only `/proc/asound`; stable across USB order). commandBuilder passes `-d <device> -D` (drift compensation always: a card clock never matches the DAB clock), no `-v`/`-G`/`-L`/`-C`. Silence: `-s` = the service's *Silence threshold* (`watchdog.silenceThresholdSec`, 30 s suggested by the UI, min 5) instead of the fixed 180 s of the streams. Backup = a web stream (http/https), played with `input.backupMode` (GSTREAMER default, or VLC; `inputModeFor()` in commandBuilder picks the player per URI, '' = same as main for stream services) — silence or a missing card → encoder exits → usual crash failover; the audio probe reads the card (`buildProbeCommand` `-d`) to return to it after *Back to main after*. One device per service, refused by the server too (`_checkSoundCard()` in setService / addService / upsertService). `backupMode` is kept by the three input normalizations of appState (load, add, setService; applied at the next switch). postinst adds the service user to the group `audio` (`/dev/snd`), never fatal. *Check* = `POST /api/audio/check` (read-only `/proc/asound`: card exists, can record, all substreams busy); the form warns before saving a card the server does not have. |
 | **ZMQ/EDI direct mode** | `svc.input.mode === 'ZMQ'` or `'EDI'`: no audioenc/padenc spawned, watchdog skips these services, `rt.activeUri = null`. |
 | **MOT dir on PI rename** | Changing `svc.id` (PI code) renames the MOT directory. Runtime references must follow. |
 | **Port conflicts** | 8080 = lighttpd — already in use on target systems. Default port is 9090. |
